@@ -9,8 +9,8 @@ use axum::http::StatusCode;
 use http_body_util::BodyExt;
 use tempfile::TempDir;
 use tower::ServiceExt;
-use waveflow_server::catalog::CatalogTrackInput;
-use waveflow_server::catalog::LibraryRecord;
+use waveflow_server::storage::catalog::CatalogTrackInput;
+use waveflow_server::storage::catalog::LibraryRecord;
 use waveflow_server::Config;
 
 pub async fn test_app() -> (TempDir, Config, waveflow_server::AppState) {
@@ -445,8 +445,8 @@ pub async fn seed_titles(
             account,
             name,
             &std::fs::canonicalize(&root).unwrap(),
-            waveflow_server::database::LibraryVisibility::Private,
-            waveflow_server::authentication::now_ms(),
+            waveflow_server::storage::database::LibraryVisibility::Private,
+            waveflow_server::auth::authentication::now_ms(),
         )
         .await
         .unwrap();
@@ -537,7 +537,7 @@ pub async fn admin_with_api_token(
     username: &str,
 ) -> (uuid::Uuid, String) {
     let id = uuid::Uuid::new_v4();
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     sqlx::query(
         "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
          VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",

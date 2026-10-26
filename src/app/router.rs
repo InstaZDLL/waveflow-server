@@ -12,7 +12,7 @@ use utoipa::OpenApi;
 
 use super::openapi::{openapi_response, ApiDoc, OPENAPI_JSON_PATH};
 use super::state::AppState;
-use crate::{api, media, public_share, reference, subsonic, webui, Config};
+use crate::{api, http::public_share, http::reference, http::webui, media, subsonic, Config};
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
 

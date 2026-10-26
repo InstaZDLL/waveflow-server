@@ -75,7 +75,7 @@ async fn an_account_rotates_or_switches_off_its_own_subsonic_credential() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 actor_id: listener,
                 user_id: listener,
                 name: "a narrowed client",
@@ -91,7 +91,7 @@ async fn an_account_rotates_or_switches_off_its_own_subsonic_credential() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 actor_id: listener,
                 user_id: listener,
                 name: "a client with a deadline",

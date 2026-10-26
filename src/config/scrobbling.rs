@@ -150,9 +150,9 @@ pub(super) fn test_destinations() -> Vec<ScrobbleDestination> {
     ]
     .into_iter()
     .map(|(provider, base)| {
-        let url = crate::scrobblers::validate_destination(base, true)
+        let url = crate::remote::scrobblers::validate_destination(base, true)
             .expect("a loopback destination nothing is listening on");
-        let fingerprint = crate::scrobblers::destination_fingerprint(&url);
+        let fingerprint = crate::remote::scrobblers::destination_fingerprint(&url);
         ScrobbleDestination {
             provider,
             name: DEFAULT_SCROBBLE_DESTINATION.to_owned(),
@@ -214,14 +214,14 @@ pub(super) fn parse_destinations(
             Some((name, raw)) => (name.trim(), raw.trim()),
             None => (DEFAULT_SCROBBLE_DESTINATION, entry),
         };
-        crate::scrobblers::validate_destination_name(name)
+        crate::remote::scrobblers::validate_destination_name(name)
             .map_err(|error| anyhow::anyhow!("invalid {variable} entry {name:?}: {error}"))?;
         // **Never the URL itself in the message.** `validate_destination`
         // refuses a destination carrying credentials, so the one thing this
         // branch is most likely to be handed is the one thing that must not be
         // printed: `http://user:secret@host` would land in a startup log, or a
         // support paste, in full. The name and the variant say enough.
-        let url = crate::scrobblers::validate_destination(raw, allow_plaintext)
+        let url = crate::remote::scrobblers::validate_destination(raw, allow_plaintext)
             .map_err(|error| anyhow::anyhow!("invalid {variable} entry {name:?}: {error}"))?;
         if destinations.iter().any(|existing| existing.name == name) {
             anyhow::bail!("{variable} declares {name:?} twice");
@@ -229,7 +229,7 @@ pub(super) fn parse_destinations(
         // Two names for one machine would give a member two ways to reach the
         // same profile and two links to keep in step, and the second would look
         // like a different destination in every counter.
-        let fingerprint = crate::scrobblers::destination_fingerprint(&url);
+        let fingerprint = crate::remote::scrobblers::destination_fingerprint(&url);
         if let Some(twin) = destinations
             .iter()
             .find(|existing| existing.fingerprint == fingerprint)

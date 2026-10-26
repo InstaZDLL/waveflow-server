@@ -54,7 +54,7 @@ impl DomainServices {
     /// only when nothing at all could be queued.
     ///
     /// Re-queuing a library that is already scanning is deliberately allowed,
-    /// exactly as calling the native endpoint twice is: [`crate::scanner::ScanManager`]
+    /// exactly as calling the native endpoint twice is: [`crate::library::scanner::ScanManager`]
     /// serialises jobs per library and a scan converges on file content, so a
     /// redundant pass costs time and changes nothing.
     pub async fn start_visible_scans(&self, user_id: Uuid) -> Result<Vec<Uuid>, ServiceError> {

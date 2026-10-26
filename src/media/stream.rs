@@ -27,7 +27,7 @@ use super::transcode::{cache_key, extension, fill_deadline, mime_for_format};
 use super::{
     bearer_principal, MediaError, MediaService, OutputFormat, StreamQuery, MEDIA_CACHE_CONTROL,
 };
-use crate::{catalog::StreamTrack, replay_gain::ReplayGainMode, AppState};
+use crate::{media::replay_gain::ReplayGainMode, storage::catalog::StreamTrack, AppState};
 
 const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -73,7 +73,7 @@ impl MediaService {
         range: Option<&str>,
         mode: ReplayGainMode,
     ) -> Result<Response, MediaError> {
-        let gain = crate::replay_gain::gain(track.replay_gain, mode);
+        let gain = crate::media::replay_gain::gain(track.replay_gain, mode);
         if !track.available {
             return Err(MediaError::NotFound);
         }
@@ -230,14 +230,14 @@ pub async fn create_stream_ticket(
     // cannot be represented is a misconfiguration, not something to round off.
     let expires_at = i64::try_from(state.stream_ticket_ttl.as_millis())
         .ok()
-        .and_then(|ttl| crate::authentication::now_ms().checked_add(ttl))
+        .and_then(|ttl| crate::auth::authentication::now_ms().checked_add(ttl))
         .ok_or_else(|| {
             tracing::error!("stream ticket TTL does not fit in an epoch timestamp");
             MediaError::Internal
         })?;
-    let ticket = crate::stream_ticket::mint(
+    let ticket = crate::auth::stream_ticket::mint(
         &state.secret_box,
-        crate::stream_ticket::TicketKind::Audio,
+        crate::auth::stream_ticket::TicketKind::Audio,
         user.id,
         track_id,
         expires_at,
@@ -289,10 +289,13 @@ pub async fn stream_with_ticket(
     // track, so probing tells an attacker nothing. A ticket of another kind
     // joins them: this route serves audio, and it says so rather than trusting
     // that only audio tickets reach it.
-    let (_, user_id, track_id) =
-        crate::stream_ticket::verify(&state.secret_box, &ticket, crate::authentication::now_ms())
-            .filter(|(kind, ..)| *kind == crate::stream_ticket::TicketKind::Audio)
-            .ok_or(MediaError::NotFound)?;
+    let (_, user_id, track_id) = crate::auth::stream_ticket::verify(
+        &state.secret_box,
+        &ticket,
+        crate::auth::authentication::now_ms(),
+    )
+    .filter(|(kind, ..)| *kind == crate::auth::stream_ticket::TicketKind::Audio)
+    .ok_or(MediaError::NotFound)?;
     let track = state
         .services
         .stream_source_for_user(user_id, track_id)
@@ -473,8 +476,8 @@ pub async fn stream_track(
 pub(crate) async fn secure_track_path(
     root: &Path,
     relative: &str,
-    link_roots: &crate::link_roots::LinkRoots,
-    policy: &crate::link_roots::LinkPolicy,
+    link_roots: &crate::library::link_roots::LinkRoots,
+    policy: &crate::library::link_roots::LinkPolicy,
 ) -> io::Result<PathBuf> {
     let canonical_root = tokio::fs::canonicalize(root).await?;
     let relative = Path::new(relative);
@@ -517,7 +520,7 @@ pub(crate) async fn secure_track_path(
         let (link_roots, policy, target) =
             (link_roots.clone(), policy.clone(), canonical_file.clone());
         tokio::task::spawn_blocking(move || {
-            crate::link_roots::admits(
+            crate::library::link_roots::admits(
                 &link_roots.resolved(),
                 &policy.other_libraries_resolved(),
                 &target,

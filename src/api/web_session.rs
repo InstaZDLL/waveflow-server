@@ -9,16 +9,16 @@ pub struct WebAuthResponse {
     pub access_token: String,
     pub token_type: &'static str,
     pub expires_in: u64,
-    pub user: crate::authentication::AuthUser,
+    pub user: crate::auth::authentication::AuthUser,
     pub device_id: Uuid,
 }
 
 pub(super) fn web_auth_response(
     state: &AppState,
     _headers: &HeaderMap,
-    tokens: crate::authentication::AuthTokens,
+    tokens: crate::auth::authentication::AuthTokens,
 ) -> Result<Response, ApiError> {
-    let csrf_token = crate::security::generate_token("wfcsrf_");
+    let csrf_token = crate::auth::security::generate_token("wfcsrf_");
     let secure = secure_cookies(state);
     let refresh_cookie = format!(
         "{WEB_REFRESH_COOKIE}={}; Path=/api/v2/web/auth; HttpOnly; SameSite=Strict; Max-Age={}{}",
@@ -86,7 +86,7 @@ pub(super) fn validate_web_request(state: &AppState, headers: &HeaderMap) -> Res
         .get(WEB_CSRF_HEADER)
         .and_then(|value| value.to_str().ok())
         .ok_or(ApiError::Forbidden)?;
-    if !crate::security::constant_time_bytes_eq(cookie.as_bytes(), supplied.as_bytes()) {
+    if !crate::auth::security::constant_time_bytes_eq(cookie.as_bytes(), supplied.as_bytes()) {
         return Err(ApiError::Forbidden);
     }
     Ok(())

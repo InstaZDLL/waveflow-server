@@ -232,14 +232,14 @@ pub async fn create_canvas_ticket(
         .ok_or(MediaError::NotFound)?;
     let expires_at = i64::try_from(state.stream_ticket_ttl.as_millis())
         .ok()
-        .and_then(|ttl| crate::authentication::now_ms().checked_add(ttl))
+        .and_then(|ttl| crate::auth::authentication::now_ms().checked_add(ttl))
         .ok_or_else(|| {
             tracing::error!("stream ticket TTL does not fit in an epoch timestamp");
             MediaError::Internal
         })?;
-    let ticket = crate::stream_ticket::mint(
+    let ticket = crate::auth::stream_ticket::mint(
         &state.secret_box,
-        crate::stream_ticket::TicketKind::Canvas,
+        crate::auth::stream_ticket::TicketKind::Canvas,
         user.id,
         track_id,
         expires_at,
@@ -276,10 +276,13 @@ pub async fn canvas_with_ticket(
     // This route serves a canvas, and it says so. Without the assertion an
     // audio ticket would open a canvas and the reverse — which is the whole
     // reason the kind is inside the sealed payload.
-    let (_, user_id, track_id) =
-        crate::stream_ticket::verify(&state.secret_box, &ticket, crate::authentication::now_ms())
-            .filter(|(kind, ..)| *kind == crate::stream_ticket::TicketKind::Canvas)
-            .ok_or(MediaError::NotFound)?;
+    let (_, user_id, track_id) = crate::auth::stream_ticket::verify(
+        &state.secret_box,
+        &ticket,
+        crate::auth::authentication::now_ms(),
+    )
+    .filter(|(kind, ..)| *kind == crate::auth::stream_ticket::TicketKind::Canvas)
+    .ok_or(MediaError::NotFound)?;
     // Re-checked on every redemption, so a ticket cannot outlive the membership
     // that justified it.
     let blob = state

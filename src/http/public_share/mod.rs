@@ -27,10 +27,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::{
-    authentication::now_ms,
+    auth::authentication::now_ms,
+    auth::stream_ticket::{self, TicketKind},
     media::{OutputFormat, StreamQuery},
     services::ServiceError,
-    stream_ticket::{self, TicketKind},
     AppState,
 };
 
@@ -76,7 +76,7 @@ pub fn router(state: AppState, request_timeout: std::time::Duration) -> Router {
         .route("/share/{token}/tracks/{track_id}/cover", get(cover))
         .merge(opening)
         .layer(axum::middleware::map_response(
-            crate::security_headers::share,
+            crate::http::security_headers::share,
         ))
         .with_state(state)
 }
@@ -151,7 +151,7 @@ async fn page(state: &AppState, token: &str) -> Response {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    let mut response = crate::webui::share_page();
+    let mut response = crate::http::webui::share_page();
     if !open && response.status() == StatusCode::OK {
         *response.status_mut() = StatusCode::NOT_FOUND;
     }

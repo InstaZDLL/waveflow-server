@@ -37,7 +37,7 @@ fn trusted_proxies_are_read_strictly() {
 /// than starting enrichment narrower than the operator wrote.
 #[test]
 fn metadata_providers_are_read_strictly() {
-    use crate::enrichment::Provider;
+    use crate::remote::enrichment::Provider;
 
     assert_eq!(parse_metadata_providers("", false, false).unwrap(), []);
     assert_eq!(parse_metadata_providers(" , ", false, false).unwrap(), []);
@@ -72,7 +72,7 @@ fn metadata_providers_are_read_strictly() {
 /// rather than leaving lyrics quietly off.
 #[test]
 fn lyrics_providers_are_read_strictly() {
-    use crate::lrclib::LyricsProvider;
+    use crate::remote::lrclib::LyricsProvider;
 
     assert_eq!(super::metadata::parse_lyrics_providers("").unwrap(), []);
     assert_eq!(super::metadata::parse_lyrics_providers(" , ").unwrap(), []);

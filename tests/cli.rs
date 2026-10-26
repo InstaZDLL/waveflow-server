@@ -6,7 +6,7 @@
 //! two streams — not by a request.
 
 use clap::Parser;
-use waveflow_server::authentication::now_ms;
+use waveflow_server::auth::authentication::now_ms;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
@@ -652,7 +652,7 @@ async fn sealed_installation(
             owner,
             name,
             &root,
-            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::storage::database::LibraryVisibility::Private,
             now_ms(),
         )
         .await
@@ -660,7 +660,7 @@ async fn sealed_installation(
     run_scan(
         state,
         owner,
-        waveflow_server::catalog::LibraryRecord {
+        waveflow_server::storage::catalog::LibraryRecord {
             id: library,
             name: name.into(),
             root_path: root,
@@ -857,7 +857,7 @@ async fn rotating_the_key_keeps_every_secret_and_re_points_the_shares() {
         "the recovery bundle must hold the key as it was"
     );
     assert!(
-        waveflow_server::database::Database::check_file(&recovery.join("waveflow.db"))
+        waveflow_server::storage::database::Database::check_file(&recovery.join("waveflow.db"))
             .await
             .unwrap_or(false),
         "the recovery copy must be a sound database"
@@ -1180,8 +1180,8 @@ async fn database_rescan_full_asks_every_library_to_read_everything() {
             owner,
             "Rescan",
             &std::fs::canonicalize(&music).unwrap(),
-            waveflow_server::database::LibraryVisibility::Private,
-            waveflow_server::authentication::now_ms(),
+            waveflow_server::storage::database::LibraryVisibility::Private,
+            waveflow_server::auth::authentication::now_ms(),
         )
         .await
         .unwrap();
@@ -1209,7 +1209,7 @@ async fn the_cli_renames_moves_purges_and_deletes_a_library() {
             admin,
             "Lifecycle",
             &root,
-            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::storage::database::LibraryVisibility::Private,
             now_ms(),
         )
         .await
@@ -1218,7 +1218,7 @@ async fn the_cli_renames_moves_purges_and_deletes_a_library() {
     scan_once(
         &state,
         admin,
-        waveflow_server::catalog::LibraryRecord {
+        waveflow_server::storage::catalog::LibraryRecord {
             id: library,
             name: "Lifecycle".into(),
             root_path: root.clone(),

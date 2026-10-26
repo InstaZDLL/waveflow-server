@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::catalog::SongItem;
-use crate::playlist_file::TextEncoding;
+use crate::library::playlist_file::TextEncoding;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlaylistItem {

@@ -60,7 +60,7 @@ pub struct Database {
     /// the writer's business: the test suite applies catalogue rows directly,
     /// and putting the specs anywhere else would have those tests exercise a
     /// different identity path than production.
-    pid: crate::pid::PidSpecs,
+    pid: crate::library::pid::PidSpecs,
 }
 
 impl Database {
@@ -76,8 +76,8 @@ impl Database {
             // Numbers in names by value, for listings paged in SQL; see
             // `natural_order` for why no schema object may name it.
             .collation(
-                crate::natural_order::COLLATION,
-                crate::natural_order::compare,
+                crate::storage::natural_order::COLLATION,
+                crate::storage::natural_order::compare,
             );
 
         let pool = SqlitePoolOptions::new()
@@ -364,7 +364,7 @@ impl Database {
     }
 
     /// The identity rules the catalogue is written under.
-    pub fn pid(&self) -> &crate::pid::PidSpecs {
+    pub fn pid(&self) -> &crate::library::pid::PidSpecs {
         &self.pid
     }
 

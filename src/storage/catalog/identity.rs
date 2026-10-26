@@ -5,7 +5,7 @@
 use sqlx::{Row, Sqlite, Transaction};
 use uuid::Uuid;
 
-use crate::database::Database;
+use crate::storage::database::Database;
 
 use super::{credits::credit_names, parse_uuid, CatalogTrackInput};
 
@@ -35,7 +35,7 @@ impl Database {
     /// Returns how many libraries were marked, so a caller can say so.
     pub async fn reconcile_catalog_identity(
         &self,
-        specs: &crate::pid::PidSpecs,
+        specs: &crate::library::pid::PidSpecs,
     ) -> Result<u64, sqlx::Error> {
         // `pid.track` is handled apart, and never by re-identifying anything:
         // a track's id is its path, then its content hash, then the relocation
@@ -106,7 +106,7 @@ impl Database {
     /// before that first scan free.
     async fn clear_track_hints_if_spec_changed(
         &self,
-        specs: &crate::pid::PidSpecs,
+        specs: &crate::library::pid::PidSpecs,
     ) -> Result<(), sqlx::Error> {
         let active = specs.track.source();
         // A catalogue built before the property existed is not evidence of a
@@ -165,7 +165,7 @@ impl Database {
     /// user already stars what it would have become.
     async fn remap_artist_user_data(
         &self,
-        specs: &crate::pid::PidSpecs,
+        specs: &crate::library::pid::PidSpecs,
     ) -> Result<u64, sqlx::Error> {
         let rows = sqlx::query("SELECT id, library_id, name FROM artist")
             .fetch_all(self.pool())
@@ -328,8 +328,8 @@ impl<'a> TrackIdentity<'a> {
 /// Derived here rather than by the scanner because this is where identity is
 /// written — and now also where the relocation hint is, which has to hash the
 /// same values the row is built from.
-pub(super) fn track_credits(input: &CatalogTrackInput) -> Vec<crate::tags::Credit> {
-    crate::tags::credits(&crate::tags::RawCredits {
+pub(super) fn track_credits(input: &CatalogTrackInput) -> Vec<crate::library::tags::Credit> {
+    crate::library::tags::credits(&crate::library::tags::RawCredits {
         artist: input.artist.iter().cloned().collect(),
         artists: input.artists.clone(),
         album_artist: input.album_artist.iter().cloned().collect(),
@@ -346,9 +346,9 @@ pub(super) fn track_credits(input: &CatalogTrackInput) -> Vec<crate::tags::Credi
 /// hangs off the first credited artist.
 pub(super) fn album_artist_display(
     input: &CatalogTrackInput,
-    credits: &[crate::tags::Credit],
+    credits: &[crate::library::tags::Credit],
 ) -> Option<String> {
-    let names = credit_names(credits, crate::tags::Role::AlbumArtist);
+    let names = credit_names(credits, crate::library::tags::Role::AlbumArtist);
     input
         .album_artist
         .as_deref()
@@ -365,7 +365,7 @@ pub(super) fn album_artist_display(
 /// only tells a scan that the file it is looking at is probably the one whose
 /// path disappeared, when neither the path nor the content hash can say so.
 pub fn track_pid(
-    specs: &crate::pid::PidSpecs,
+    specs: &crate::library::pid::PidSpecs,
     library_id: Uuid,
     input: &CatalogTrackInput,
 ) -> Uuid {
@@ -374,7 +374,7 @@ pub fn track_pid(
     specs.track_id(library_id, &TrackIdentity::new(input, &album_artist))
 }
 
-impl crate::pid::PidSource for TrackIdentity<'_> {
+impl crate::library::pid::PidSource for TrackIdentity<'_> {
     fn tag(&self, name: &str) -> Option<&str> {
         let value = match name {
             "musicbrainz_albumid" => self.input.musicbrainz_release_id.as_deref(),

@@ -3,11 +3,11 @@
 //!
 //! Three surfaces carry them:
 //!
-//! - **the embedded web client** ([`crate::webui`]), every response of the
+//! - **the embedded web client** ([`crate::http::webui`]), every response of the
 //!   router fallback: the shell, its assets, and its refusals;
 //! - **the public shares** under `/share/`, whose token *is* the path, so a
 //!   referrer would hand it to whatever host a page linked to;
-//! - **the API reference** at `/reference` ([`crate::reference`]), since
+//! - **the API reference** at `/reference` ([`crate::http::reference`]), since
 //!   RFC-023 serves its script from the binary and can therefore hold it to a
 //!   policy that names no other host.
 //!

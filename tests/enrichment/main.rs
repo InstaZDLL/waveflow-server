@@ -31,8 +31,8 @@ use axum::{
 };
 use waveflow_server::{
     config::MetadataSettings,
-    enrichment::{Endpoints, Enrichment, Outcome, Provider},
-    portrait::AddressPolicy,
+    remote::enrichment::{Endpoints, Enrichment, Outcome, Provider},
+    remote::portrait::AddressPolicy,
 };
 
 mod artist_info;
@@ -179,7 +179,7 @@ fn engine(
 // token and a Subsonic key minted at run time.
 async fn account(state: &waveflow_server::AppState, username: &str) -> uuid::Uuid {
     let id = uuid::Uuid::new_v4();
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     sqlx::query(
         "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
          VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
@@ -215,7 +215,7 @@ async fn library_with(
     name: &str,
     artists: &[(&str, &str)],
 ) {
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     let root = config.data_dir.join(name);
     std::fs::create_dir_all(&root).unwrap();
     let library = state
@@ -224,7 +224,7 @@ async fn library_with(
             owner,
             name,
             &std::fs::canonicalize(&root).unwrap(),
-            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::storage::database::LibraryVisibility::Private,
             now,
         )
         .await
@@ -311,8 +311,8 @@ async fn subsonic_key(state: &waveflow_server::AppState, user: uuid::Uuid) -> St
             user,
             user,
             &state.secret_box.encrypt(password.as_bytes()).unwrap(),
-            &waveflow_server::security::token_hash(&api_key),
-            waveflow_server::authentication::now_ms(),
+            &waveflow_server::auth::security::token_hash(&api_key),
+            waveflow_server::auth::authentication::now_ms(),
         )
         .await
         .unwrap();

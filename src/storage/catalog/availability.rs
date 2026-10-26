@@ -5,7 +5,7 @@
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::{authentication::now_ms, database::Database};
+use crate::{auth::authentication::now_ms, storage::database::Database};
 
 use super::{parse_uuid, record_library_event, LibraryChange};
 

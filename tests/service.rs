@@ -6,9 +6,9 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::database::AccountRole;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::database::AccountRole;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
@@ -574,7 +574,7 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
         .unwrap();
     std::fs::copy(&config.instance_key_path, bundle.join("instance.key")).unwrap();
     assert!(
-        waveflow_server::database::Database::check_file(&bundle.join("waveflow.db"))
+        waveflow_server::storage::database::Database::check_file(&bundle.join("waveflow.db"))
             .await
             .unwrap()
     );
@@ -672,7 +672,7 @@ async fn a_refused_boot_gives_the_database_back_before_it_returns() {
             refusal.contains("instance.key does not match"),
             "attempt {attempt}: refused for another reason: {refusal}"
         );
-        let next = waveflow_server::database::Database::open(&impatient)
+        let next = waveflow_server::storage::database::Database::open(&impatient)
             .await
             .unwrap_or_else(|error| {
                 panic!("attempt {attempt}: the refused boot still held the database: {error}")
@@ -993,7 +993,7 @@ async fn the_api_reference_is_served_from_the_binary() {
     assert!(
         html.contains(&format!(
             "<script src=\"{}\"></script>",
-            waveflow_server::reference::SCALAR_SCRIPT_PATH
+            waveflow_server::http::reference::SCALAR_SCRIPT_PATH
         )),
         "{html}"
     );
@@ -1006,7 +1006,7 @@ async fn the_api_reference_is_served_from_the_binary() {
 
     // Stored compressed and sent as stored to whoever takes gzip…
     let script = get(
-        waveflow_server::reference::SCALAR_SCRIPT_PATH,
+        waveflow_server::http::reference::SCALAR_SCRIPT_PATH,
         Some("gzip, br"),
     )
     .await;
@@ -1021,8 +1021,11 @@ async fn the_api_reference_is_served_from_the_binary() {
         .unwrap()
         .contains("immutable"));
     // …and decompressed for a client that takes none.
-    let plain = get(waveflow_server::reference::SCALAR_SCRIPT_PATH, None).await;
+    let plain = get(waveflow_server::http::reference::SCALAR_SCRIPT_PATH, None).await;
     assert!(plain.headers().get("content-encoding").is_none());
     let bytes = plain.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(bytes, waveflow_server::reference::decompressed().unwrap());
+    assert_eq!(
+        bytes,
+        waveflow_server::http::reference::decompressed().unwrap()
+    );
 }

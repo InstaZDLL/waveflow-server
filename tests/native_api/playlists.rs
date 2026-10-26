@@ -184,7 +184,7 @@ async fn a_public_playlist_is_read_by_other_accounts_through_their_own_libraries
             owner,
             shared,
             viewer,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await

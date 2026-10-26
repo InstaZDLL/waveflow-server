@@ -154,9 +154,9 @@ impl ScrobbleTarget for Maloja {
             // answer over it, or one that breaks off, is not read at all, and
             // the status line decides — exactly as for a body that will not
             // parse. The verdict is logged; the body never is.
-            let refused = match crate::outbound::read_bounded_body(
+            let refused = match crate::remote::outbound::read_bounded_body(
                 response,
-                crate::outbound::MAX_ANSWER_BYTES,
+                crate::remote::outbound::MAX_ANSWER_BYTES,
             )
             .await
             {
@@ -398,10 +398,10 @@ mod tests {
     /// which is the difference this tells apart.
     #[tokio::test]
     async fn an_answer_over_the_ceiling_leaves_the_status_line_deciding() {
-        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
-        let (url, server) = crate::outbound::tests::answering(axum::body::Body::from(format!(
-            "{{\"status\":\"failure\"{padding}}}"
-        )))
+        let padding = " ".repeat(crate::remote::outbound::MAX_ANSWER_BYTES);
+        let (url, server) = crate::remote::outbound::tests::answering(axum::body::Body::from(
+            format!("{{\"status\":\"failure\"{padding}}}"),
+        ))
         .await;
         let base = super::super::validate_destination(&url, true).expect("a destination");
         let client = super::super::outbound_client(Duration::from_secs(5)).expect("a client");

@@ -11,9 +11,9 @@ use super::{
     SetWatchArgs, UnavailableArgs,
 };
 use crate::{
-    authentication::now_ms,
-    catalog::LibraryRecord,
-    database::{Database, LibraryRole, LibraryVisibility},
+    auth::authentication::now_ms,
+    storage::catalog::LibraryRecord,
+    storage::database::{Database, LibraryRole, LibraryVisibility},
     AppState,
 };
 

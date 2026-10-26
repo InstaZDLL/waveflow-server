@@ -26,10 +26,10 @@
 use sqlx::migrate::Migrate;
 use sqlx::Connection;
 use sqlx::SqliteConnection;
-use waveflow_server::database::Database;
-use waveflow_server::database::MIGRATOR;
 use waveflow_server::services::AlbumListQuery;
 use waveflow_server::services::BrowsePage;
+use waveflow_server::storage::database::Database;
+use waveflow_server::storage::database::MIGRATOR;
 use waveflow_server::Config;
 
 /// The schema each released tag left on disk, named by its last migration.
@@ -704,7 +704,7 @@ async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
     sqlx::query(
         "INSERT INTO instance_metadata (singleton, key_fingerprint, created_at) VALUES (1, ?, 0)",
     )
-    .bind(waveflow_server::security::bytes_hash(&key).as_slice())
+    .bind(waveflow_server::auth::security::bytes_hash(&key).as_slice())
     .execute(&mut *connection)
     .await
     .expect("bind the key");
@@ -813,7 +813,7 @@ async fn an_installation_behind(config: &Config, extra: Option<&'static str>) ->
     sqlx::query(
         "INSERT INTO instance_metadata (singleton, key_fingerprint, created_at) VALUES (1, ?, 0)",
     )
-    .bind(waveflow_server::security::bytes_hash(&key).as_slice())
+    .bind(waveflow_server::auth::security::bytes_hash(&key).as_slice())
     .execute(&mut *connection)
     .await
     .expect("bind the key");
@@ -842,7 +842,7 @@ fn pre_migration_copies(config: &Config) -> Vec<std::path::PathBuf> {
             let taken_at = path
                 .file_name()?
                 .to_str()?
-                .strip_prefix(waveflow_server::migration_backup::PREFIX)?
+                .strip_prefix(waveflow_server::storage::migration_backup::PREFIX)?
                 .parse::<u64>()
                 .ok()?;
             Some((taken_at, path))
@@ -864,13 +864,13 @@ async fn an_upgrade_copies_the_database_and_its_key_before_migrating() {
     for stale in ["1", "2", "3", "4"] {
         std::fs::create_dir_all(config.data_dir.join(format!(
             "{}{stale}",
-            waveflow_server::migration_backup::PREFIX
+            waveflow_server::storage::migration_backup::PREFIX
         )))
         .unwrap();
     }
     let lookalike = config.data_dir.join(format!(
         "{}notes",
-        waveflow_server::migration_backup::PREFIX
+        waveflow_server::storage::migration_backup::PREFIX
     ));
     let restore = config.data_dir.join("pre-restore-5");
     std::fs::create_dir_all(&lookalike).unwrap();
@@ -903,13 +903,13 @@ async fn an_upgrade_copies_the_database_and_its_key_before_migrating() {
     assert!(
         Database::check_file_instance_key(
             &newest.join("waveflow.db"),
-            &waveflow_server::security::bytes_hash(&key)
+            &waveflow_server::auth::security::bytes_hash(&key)
         )
         .await
         .unwrap(),
         "the copied pair does not agree"
     );
-    let prefix = waveflow_server::migration_backup::PREFIX;
+    let prefix = waveflow_server::storage::migration_backup::PREFIX;
     for gone in ["1", "2"] {
         assert!(!config.data_dir.join(format!("{prefix}{gone}")).exists());
     }
@@ -1045,7 +1045,7 @@ async fn the_copy_just_made_survives_a_clock_that_went_back() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let config = Config::for_data_dir(temp.path().join("data"));
     let (_, behind) = an_installation_behind(&config, None).await;
-    let prefix = waveflow_server::migration_backup::PREFIX;
+    let prefix = waveflow_server::storage::migration_backup::PREFIX;
     // Three copies dated long after anything this boot can read off its clock.
     let future = ["99999999999991", "99999999999992", "99999999999993"];
     for stamp in future {

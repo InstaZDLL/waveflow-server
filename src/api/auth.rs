@@ -22,7 +22,7 @@ pub struct RefreshRequest {
     tag = "authentication",
     request_body = LoginRequest,
     responses(
-        (status = 200, body = crate::authentication::AuthTokens),
+        (status = 200, body = crate::auth::authentication::AuthTokens),
         (status = 401, body = ErrorResponse),
         (status = 422, body = ErrorResponse),
         (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
@@ -34,14 +34,14 @@ pub async fn login(
     State(state): State<AppState>,
     client: SignInAddress,
     Json(request): Json<LoginRequest>,
-) -> Result<Json<crate::authentication::AuthTokens>, ApiError> {
+) -> Result<Json<crate::auth::authentication::AuthTokens>, ApiError> {
     state
         .auth
         .login(
             &request.username,
             &request.password,
             &request.device_name,
-            &client.on(crate::sign_in::Surface::Native),
+            &client.on(crate::auth::sign_in::Surface::Native),
         )
         .await
         .map(Json)
@@ -54,7 +54,7 @@ pub async fn login(
     tag = "authentication",
     request_body = RefreshRequest,
     responses(
-        (status = 200, body = crate::authentication::AuthTokens),
+        (status = 200, body = crate::auth::authentication::AuthTokens),
         (status = 401, body = ErrorResponse),
         (status = 503, body = ErrorResponse)
     )
@@ -62,7 +62,7 @@ pub async fn login(
 pub async fn refresh(
     State(state): State<AppState>,
     Json(request): Json<RefreshRequest>,
-) -> Result<Json<crate::authentication::AuthTokens>, ApiError> {
+) -> Result<Json<crate::auth::authentication::AuthTokens>, ApiError> {
     state
         .auth
         .refresh(&request.refresh_token)
@@ -125,7 +125,7 @@ pub async fn web_login(
             &request.username,
             &request.password,
             &request.device_name,
-            &client.on(crate::sign_in::Surface::Web),
+            &client.on(crate::auth::sign_in::Surface::Web),
         )
         .await
         .map_err(ApiError::from)?;
@@ -198,8 +198,11 @@ pub async fn web_logout(
 pub struct SignInAddress(String);
 
 impl SignInAddress {
-    fn on(self, surface: crate::sign_in::Surface) -> crate::authentication::SignInClient {
-        crate::authentication::SignInClient {
+    fn on(
+        self,
+        surface: crate::auth::sign_in::Surface,
+    ) -> crate::auth::authentication::SignInClient {
+        crate::auth::authentication::SignInClient {
             surface,
             address: self.0,
         }
@@ -213,7 +216,7 @@ impl axum::extract::FromRequestParts<AppState> for SignInAddress {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        Ok(Self(crate::sign_in::request_bucket(
+        Ok(Self(crate::auth::sign_in::request_bucket(
             &parts.extensions,
             &parts.headers,
             &state.trusted_proxies,

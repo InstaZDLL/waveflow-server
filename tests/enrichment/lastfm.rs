@@ -158,7 +158,7 @@ async fn no_more_than_the_ceiling_of_fills_is_ever_queued() {
         &listener,
     );
 
-    let names: Vec<String> = (0..=waveflow_server::enrichment::MAX_IN_FLIGHT)
+    let names: Vec<String> = (0..=waveflow_server::remote::enrichment::MAX_IN_FLIGHT)
         .map(|index| format!("Artist {index}"))
         .collect();
     let visits = names.iter().map(|name| enrichment.artist(name));
@@ -169,7 +169,7 @@ async fn no_more_than_the_ceiling_of_fills_is_ever_queued() {
 
     assert_eq!(
         listener.fake.info.load(Ordering::SeqCst),
-        waveflow_server::enrichment::MAX_IN_FLIGHT
+        waveflow_server::remote::enrichment::MAX_IN_FLIGHT
     );
 }
 

@@ -1,6 +1,6 @@
 //! Splitting a joined artist credit, by decision (RFC-015).
 //!
-//! The tag mapper (`crate::tags`) cuts an artist value on the separators no
+//! The tag mapper (`crate::library::tags`) cuts an artist value on the separators no
 //! band name carries. A comma is not one of them — `Tyler, The Creator` is one
 //! artist, `Zedd, Alessia Cara` two — so a credit holding one is left whole,
 //! and an owner decides. This is the second step, applied to each name the
@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
-use crate::tags::{Credit, Role};
+use crate::library::tags::{Credit, Role};
 
 /// The characters a joined credit is cut on: the desktop's set, ASCII and
 /// fullwidth commas and the two ideographic ones. Unpadded, as the desktop's
@@ -31,7 +31,7 @@ pub const FRAGMENT_SEPARATORS: [char; 4] = [',', '，', '、', '､'];
 /// artist row under the default spec — and survives a change of spec, which
 /// an artist id would not.
 pub fn credit_key(name: &str) -> String {
-    crate::pid::str_clear(&name.trim().to_lowercase())
+    crate::library::pid::str_clear(&name.trim().to_lowercase())
 }
 
 /// The name cut on [`FRAGMENT_SEPARATORS`], never inside parentheses, trimmed,

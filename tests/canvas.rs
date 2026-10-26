@@ -9,12 +9,12 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
 use waveflow_server::config::CanvasLimits;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryVisibility;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
@@ -792,9 +792,9 @@ async fn a_ticket_opens_the_canvas_it_was_minted_for_and_nothing_else() {
     // The two kinds do not answer for each other, which is the whole reason the
     // kind is sealed inside the payload. An audio ticket for this very track,
     // minted for this very account and unexpired, does not open the canvas.
-    let audio = waveflow_server::stream_ticket::mint(
+    let audio = waveflow_server::auth::stream_ticket::mint(
         &state.secret_box,
-        waveflow_server::stream_ticket::TicketKind::Audio,
+        waveflow_server::auth::stream_ticket::TicketKind::Audio,
         fixture.owner,
         track,
         now_ms() + 60_000,
@@ -1457,9 +1457,9 @@ async fn a_disabled_account_s_canvas_ticket_opens_nothing() {
         )
         .await
         .unwrap();
-    let ticket = waveflow_server::stream_ticket::mint(
+    let ticket = waveflow_server::auth::stream_ticket::mint(
         &state.secret_box,
-        waveflow_server::stream_ticket::TicketKind::Canvas,
+        waveflow_server::auth::stream_ticket::TicketKind::Canvas,
         owner,
         track,
         now_ms() + 60_000,

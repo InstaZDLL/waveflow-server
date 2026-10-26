@@ -70,7 +70,7 @@ impl LastFm {
     ///
     /// Bounded twice, which is the whole of RFC-023 decision 1 for this path:
     /// in time by [`Self::deadline`], and in size by
-    /// [`crate::outbound::read_bounded_body`]. Either refusal is
+    /// [`crate::remote::outbound::read_bounded_body`]. Either refusal is
     /// `Unavailable`, a failure of the way to Last.fm rather than of what the
     /// person brought.
     ///
@@ -100,13 +100,15 @@ impl LastFm {
                 tracing::warn!(call = what, %status, "last.fm refused the call");
                 return Err(ServiceError::Invalid);
             }
-            let body =
-                crate::outbound::read_bounded_body(response, crate::outbound::MAX_ANSWER_BYTES)
-                    .await
-                    .map_err(|error| {
-                        tracing::warn!(call = what, %error, "last.fm's answer was not read");
-                        ServiceError::Unavailable
-                    })?;
+            let body = crate::remote::outbound::read_bounded_body(
+                response,
+                crate::remote::outbound::MAX_ANSWER_BYTES,
+            )
+            .await
+            .map_err(|error| {
+                tracing::warn!(call = what, %error, "last.fm's answer was not read");
+                ServiceError::Unavailable
+            })?;
             serde_json::from_slice::<T>(&body).map_err(|_| {
                 tracing::warn!(call = what, "last.fm's answer is not the expected JSON");
                 ServiceError::Unavailable
@@ -252,9 +254,9 @@ impl ScrobbleTarget for LastFm {
             if !status.is_success() {
                 return status_verdict(status, retry_after);
             }
-            let answer = match crate::outbound::read_bounded_body(
+            let answer = match crate::remote::outbound::read_bounded_body(
                 response,
-                crate::outbound::MAX_ANSWER_BYTES,
+                crate::remote::outbound::MAX_ANSWER_BYTES,
             )
             .await
             {
@@ -708,7 +710,7 @@ mod tests {
 
     /// An adapter aimed at a listener of the test's own.
     async fn reaching(body: axum::body::Body) -> (LastFm, tokio::task::JoinHandle<()>) {
-        let (url, server) = crate::outbound::tests::answering(body).await;
+        let (url, server) = crate::remote::outbound::tests::answering(body).await;
         let base = super::super::validate_destination(&url, true).expect("a destination");
         let client = super::super::outbound_client(Duration::from_secs(5)).expect("a client");
         let application = crate::config::LastFmApplication {
@@ -731,7 +733,7 @@ mod tests {
     async fn a_session_answer_over_the_ceiling_is_not_read() {
         use crate::services::{LastFmSessionExchange, ServiceError};
         let key = uuid::Uuid::new_v4().simple().to_string();
-        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let padding = " ".repeat(crate::remote::outbound::MAX_ANSWER_BYTES);
         let (target, server) = reaching(axum::body::Body::from(format!(
             "{{\"session\":{{\"key\":\"{key}\"}}{padding}}}"
         )))
@@ -760,7 +762,7 @@ mod tests {
     async fn a_token_answer_over_the_ceiling_is_not_read() {
         use crate::services::{LastFmSessionExchange, ServiceError};
         let token = uuid::Uuid::new_v4().simple().to_string();
-        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let padding = " ".repeat(crate::remote::outbound::MAX_ANSWER_BYTES);
         let (target, server) = reaching(axum::body::Body::from(format!(
             "{{\"token\":\"{token}\"{padding}}}"
         )))
@@ -778,7 +780,7 @@ mod tests {
     /// apart.
     #[tokio::test]
     async fn a_scrobble_answer_over_the_ceiling_leaves_the_status_line_deciding() {
-        let padding = " ".repeat(crate::outbound::MAX_ANSWER_BYTES);
+        let padding = " ".repeat(crate::remote::outbound::MAX_ANSWER_BYTES);
         let (target, server) =
             reaching(axum::body::Body::from(format!("{{\"error\":9{padding}}}"))).await;
         let envelope = an_envelope();

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{authentication::AuthError, AppState};
+use crate::{auth::authentication::AuthError, AppState};
 
 pub(crate) mod access;
 mod attention;
@@ -256,7 +256,7 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v2/artists/{artist_id}/image/{kind}",
             put(put_artist_image).delete(delete_artist_image).layer(
-                axum::extract::DefaultBodyLimit::max(crate::portrait::MAX_IMAGE_BYTES),
+                axum::extract::DefaultBodyLimit::max(crate::remote::portrait::MAX_IMAGE_BYTES),
             ),
         )
         .route(

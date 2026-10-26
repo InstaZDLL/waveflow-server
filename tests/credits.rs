@@ -14,12 +14,12 @@ use serde_json::json;
 use support::*;
 use tower::ServiceExt;
 use uuid::Uuid;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::CatalogTrackInput;
-use waveflow_server::database::{LibraryRole, LibraryVisibility};
+use waveflow_server::auth::authentication::now_ms;
 use waveflow_server::services::{
     AttentionCategory, BrowsePage, CreditDecisionKind, TrackMetadataPatch,
 };
+use waveflow_server::storage::catalog::CatalogTrackInput;
+use waveflow_server::storage::database::{LibraryRole, LibraryVisibility};
 use waveflow_server::AppState;
 
 /// One credited row: track, role, position, name, sort form.

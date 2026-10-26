@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::Database;
 
-/// RFC-011's cache, which [`crate::enrichment`] fills and reads.
+/// RFC-011's cache, which [`crate::remote::enrichment`] fills and reads.
 ///
 /// No user id and no tenancy anywhere in it: what a provider says about a name
 /// is the same whoever asks, and nothing here is account data (decision 4).
@@ -22,7 +22,7 @@ impl Database {
     pub async fn metadata_artist_rows(
         &self,
         name_canonical: &str,
-    ) -> Result<Vec<crate::enrichment::CachedArtist>, sqlx::Error> {
+    ) -> Result<Vec<crate::remote::enrichment::CachedArtist>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT provider, outcome, bio_summary, bio_full, image_hash, fanart_hash, \
                     fetched_at, expires_at \
@@ -34,14 +34,14 @@ impl Database {
         let mut cached = Vec::with_capacity(rows.len());
         for row in rows {
             let provider: String = row.try_get("provider")?;
-            let Some(provider) = crate::enrichment::Provider::parse(&provider) else {
+            let Some(provider) = crate::remote::enrichment::Provider::parse(&provider) else {
                 continue;
             };
             let outcome: String = row.try_get("outcome")?;
-            let outcome = crate::enrichment::Outcome::parse(&outcome).ok_or_else(|| {
+            let outcome = crate::remote::enrichment::Outcome::parse(&outcome).ok_or_else(|| {
                 sqlx::Error::Decode(format!("unknown enrichment outcome {outcome:?}").into())
             })?;
-            cached.push(crate::enrichment::CachedArtist {
+            cached.push(crate::remote::enrichment::CachedArtist {
                 provider,
                 outcome,
                 bio_summary: row.try_get("bio_summary")?,
@@ -58,9 +58,9 @@ impl Database {
     /// One provider's ranked neighbours for one canonical name, best first.
     pub async fn metadata_artist_similar(
         &self,
-        provider: crate::enrichment::Provider,
+        provider: crate::remote::enrichment::Provider,
         name_canonical: &str,
-    ) -> Result<Vec<crate::enrichment::CachedSimilar>, sqlx::Error> {
+    ) -> Result<Vec<crate::remote::enrichment::CachedSimilar>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT similar_name, similar_canonical, score FROM metadata_artist_similar \
              WHERE provider = ? AND name_canonical = ? ORDER BY rank",
@@ -71,7 +71,7 @@ impl Database {
         .await?;
         rows.into_iter()
             .map(|row| {
-                Ok(crate::enrichment::CachedSimilar {
+                Ok(crate::remote::enrichment::CachedSimilar {
                     name: row.try_get("similar_name")?,
                     name_canonical: row.try_get("similar_canonical")?,
                     score: row.try_get("score")?,
@@ -109,7 +109,7 @@ impl Database {
             &mut tx,
             name_canonical,
             hash,
-            crate::authentication::now_ms(),
+            crate::auth::authentication::now_ms(),
         )
         .await?;
         tx.commit().await
@@ -140,7 +140,7 @@ impl Database {
             &mut tx,
             name_canonical,
             Some(hash),
-            crate::authentication::now_ms(),
+            crate::auth::authentication::now_ms(),
         )
         .await?;
         tx.commit().await
@@ -152,7 +152,7 @@ impl Database {
         &self,
         provider: &str,
         lookup_key: &str,
-    ) -> Result<Option<crate::lrclib::CachedLyrics>, sqlx::Error> {
+    ) -> Result<Option<crate::remote::lrclib::CachedLyrics>, sqlx::Error> {
         let Some(row) = sqlx::query(
             "SELECT outcome, synced_lyrics, plain_lyrics, fetched_at, expires_at \
              FROM lyrics_lookup WHERE provider = ? AND lookup_key = ?",
@@ -165,10 +165,10 @@ impl Database {
             return Ok(None);
         };
         let outcome: String = row.try_get("outcome")?;
-        let outcome = crate::lrclib::LyricsOutcome::parse(&outcome).ok_or_else(|| {
+        let outcome = crate::remote::lrclib::LyricsOutcome::parse(&outcome).ok_or_else(|| {
             sqlx::Error::Decode(format!("unknown lyrics outcome {outcome:?}").into())
         })?;
-        Ok(Some(crate::lrclib::CachedLyrics {
+        Ok(Some(crate::remote::lrclib::CachedLyrics {
             outcome,
             synced: row.try_get("synced_lyrics")?,
             plain: row.try_get("plain_lyrics")?,
@@ -183,7 +183,7 @@ impl Database {
         &self,
         provider: &str,
         lookup_key: &str,
-        answer: &crate::lrclib::CachedLyrics,
+        answer: &crate::remote::lrclib::CachedLyrics,
     ) -> Result<(), sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.begin_write(&_writer).await?;
@@ -220,9 +220,9 @@ impl Database {
     /// ever runs under it.
     pub(crate) async fn write_metadata_artist(
         &self,
-        provider: crate::enrichment::Provider,
+        provider: crate::remote::enrichment::Provider,
         name_canonical: &str,
-        answer: &crate::enrichment::ArtistAnswer,
+        answer: &crate::remote::enrichment::ArtistAnswer,
         fetched_at: i64,
         expires_at: i64,
     ) -> Result<(), sqlx::Error> {
@@ -351,9 +351,9 @@ async fn link_portrait_in(
         let library_id: String = row.try_get("library_id")?;
         let parse =
             |value: &str| Uuid::parse_str(value).map_err(|error| sqlx::Error::Decode(error.into()));
-        crate::catalog::record_library_event(
+        crate::storage::catalog::record_library_event(
             tx,
-            crate::catalog::LibraryChange {
+            crate::storage::catalog::LibraryChange {
                 library_id: parse(&library_id)?,
                 entity_type: "artist",
                 entity_id: parse(&id)?,
@@ -435,9 +435,9 @@ async fn record_artist_moves(
         let library_id: String = row.try_get("library_id")?;
         let parse =
             |value: &str| Uuid::parse_str(value).map_err(|error| sqlx::Error::Decode(error.into()));
-        crate::catalog::record_library_event(
+        crate::storage::catalog::record_library_event(
             tx,
-            crate::catalog::LibraryChange {
+            crate::storage::catalog::LibraryChange {
                 library_id: parse(&library_id)?,
                 entity_type: "artist",
                 entity_id: parse(&id)?,

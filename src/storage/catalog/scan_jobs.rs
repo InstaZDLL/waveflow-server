@@ -6,7 +6,7 @@ use sqlx::{Row, Sqlite, Transaction};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{authentication::now_ms, database::Database};
+use crate::{auth::authentication::now_ms, storage::database::Database};
 
 use super::parse_uuid;
 
@@ -171,7 +171,7 @@ impl Database {
     /// Membership alone is not that grant. A scan walks the owner's files and
     /// competes for the writer gate, so it is reserved to `owner` and
     /// `manager`: a `listener` is entitled to read the catalogue, not to spend
-    /// someone else's disk on it. [`crate::database::LibraryRole::may_scan`]
+    /// someone else's disk on it. [`crate::storage::database::LibraryRole::may_scan`]
     /// names the same rule for callers that have the row in hand.
     ///
     /// Returns `None` when the user is not, or no longer, entitled. Callers

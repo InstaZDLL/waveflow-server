@@ -8,7 +8,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::database::Database;
+use crate::storage::database::Database;
 
 use super::parse_uuid;
 
@@ -25,9 +25,9 @@ pub struct StreamTrack {
     pub available: bool,
     /// Whether, and how far, a link in `relative_path` may be followed when
     /// the file is opened (RFC-021, links outside the root).
-    pub link_policy: crate::link_roots::LinkPolicy,
+    pub link_policy: crate::library::link_roots::LinkPolicy,
     /// The track's ReplayGain tags, for a transcode asked to apply them.
-    pub replay_gain: crate::replay_gain::ReplayGainTags,
+    pub replay_gain: crate::media::replay_gain::ReplayGainTags,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -204,11 +204,11 @@ fn stream_track_from_row(row: sqlx::sqlite::SqliteRow) -> Result<StreamTrack, sq
         bitrate: row.try_get("bitrate")?,
         duration_ms: row.try_get("duration_ms")?,
         available: row.try_get::<i64, _>("is_available")? != 0,
-        link_policy: crate::link_roots::LinkPolicy::from_columns(
+        link_policy: crate::library::link_roots::LinkPolicy::from_columns(
             row.try_get("follow_links")?,
             row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
         ),
-        replay_gain: crate::replay_gain::ReplayGainTags {
+        replay_gain: crate::media::replay_gain::ReplayGainTags {
             track_gain: row.try_get("replay_gain_track_gain")?,
             track_peak: row.try_get("replay_gain_track_peak")?,
             album_gain: row.try_get("replay_gain_album_gain")?,

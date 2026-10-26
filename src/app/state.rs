@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use crate::{
-    authentication, config, database, media, scanner, security, services, setup_token, sync,
+    auth::authentication, auth::security, auth::setup_token, config, library::scanner, media,
+    services, storage::database, storage::sync,
 };
 
 #[derive(Clone)]

@@ -42,7 +42,7 @@ async fn chosen_artist_images_lead_every_reader_and_outlive_the_portrait_fill() 
             owner,
             library_id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await
@@ -475,7 +475,7 @@ async fn an_artist_page_groups_its_discography_and_lists_its_appearances() {
         input.track_number = Some(index as i64 + 1);
         if title == "Nine" {
             input.roles = vec![(
-                waveflow_server::tags::Role::Composer,
+                waveflow_server::library::tags::Role::Composer,
                 vec!["Disco Artist".into()],
             )];
         }

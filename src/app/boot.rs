@@ -5,8 +5,9 @@ use std::{sync::Arc, time::Duration};
 
 use super::state::{chunk_body_limit, negotiation_body_limit, AppState};
 use crate::{
-    authentication, database, enrichment, link_roots, lrclib, media, migration_backup, quality,
-    scanner, scrobblers, security, services, setup_token, sync, Config,
+    auth::authentication, auth::security, auth::setup_token, library::link_roots, library::scanner,
+    media, quality, remote::enrichment, remote::lrclib, remote::scrobblers, services,
+    storage::database, storage::migration_backup, storage::sync, Config,
 };
 
 pub async fn initialize(config: &Config) -> anyhow::Result<AppState> {

@@ -13,7 +13,7 @@ pub struct ScanQueuedResponse {
 pub struct CreateLibraryRequest {
     pub name: String,
     pub path: String,
-    pub visibility: crate::database::LibraryVisibility,
+    pub visibility: crate::storage::database::LibraryVisibility,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -24,7 +24,7 @@ pub struct CreateLibraryResponse {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SetLibraryMemberRequest {
-    pub role: crate::database::LibraryRole,
+    pub role: crate::storage::database::LibraryRole,
 }
 
 #[utoipa::path(post, path = "/api/v2/libraries/{library_id}/scans", tag = "catalog", params(("library_id" = Uuid, Path)), responses((status = 202, body = ScanQueuedResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
@@ -42,11 +42,11 @@ pub async fn start_scan(
     Ok((StatusCode::ACCEPTED, Json(ScanQueuedResponse { scan_id })))
 }
 
-#[utoipa::path(get, path = "/api/v2/libraries", tag = "catalog", responses((status = 200, body = [crate::catalog::LibraryAccess]), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/libraries", tag = "catalog", responses((status = 200, body = [crate::storage::catalog::LibraryAccess]), (status = 401, body = ErrorResponse)))]
 pub async fn list_libraries(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<crate::catalog::LibraryAccess>>, ApiError> {
+) -> Result<Json<Vec<crate::storage::catalog::LibraryAccess>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .db
@@ -80,7 +80,7 @@ pub async fn create_library(
             &request.name,
             &canonical,
             request.visibility,
-            crate::authentication::now_ms(),
+            crate::auth::authentication::now_ms(),
         )
         .await
         .map_err(db_error)?;
@@ -88,7 +88,7 @@ pub async fn create_library(
     let scan_id = state
         .scanner
         .trigger(
-            crate::catalog::LibraryRecord {
+            crate::storage::catalog::LibraryRecord {
                 id: library_id,
                 name: request.name,
                 root_path: canonical,
@@ -118,7 +118,7 @@ pub async fn set_library_member(
     Json(request): Json<SetLibraryMemberRequest>,
 ) -> Result<StatusCode, ApiError> {
     let actor = authenticated(&state, &headers, Access::Admin).await?;
-    if request.role == crate::database::LibraryRole::Owner
+    if request.role == crate::storage::database::LibraryRole::Owner
         || state
             .db
             .account_by_id(user_id)
@@ -142,7 +142,7 @@ pub async fn set_library_member(
             library_id,
             user_id,
             request.role,
-            crate::authentication::now_ms(),
+            crate::auth::authentication::now_ms(),
         )
         .await
         .map_err(db_error)?;
@@ -162,7 +162,7 @@ pub async fn remove_library_member(
             actor.id,
             library_id,
             user_id,
-            crate::authentication::now_ms(),
+            crate::auth::authentication::now_ms(),
         )
         .await
         .map_err(db_error)?
@@ -173,12 +173,12 @@ pub async fn remove_library_member(
     }
 }
 
-#[utoipa::path(get, path = "/api/v2/scans/{scan_id}", tag = "catalog", params(("scan_id" = Uuid, Path)), responses((status = 200, body = crate::catalog::ScanJobRecord), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/scans/{scan_id}", tag = "catalog", params(("scan_id" = Uuid, Path)), responses((status = 200, body = crate::storage::catalog::ScanJobRecord), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn scan_status(
     State(state): State<AppState>,
     Path(scan_id): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<crate::catalog::ScanJobRecord>, ApiError> {
+) -> Result<Json<crate::storage::catalog::ScanJobRecord>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .db
@@ -327,7 +327,9 @@ pub async fn library_events(
             user.id,
             library_id,
             query.after.unwrap_or(0),
-            query.limit.unwrap_or(crate::sync::DEFAULT_SYNC_LIMIT),
+            query
+                .limit
+                .unwrap_or(crate::storage::sync::DEFAULT_SYNC_LIMIT),
         )
         .await
         .map(Json)

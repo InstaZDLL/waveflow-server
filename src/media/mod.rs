@@ -2,6 +2,7 @@
 
 mod artwork;
 mod canvas;
+pub mod replay_gain;
 mod stream;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -45,7 +46,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{config::Config, replay_gain::ReplayGainMode, AppState};
+use crate::{config::Config, media::replay_gain::ReplayGainMode, AppState};
 
 /// Audio is tenant-scoped and reached through a bearer token or a stream
 /// ticket, so the same URL means different things to different callers. No
@@ -109,7 +110,7 @@ struct MediaInner {
     ffmpeg_digest: String,
     /// The folders outside every library a stored path may lead into through
     /// a link (`WAVEFLOW_LINK_ROOTS`).
-    link_roots: crate::link_roots::LinkRoots,
+    link_roots: crate::library::link_roots::LinkRoots,
     /// What a Subsonic transcode applies of ReplayGain unless the request
     /// says otherwise (`WAVEFLOW_SUBSONIC_REPLAYGAIN`).
     subsonic_replay_gain: ReplayGainMode,
@@ -196,7 +197,7 @@ impl MediaService {
                 cache_locks: DashMap::new(),
                 cache_access: DashMap::new(),
                 pending_fills: DashSet::new(),
-                link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
+                link_roots: crate::library::link_roots::LinkRoots::new(config.link_roots.clone()),
                 subsonic_replay_gain: config.subsonic_replay_gain,
                 active_transcodes: AtomicUsize::new(0),
                 transcoding_available: true,
@@ -372,7 +373,7 @@ pub fn router(state: AppState) -> Router {
 async fn bearer_principal(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<crate::authentication::AuthUser, MediaError> {
+) -> Result<crate::auth::authentication::AuthUser, MediaError> {
     crate::api::authenticated(state, headers, crate::api::Access::Read)
         .await
         .map_err(|_| MediaError::Unauthorized)

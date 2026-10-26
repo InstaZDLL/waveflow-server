@@ -36,7 +36,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::{parse_uuid, CanvasBlob, DomainServices, ServiceError};
-use crate::authentication::now_ms;
+use crate::auth::authentication::now_ms;
 
 mod placement;
 mod probe;

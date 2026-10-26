@@ -27,8 +27,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::auth::security;
 use crate::config::{Config, SETUP_TOKEN_MIN_CHARS};
-use crate::security;
 
 /// The file a drawn token is written to, inside the data directory.
 pub const FILE_NAME: &str = "setup-token";

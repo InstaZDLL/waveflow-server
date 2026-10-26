@@ -7,7 +7,7 @@
 //!
 //! Decision 10 calls outbound requests the real risk of the whole RFC — a
 //! server that calls a URL is a server somebody can make call a URL — so the
-//! rules live once, in [`crate::outbound`], rather than in each adapter. That
+//! rules live once, in [`crate::remote::outbound`], rather than in each adapter. That
 //! module is shared with metadata enrichment (RFC-011), the server's only other
 //! outbound surface.
 
@@ -114,15 +114,15 @@ pub fn canonical_destination(url: &url::Url) -> String {
 /// keep `scrobble_link` free of destination addresses, which decision 10 says
 /// it holds none of.
 pub fn destination_fingerprint(url: &url::Url) -> String {
-    hex::encode(crate::security::bytes_hash(
+    hex::encode(crate::auth::security::bytes_hash(
         canonical_destination(url).as_bytes(),
     ))
 }
 
-/// The client every adapter shares: [`crate::outbound::client`], which holds
+/// The client every adapter shares: [`crate::remote::outbound::client`], which holds
 /// decision 10's rules and is shared with metadata enrichment.
 pub fn outbound_client(timeout: Duration) -> Result<reqwest::Client, OutboundError> {
-    crate::outbound::client(timeout).map_err(|_| OutboundError::Unbuildable)
+    crate::remote::outbound::client(timeout).map_err(|_| OutboundError::Unbuildable)
 }
 
 /// Checks a destination an operator configured, before it is ever called.

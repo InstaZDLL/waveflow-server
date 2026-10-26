@@ -111,7 +111,7 @@ impl DomainServices {
         // querying on each keystroke would otherwise get nothing until the word
         // is complete — "ech" returned zero results while "echo" returned the
         // album. Native clients type incrementally just as Subsonic ones do.
-        let Some(fts) = crate::catalog::fts_prefix_query(query) else {
+        let Some(fts) = crate::storage::catalog::fts_prefix_query(query) else {
             return Ok(SearchResult {
                 artists: Vec::new(),
                 albums: Vec::new(),

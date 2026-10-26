@@ -7,12 +7,12 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
-use waveflow_server::authentication::now_ms;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
 use waveflow_server::config::UploadLimits;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryRole;
+use waveflow_server::storage::database::LibraryVisibility;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.

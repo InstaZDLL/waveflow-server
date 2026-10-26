@@ -38,7 +38,7 @@ async fn the_disk_tree_lists_one_level_of_the_indexed_paths_to_members_only() {
             owner,
             library_id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await
@@ -328,7 +328,7 @@ async fn filed_folders_sort_a_library_in_the_database_only() {
             owner,
             library,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await

@@ -15,8 +15,8 @@ use tokio::sync::{broadcast, watch, Mutex};
 use uuid::Uuid;
 
 use crate::{
-    catalog::{CatalogTrackInput, LibraryRecord, ScanJobRecord},
-    database::Database,
+    storage::catalog::{CatalogTrackInput, LibraryRecord, ScanJobRecord},
+    storage::database::Database,
 };
 
 /// One reading of a scan in flight, as it travels between the scanning task and
@@ -94,7 +94,7 @@ pub struct ScanManager {
     libraries: Arc<watch::Sender<u64>>,
     /// The folders outside every library a followed link may reach into
     /// (`WAVEFLOW_LINK_ROOTS`).
-    link_roots: crate::link_roots::LinkRoots,
+    link_roots: crate::library::link_roots::LinkRoots,
 }
 
 /// One scan counted as running, for as long as this lives.
@@ -150,13 +150,13 @@ impl ScanManager {
             in_flight: Arc::new(watch::Sender::new(0)),
             scanning: Arc::new(DashMap::new()),
             libraries: Arc::new(watch::Sender::new(0)),
-            link_roots: crate::link_roots::LinkRoots::default(),
+            link_roots: crate::library::link_roots::LinkRoots::default(),
         }
     }
 
     /// The folders outside every library that a library following links may
     /// reach into.
-    pub fn with_link_roots(mut self, link_roots: crate::link_roots::LinkRoots) -> Self {
+    pub fn with_link_roots(mut self, link_roots: crate::library::link_roots::LinkRoots) -> Self {
         self.link_roots = link_roots;
         self
     }

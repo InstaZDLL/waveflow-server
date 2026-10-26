@@ -196,7 +196,7 @@ impl Database {
             loop {
                 ticker.tick().await;
                 match db
-                    .prune_authorizations(crate::authentication::now_ms())
+                    .prune_authorizations(crate::auth::authentication::now_ms())
                     .await
                 {
                     Ok(0) => {}

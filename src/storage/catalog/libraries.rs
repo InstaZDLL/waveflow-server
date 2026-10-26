@@ -8,7 +8,7 @@ use sqlx::Row;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::{authentication::now_ms, database::Database};
+use crate::{auth::authentication::now_ms, storage::database::Database};
 
 use super::parse_uuid;
 
@@ -34,8 +34,8 @@ pub struct LibraryScanSettings {
 pub struct LibraryAccess {
     pub id: Uuid,
     pub name: String,
-    pub visibility: crate::database::LibraryVisibility,
-    pub role: crate::database::LibraryRole,
+    pub visibility: crate::storage::database::LibraryVisibility,
+    pub role: crate::storage::database::LibraryRole,
     pub last_scan_started_at: Option<i64>,
     pub last_scan_completed_at: Option<i64>,
     /// Whether the library takes files at all. The operator's decision, set
@@ -76,12 +76,14 @@ impl Database {
                 Ok(LibraryAccess {
                     id: parse_uuid(row.try_get("id")?)?,
                     name: row.try_get("name")?,
-                    visibility: crate::database::LibraryVisibility::from_str(
+                    visibility: crate::storage::database::LibraryVisibility::from_str(
                         row.try_get::<&str, _>("visibility")?,
                     )
                     .map_err(|error| sqlx::Error::Decode(error.into()))?,
-                    role: crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
-                        .map_err(|error| sqlx::Error::Decode(error.into()))?,
+                    role: crate::storage::database::LibraryRole::from_str(
+                        row.try_get::<&str, _>("role")?,
+                    )
+                    .map_err(|error| sqlx::Error::Decode(error.into()))?,
                     last_scan_started_at: row.try_get("last_scan_started_at")?,
                     last_scan_completed_at: row.try_get("last_scan_completed_at")?,
                     accepts_uploads: row.try_get::<i64, _>("accepts_uploads")? != 0,

@@ -54,7 +54,7 @@ async fn pkce_authorization_grants_a_native_session_exactly_once() {
     let token = login_token(&router, "pkce-user", password).await;
 
     let verifier = "H1r8mQ2xY7pL4vC0nB6zK9tW3sD5gJ8fA2eR7uI1oP4";
-    let challenge = waveflow_server::oauth::challenge_for(verifier);
+    let challenge = waveflow_server::auth::oauth::challenge_for(verifier);
     let redirect_uri = "http://127.0.0.1:49152/callback";
 
     let authorize = |body: serde_json::Value, bearer: Option<String>| {

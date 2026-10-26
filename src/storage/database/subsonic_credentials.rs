@@ -3,7 +3,7 @@
 
 use uuid::Uuid;
 
-use crate::security::EncryptedSecret;
+use crate::auth::security::EncryptedSecret;
 
 use super::{insert_audit, Database};
 

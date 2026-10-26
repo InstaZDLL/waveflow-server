@@ -213,7 +213,10 @@ impl DomainServices {
             std::path::Path::new(&root_path),
             &relative_path,
             &self.link_roots,
-            &crate::link_roots::LinkPolicy::from_columns(follow_links, other_roots.as_deref()),
+            &crate::library::link_roots::LinkPolicy::from_columns(
+                follow_links,
+                other_roots.as_deref(),
+            ),
         )
         .await
         .map_err(|_| ServiceError::Unavailable)?;

@@ -126,7 +126,7 @@ impl DomainServices {
     /// of an empty library is an empty listing. `Invalid` for a malformed path.
     ///
     /// Folders and tracks sort by name in natural order — numbers by value,
-    /// letters case-folded (`crate::natural_order`) — so `2 …` comes before
+    /// letters case-folded (`crate::storage::natural_order`) — so `2 …` comes before
     /// `10 …`. Tracks sort by file name, except in the received folder, whose file names are hashes: there they
     /// sort by artist then title, a missing artist last.
     pub async fn disk_tree(

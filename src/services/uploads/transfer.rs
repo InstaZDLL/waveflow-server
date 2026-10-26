@@ -75,7 +75,7 @@ impl DomainServices {
         .fetch_optional(self.db.pool())
         .await?
         .ok_or(ServiceError::NotFound)?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_upload() {
             // Blurred onto 404: someone who may no longer upload learns nothing
@@ -353,8 +353,9 @@ impl DomainServices {
                 .bind(&relative)
                 .fetch_optional(&mut *tx)
                 .await?;
-        let decisions = crate::catalog::credit_decisions(&mut tx, target.library_id).await?;
-        crate::database::Database::apply_catalog_track_in_transaction(
+        let decisions =
+            crate::storage::catalog::credit_decisions(&mut tx, target.library_id).await?;
+        crate::storage::database::Database::apply_catalog_track_in_transaction(
             &mut tx,
             self.db.pid(),
             target.library_id,
@@ -362,7 +363,7 @@ impl DomainServices {
             // borrowing an unrelated job's identity, and the end-of-scan sweep
             // knows what that means.
             None,
-            &crate::catalog::CatalogApply {
+            &crate::storage::catalog::CatalogApply {
                 input,
                 existing_id: existing_id.map(parse_uuid).transpose()?,
                 moved: false,

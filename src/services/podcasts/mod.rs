@@ -26,7 +26,7 @@
 use std::path::Path;
 
 use super::*;
-use crate::podcast::{self, FetchPolicy};
+use crate::remote::podcast::{self, FetchPolicy};
 
 /// How many episodes `getNewestPodcasts` answers when it is not told, as the
 /// specification has it, and the most it answers.

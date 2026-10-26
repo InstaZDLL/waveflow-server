@@ -192,9 +192,9 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     }
 
     // An expired ticket is refused even though it is otherwise well formed.
-    let expired = waveflow_server::stream_ticket::mint(
+    let expired = waveflow_server::auth::stream_ticket::mint(
         &secret_box,
-        waveflow_server::stream_ticket::TicketKind::Audio,
+        waveflow_server::auth::stream_ticket::TicketKind::Audio,
         owner,
         uuid::Uuid::parse_str(&track_id).unwrap(),
         now_ms() - 1,
@@ -215,9 +215,9 @@ async fn stream_tickets_authorise_browser_playback_without_a_bearer() {
     // track by this very account under the instance key, and unexpired. The
     // kind is the only thing separating it from the ticket that works two
     // assertions above — which is the whole reason the byte exists.
-    let wrong_kind = waveflow_server::stream_ticket::mint(
+    let wrong_kind = waveflow_server::auth::stream_ticket::mint(
         &secret_box,
-        waveflow_server::stream_ticket::TicketKind::Canvas,
+        waveflow_server::auth::stream_ticket::TicketKind::Canvas,
         owner,
         uuid::Uuid::parse_str(&track_id).unwrap(),
         now_ms() + 60_000,

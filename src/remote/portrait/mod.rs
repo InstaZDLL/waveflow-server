@@ -237,7 +237,7 @@ async fn fetch_within(
     if plain && !pinned.ip().is_loopback() {
         return Err(Refusal::Destination);
     }
-    let client = crate::outbound::builder(timeout)
+    let client = crate::remote::outbound::builder(timeout)
         .resolve(&host, pinned)
         .build()
         .map_err(|_| Refusal::Unreached)?;
@@ -291,11 +291,11 @@ async fn checked_image(response: reqwest::Response, rule: Declared) -> Result<Po
     };
     // The shared bounded read (RFC-023 decision 1), under this fetcher's own
     // ceiling: an image is allowed to weigh more than an API answer.
-    let bytes = crate::outbound::read_bounded_body(response, MAX_IMAGE_BYTES)
+    let bytes = crate::remote::outbound::read_bounded_body(response, MAX_IMAGE_BYTES)
         .await
         .map_err(|error| match error {
-            crate::outbound::BodyError::TooLarge => Refusal::TooLarge,
-            crate::outbound::BodyError::Unread => Refusal::Unreached,
+            crate::remote::outbound::BodyError::TooLarge => Refusal::TooLarge,
+            crate::remote::outbound::BodyError::Unread => Refusal::Unreached,
         })?;
     let format = sniff(&bytes).ok_or(Refusal::NotAnImage)?;
     if declared.is_some_and(|declared| declared != format) {
@@ -314,19 +314,19 @@ async fn checked_image(response: reqwest::Response, rule: Declared) -> Result<Po
 ///
 /// There is no allowlist to hold such an address to, so it is held instead to
 /// every rule the podcast fetcher applies to a feed address
-/// ([`crate::podcast::open`]): http or https only (http where `policy` allows
+/// ([`crate::remote::podcast::open`]): http or https only (http where `policy` allows
 /// it), no user information, every address the name resolves to admitted by
 /// the address policy, checked before connecting and pinned, and redirects
-/// followed by hand, at most [`crate::podcast::MAX_REDIRECTS`], each hop put
+/// followed by hand, at most [`crate::remote::podcast::MAX_REDIRECTS`], each hop put
 /// through the same checks before it is contacted. What comes back is then
 /// held to the rules above: [`MAX_IMAGE_BYTES`], and JPEG, PNG or WebP by the
 /// bytes. The whole of it, redirects included, within `policy.timeout`.
 pub async fn fetch_followed(
     url: &url::Url,
-    policy: crate::podcast::FetchPolicy,
+    policy: crate::remote::podcast::FetchPolicy,
 ) -> Result<Portrait, Refusal> {
     let within = async {
-        let response = crate::podcast::open(url, policy)
+        let response = crate::remote::podcast::open(url, policy)
             .await
             .map_err(Refusal::from)?;
         checked_image(response, Declared::ImageOrUnlabelled).await
@@ -336,9 +336,9 @@ pub async fn fetch_followed(
         .unwrap_or(Err(Refusal::Unreached))
 }
 
-impl From<crate::podcast::FetchError> for Refusal {
-    fn from(error: crate::podcast::FetchError) -> Self {
-        use crate::podcast::FetchError;
+impl From<crate::remote::podcast::FetchError> for Refusal {
+    fn from(error: crate::remote::podcast::FetchError) -> Self {
+        use crate::remote::podcast::FetchError;
         match error {
             FetchError::Destination => Self::Destination,
             FetchError::Address => Self::Address,

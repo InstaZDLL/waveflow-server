@@ -31,8 +31,8 @@ use axum::{
 use uuid::Uuid;
 use waveflow_server::{
     config::LyricsSettings,
-    lrclib::{LyricsLookup, LyricsProvider},
-    lyrics::LyricsInput,
+    library::lyrics::LyricsInput,
+    remote::lrclib::{LyricsLookup, LyricsProvider},
     services::ServiceError,
     AppState, Config,
 };
@@ -41,7 +41,7 @@ use waveflow_server::{
 
 async fn account(state: &AppState, username: &str) -> Uuid {
     let id = Uuid::new_v4();
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     sqlx::query(
         "INSERT INTO account (id, username, password_hash, role, disabled, created_at, updated_at) \
          VALUES (?, ?, 'this-account-never-authenticates', 'admin', 0, ?, ?)",
@@ -92,7 +92,7 @@ async fn library(
     files: &[File],
 ) -> (Uuid, Vec<Uuid>) {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     let root = config.data_dir.join(name);
     std::fs::create_dir_all(&root).unwrap();
     let library = state
@@ -101,7 +101,7 @@ async fn library(
             owner,
             name,
             &std::fs::canonicalize(&root).unwrap(),
-            waveflow_server::database::LibraryVisibility::Private,
+            waveflow_server::storage::database::LibraryVisibility::Private,
             now,
         )
         .await
@@ -184,8 +184,8 @@ async fn subsonic_key(state: &AppState, user: Uuid) -> String {
             user,
             user,
             &state.secret_box.encrypt(password.as_bytes()).unwrap(),
-            &waveflow_server::security::token_hash(&api_key),
-            waveflow_server::authentication::now_ms(),
+            &waveflow_server::auth::security::token_hash(&api_key),
+            waveflow_server::auth::authentication::now_ms(),
         )
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn get_json(router: &Router, uri: &str, token: &str) -> (StatusCode, serde
 
 /// A listen of `track` by `user`, `ago` milliseconds before now.
 async fn listen(state: &AppState, user: Uuid, track: Uuid, ago: i64) {
-    let at = waveflow_server::authentication::now_ms() - ago;
+    let at = waveflow_server::auth::authentication::now_ms() - ago;
     state
         .services
         .scrobble(user, track, true, Some(at))
@@ -387,7 +387,7 @@ async fn shelf() -> Shelf {
         .upload_lyrics(
             owner,
             ids[2],
-            waveflow_server::lyrics::UploadFormat::Txt,
+            waveflow_server::library::lyrics::UploadFormat::Txt,
             b"My name Isobel",
         )
         .await
@@ -1065,7 +1065,7 @@ async fn forgotten_favourites_are_old_stars_not_listened_to_lately() {
         .map(|n| file(&format!("Star {n}"), &format!("Starred {n}"), None, None))
         .collect();
     let (_, ids) = library(&state, &config, me, "mix-forgotten", &files).await;
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     for (track, starred_ago) in [(ids[0], 60 * DAY), (ids[1], DAY), (ids[2], 60 * DAY)] {
         sqlx::query(
             "INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) \

@@ -176,7 +176,7 @@ fn setup_token_on_disk(config: &waveflow_server::Config) -> String {
     std::fs::read_to_string(
         config
             .data_dir
-            .join(waveflow_server::setup_token::FILE_NAME),
+            .join(waveflow_server::auth::setup_token::FILE_NAME),
     )
     .expect("a fresh instance writes its setup token")
     .trim()
@@ -203,7 +203,7 @@ async fn setup_is_refused_without_the_token_and_forgets_it_once_used() {
     let router = waveflow_server::app(&config, state.clone());
     let token_file = config
         .data_dir
-        .join(waveflow_server::setup_token::FILE_NAME);
+        .join(waveflow_server::auth::setup_token::FILE_NAME);
     let token = setup_token_on_disk(&config);
     let password = Uuid::new_v4().to_string();
 
@@ -286,7 +286,7 @@ async fn an_operator_chosen_setup_token_replaces_the_drawn_one() {
     let router = waveflow_server::app(&config, state);
     assert!(!config
         .data_dir
-        .join(waveflow_server::setup_token::FILE_NAME)
+        .join(waveflow_server::auth::setup_token::FILE_NAME)
         .exists());
 
     let password = Uuid::new_v4().to_string();

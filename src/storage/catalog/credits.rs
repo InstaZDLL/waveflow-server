@@ -11,10 +11,10 @@ use super::{apply::upsert_artist, parse_uuid, track_override_lists};
 /// The two lists derived from it are read in lockstep — a name and the sort
 /// form paired with it — so they have to come from one ordering.
 fn credits_in_role(
-    credits: &[crate::tags::Credit],
-    role: crate::tags::Role,
-) -> Vec<&crate::tags::Credit> {
-    let mut named: Vec<&crate::tags::Credit> = credits
+    credits: &[crate::library::tags::Credit],
+    role: crate::library::tags::Role,
+) -> Vec<&crate::library::tags::Credit> {
+    let mut named: Vec<&crate::library::tags::Credit> = credits
         .iter()
         .filter(|credit| credit.role == role)
         .collect();
@@ -32,17 +32,16 @@ fn credits_in_role(
 /// `track_credit` holds the sort form a participant gets and a decision splits
 /// the same one a scan would.
 pub(super) fn with_album_artist_sorts(
-    mut credits: Vec<crate::tags::Credit>,
-) -> Vec<crate::tags::Credit> {
+    mut credits: Vec<crate::library::tags::Credit>,
+) -> Vec<crate::library::tags::Credit> {
     let album: Vec<(String, Option<String>)> =
-        credits_in_role(&credits, crate::tags::Role::AlbumArtist)
+        credits_in_role(&credits, crate::library::tags::Role::AlbumArtist)
             .iter()
             .map(|credit| (credit.name.clone(), credit.sort_name.clone()))
             .collect();
-    for credit in credits
-        .iter_mut()
-        .filter(|credit| credit.role == crate::tags::Role::Artist && credit.sort_name.is_none())
-    {
+    for credit in credits.iter_mut().filter(|credit| {
+        credit.role == crate::library::tags::Role::Artist && credit.sort_name.is_none()
+    }) {
         credit.sort_name = album
             .iter()
             .find(|(name, _)| *name == credit.name)
@@ -59,22 +58,22 @@ pub(super) fn with_album_artist_sorts(
 pub(crate) async fn credit_decisions(
     tx: &mut Transaction<'_, Sqlite>,
     library_id: Uuid,
-) -> Result<crate::credit_split::Decisions, sqlx::Error> {
+) -> Result<crate::library::credit_split::Decisions, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT credit_key, decision, parts FROM artist_credit_decision WHERE library_id = ?",
     )
     .bind(library_id.to_string())
     .fetch_all(&mut **tx)
     .await?;
-    let mut decisions = crate::credit_split::Decisions::new();
+    let mut decisions = crate::library::credit_split::Decisions::new();
     for row in rows {
         let key: String = row.try_get("credit_key")?;
         let decision = match row.try_get::<&str, _>("decision")? {
-            "keep" => crate::credit_split::CreditDecision::Keep,
+            "keep" => crate::library::credit_split::CreditDecision::Keep,
             _ => {
                 let parts: Option<String> = row.try_get("parts")?;
                 match parts.and_then(|parts| serde_json::from_str::<Vec<String>>(&parts).ok()) {
-                    Some(parts) => crate::credit_split::CreditDecision::Split(parts),
+                    Some(parts) => crate::library::credit_split::CreditDecision::Split(parts),
                     None => continue,
                 }
             }
@@ -89,7 +88,7 @@ pub(crate) async fn write_track_credits(
     tx: &mut Transaction<'_, Sqlite>,
     library_id: Uuid,
     track_id: Uuid,
-    credits: &[crate::tags::Credit],
+    credits: &[crate::library::tags::Credit],
 ) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM track_credit WHERE track_id = ?")
         .bind(track_id.to_string())
@@ -120,7 +119,7 @@ pub(crate) async fn write_track_credits(
 pub(crate) async fn read_track_credits(
     tx: &mut Transaction<'_, Sqlite>,
     track_id: Uuid,
-) -> Result<Vec<crate::tags::Credit>, sqlx::Error> {
+) -> Result<Vec<crate::library::tags::Credit>, sqlx::Error> {
     let rows = sqlx::query(
         "SELECT role, sub_role, position, name, sort_name FROM track_credit          WHERE track_id = ? ORDER BY role, position",
     )
@@ -131,10 +130,10 @@ pub(crate) async fn read_track_credits(
     for row in rows {
         // A role this binary does not know was written by a newer one; it is
         // left out rather than guessed, as `track_participant` leaves it.
-        let Some(role) = crate::tags::Role::parse(row.try_get::<&str, _>("role")?) else {
+        let Some(role) = crate::library::tags::Role::parse(row.try_get::<&str, _>("role")?) else {
             continue;
         };
-        credits.push(crate::tags::Credit {
+        credits.push(crate::library::tags::Credit {
             role,
             sub_role: row.try_get("sub_role")?,
             name: row.try_get("name")?,
@@ -163,10 +162,10 @@ pub(crate) struct Recomputed {
 /// behind.
 pub(crate) async fn recompute_track_participants(
     tx: &mut Transaction<'_, Sqlite>,
-    pid: &crate::pid::PidSpecs,
+    pid: &crate::library::pid::PidSpecs,
     library_id: Uuid,
     track_id: Uuid,
-    decisions: &crate::credit_split::Decisions,
+    decisions: &crate::library::credit_split::Decisions,
     now: i64,
 ) -> Result<Recomputed, sqlx::Error> {
     let row = sqlx::query("SELECT album_id, full_hash, artist_display FROM track WHERE id = ?")
@@ -182,7 +181,7 @@ pub(crate) async fn recompute_track_participants(
 
     let file_credits = read_track_credits(tx, track_id).await?;
     let overrides = track_override_lists(tx, track_id).await?;
-    let credits = crate::credit_split::resolve(
+    let credits = crate::library::credit_split::resolve(
         &file_credits,
         decisions,
         overrides.artists.as_deref(),
@@ -222,7 +221,7 @@ pub(crate) async fn recompute_track_participants(
     let mut first_album_artist = None;
     for credit in &credits {
         let artist_id = upsert_artist(tx, pid, library_id, &credit.name, now).await?;
-        if credit.role == crate::tags::Role::AlbumArtist && first_album_artist.is_none() {
+        if credit.role == crate::library::tags::Role::AlbumArtist && first_album_artist.is_none() {
             first_album_artist = Some(artist_id);
         }
         sqlx::query(
@@ -270,8 +269,8 @@ pub(crate) async fn recompute_track_participants(
 }
 
 pub(super) fn credit_names(
-    credits: &[crate::tags::Credit],
-    role: crate::tags::Role,
+    credits: &[crate::library::tags::Credit],
+    role: crate::library::tags::Role,
 ) -> Vec<String> {
     credits_in_role(credits, role)
         .iter()

@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::config::Config;
-use crate::database::{Database, SchemaState};
+use crate::storage::database::{Database, SchemaState};
 
 /// What every copy directory made here is named after, followed by the epoch
 /// milliseconds it was taken at. Pruning recognises nothing else.
@@ -53,7 +53,7 @@ pub async fn before_migrating(db: &Database, config: &Config) -> anyhow::Result<
     };
     let directory = config
         .data_dir
-        .join(format!("{PREFIX}{}", crate::authentication::now_ms()));
+        .join(format!("{PREFIX}{}", crate::auth::authentication::now_ms()));
     let refused = |what: &str| {
         format!(
             "could not copy the {what} before applying {pending} migration(s) to {}; \
@@ -146,9 +146,12 @@ async fn copy_pair(
         let key = tokio::fs::read(&copied_key)
             .await
             .with_context(|| refused("instance key"))?;
-        if !Database::check_file_instance_key(&copied_database, &crate::security::bytes_hash(&key))
-            .await
-            .with_context(|| refused("database"))?
+        if !Database::check_file_instance_key(
+            &copied_database,
+            &crate::auth::security::bytes_hash(&key),
+        )
+        .await
+        .with_context(|| refused("database"))?
         {
             anyhow::bail!(
                 "instance.key does not match waveflow.db; nothing has been applied. \

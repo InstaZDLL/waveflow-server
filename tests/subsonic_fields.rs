@@ -6,10 +6,10 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::http::StatusCode;
 use tower::ServiceExt;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryVisibility;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
@@ -374,7 +374,7 @@ async fn an_artist_reference_is_not_an_artist_record() {
     input.sort_artist = Some("Nocturnes, The".into());
     // A contributor, so the whitelist below actually has one to check.
     input.roles = vec![(
-        waveflow_server::tags::Role::Producer,
+        waveflow_server::library::tags::Role::Producer,
         vec!["Rita Sound".into()],
     )];
     state
@@ -586,11 +586,11 @@ async fn credits_reach_the_wire_in_both_encodings() {
     credited.is_compilation = false;
     credited.roles = vec![
         (
-            waveflow_server::tags::Role::Composer,
+            waveflow_server::library::tags::Role::Composer,
             vec!["Otto Pen; Ada Vale".into()],
         ),
         (
-            waveflow_server::tags::Role::Producer,
+            waveflow_server::library::tags::Role::Producer,
             vec!["Rita Sound".into()],
         ),
     ];

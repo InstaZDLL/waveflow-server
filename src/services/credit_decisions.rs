@@ -3,7 +3,7 @@
 //! A decision belongs to the library: taken by its owners and managers, read
 //! back by every scan, applied at once to the stored catalogue without
 //! reading a file, and undone the same way. The rule itself is
-//! `crate::credit_split`; this is who may invoke it, and what follows from it
+//! `crate::library::credit_split`; this is who may invoke it, and what follows from it
 //! — the library feed, the derivations a scan would rerun, and the favourites
 //! and ratings that would otherwise point at an artist nobody credits.
 
@@ -13,9 +13,9 @@ use sqlx::{Sqlite, Transaction};
 use tokio::sync::OwnedMutexGuard;
 
 use super::*;
-use crate::authentication::now_ms;
-use crate::credit_split::{credit_key, fragments, is_candidate};
-use crate::database::LibraryRole;
+use crate::auth::authentication::now_ms;
+use crate::library::credit_split::{credit_key, fragments, is_candidate};
+use crate::storage::database::LibraryRole;
 
 /// One fragment of a credit an owner is asked about, and whether the library
 /// already has an artist of that name — the strongest hint that a split is
@@ -109,8 +109,8 @@ fn record_event(
     action: &'static str,
     payload: serde_json::Value,
     now: i64,
-) -> crate::catalog::LibraryChange<'static> {
-    crate::catalog::LibraryChange {
+) -> crate::storage::catalog::LibraryChange<'static> {
+    crate::storage::catalog::LibraryChange {
         library_id,
         entity_type,
         entity_id,
@@ -301,7 +301,7 @@ impl DomainServices {
                 .map(|part| self.db.pid().artist_id(library_id, part.trim()))
                 .collect();
             for part in &part_ids {
-                crate::catalog::record_library_event(
+                crate::storage::catalog::record_library_event(
                     &mut tx,
                     record_event(
                         library_id,
@@ -318,7 +318,7 @@ impl DomainServices {
                 receipts = self
                     .carry_user_data(&writer, &mut tx, artist_id, &part_ids)
                     .await?;
-                crate::catalog::record_library_event(
+                crate::storage::catalog::record_library_event(
                     &mut tx,
                     record_event(
                         library_id,
@@ -408,7 +408,7 @@ impl DomainServices {
             self.record_moved(&mut tx, library_id, &moved, now).await?;
             let joined = self.db.pid().artist_id(library_id, credit.trim());
             if still_credited(&mut tx, joined).await? {
-                crate::catalog::record_library_event(
+                crate::storage::catalog::record_library_event(
                     &mut tx,
                     record_event(
                         library_id,
@@ -427,7 +427,7 @@ impl DomainServices {
                 } else {
                     "delete"
                 };
-                crate::catalog::record_library_event(
+                crate::storage::catalog::record_library_event(
                     &mut tx,
                     record_event(
                         library_id,
@@ -456,11 +456,11 @@ impl DomainServices {
         tracks: &[String],
         now: i64,
     ) -> Result<Moved, ServiceError> {
-        let decisions = crate::catalog::credit_decisions(tx, library_id).await?;
+        let decisions = crate::storage::catalog::credit_decisions(tx, library_id).await?;
         let mut moved = Moved::default();
         for track in tracks {
             let track_id = parse_uuid(track.clone())?;
-            let outcome = crate::catalog::recompute_track_participants(
+            let outcome = crate::storage::catalog::recompute_track_participants(
                 tx,
                 self.db.pid(),
                 library_id,
@@ -487,7 +487,7 @@ impl DomainServices {
         now: i64,
     ) -> Result<(), ServiceError> {
         for (track, full_hash) in &moved.tracks {
-            crate::catalog::record_library_event(
+            crate::storage::catalog::record_library_event(
                 tx,
                 record_event(
                     library_id,
@@ -501,7 +501,7 @@ impl DomainServices {
             .await?;
         }
         for album in &moved.albums {
-            crate::catalog::record_library_event(
+            crate::storage::catalog::record_library_event(
                 tx,
                 record_event(
                     library_id,
@@ -720,8 +720,8 @@ impl DomainServices {
 /// the feed has already announced as deleted, and a retry would only answer
 /// `409`. Together, the two land or neither does.
 async fn rederive(tx: &mut Transaction<'_, Sqlite>, library_id: Uuid) -> Result<(), sqlx::Error> {
-    crate::database::Database::consolidate_sort_names_in(tx, library_id).await?;
-    crate::database::Database::consolidate_catalog_derivations_in(tx, library_id).await
+    crate::storage::database::Database::consolidate_sort_names_in(tx, library_id).await?;
+    crate::storage::database::Database::consolidate_catalog_derivations_in(tx, library_id).await
 }
 
 /// Whether anything still credits an artist: a participant, or an album that

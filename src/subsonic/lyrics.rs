@@ -57,7 +57,7 @@ pub(super) async fn get_lyrics_by_song_id(
         .children(lyrics.structured_lyrics.iter().map(structured_lyrics_node)))
 }
 
-pub(super) fn structured_lyrics_node(lyrics: &crate::lyrics::StructuredLyrics) -> Node {
+pub(super) fn structured_lyrics_node(lyrics: &crate::library::lyrics::StructuredLyrics) -> Node {
     Node::new("structuredLyrics")
         .maybe_attr("displayArtist", lyrics.display_artist.clone())
         .attr("displayTitle", lyrics.display_title.clone())

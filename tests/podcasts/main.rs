@@ -28,9 +28,9 @@ use axum::{
 use serde_json::json;
 use tower::ServiceExt;
 use uuid::Uuid;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::database::AccountRole;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::database::AccountRole;
 
 #[allow(dead_code)]
 #[path = "../support/mod.rs"]

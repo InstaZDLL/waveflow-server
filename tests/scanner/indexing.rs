@@ -598,7 +598,7 @@ async fn a_re_encoded_file_that_moved_keeps_its_track_and_its_favourite() {
 fn scan_progress_converts_into_the_shape_the_stream_sends() {
     let scan = uuid::Uuid::new_v4();
     let library = uuid::Uuid::new_v4();
-    let record = waveflow_server::scanner::ScanProgress {
+    let record = waveflow_server::library::scanner::ScanProgress {
         scan_id: scan,
         library_id: library,
         status: "running".into(),

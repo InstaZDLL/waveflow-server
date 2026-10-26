@@ -10,8 +10,8 @@ use lofty::{
 use uuid::Uuid;
 
 use crate::{
-    catalog::{ArtworkInput, CatalogTrackInput},
-    lyrics::{self, LyricsInput},
+    library::lyrics::{self, LyricsInput},
+    storage::catalog::{ArtworkInput, CatalogTrackInput},
 };
 
 #[cfg(test)]
@@ -38,7 +38,7 @@ pub(super) enum Scanned {
 pub(super) fn scan_file(
     path: &Path,
     artwork_dir: &Path,
-    known: Option<crate::catalog::SkipFacts>,
+    known: Option<crate::storage::catalog::SkipFacts>,
     full: bool,
 ) -> Scanned {
     let signature = sidecar_signature(path);
@@ -393,11 +393,11 @@ struct ExtendedTags {
 /// `PERFORMER` is the one role whose credit carries a second value. ID3 stores
 /// it as a musician-credits frame lofty exposes only through its own tag type,
 /// so what reaches here is the generic spelling — `Name (instrument)` — which
-/// [`crate::tags::split_performer`] takes apart.
-fn raw_credits(tag: Option<&lofty::tag::Tag>) -> crate::tags::RawCredits {
-    use crate::tags::Role;
+/// [`crate::library::tags::split_performer`] takes apart.
+fn raw_credits(tag: Option<&lofty::tag::Tag>) -> crate::library::tags::RawCredits {
+    use crate::library::tags::Role;
     let Some(tag) = tag else {
-        return crate::tags::RawCredits::default();
+        return crate::library::tags::RawCredits::default();
     };
     let values = |key: ItemKey| -> Vec<String> {
         tag.get_strings(key)
@@ -438,10 +438,10 @@ fn raw_credits(tag: Option<&lofty::tag::Tag>) -> crate::tags::RawCredits {
 
     let performer_pairs = values(ItemKey::Performer)
         .into_iter()
-        .map(|value| crate::tags::split_performer(&value))
+        .map(|value| crate::library::tags::split_performer(&value))
         .collect();
 
-    crate::tags::RawCredits {
+    crate::library::tags::RawCredits {
         artist: values(ItemKey::TrackArtist),
         artists: values(ItemKey::TrackArtists),
         album_artist: values(ItemKey::AlbumArtist),

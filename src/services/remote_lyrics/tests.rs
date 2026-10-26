@@ -1,5 +1,5 @@
 use super::sheet_of;
-use crate::lrclib::FoundLyrics;
+use crate::remote::lrclib::FoundLyrics;
 
 #[test]
 fn timings_win_and_a_sheet_without_words_is_none() {

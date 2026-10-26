@@ -31,7 +31,7 @@ use self::scrobble::{
     authorize_lastfm, exchange_lastfm, link_scrobble, scrobble_status, unlink_scrobble,
 };
 use crate::{
-    database::{AccountRole, Database},
+    storage::database::{AccountRole, Database},
     AppState,
 };
 
@@ -114,7 +114,7 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
 async fn require_admin(
     db: &Database,
     username: &str,
-) -> anyhow::Result<crate::database::AccountRecord> {
+) -> anyhow::Result<crate::storage::database::AccountRecord> {
     let account = db
         .account_by_username(username)
         .await?

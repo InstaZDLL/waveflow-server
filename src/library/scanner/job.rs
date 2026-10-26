@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::discovery::{discover_audio, unclaimed, Discovery, Reach, Walked};
 use super::extract::{scan_file, Scanned};
 use super::{normalised_scope, ScanManager, ScanProgress};
-use crate::catalog::{ApplyOutcome, CatalogApply, LibraryRecord};
+use crate::storage::catalog::{ApplyOutcome, CatalogApply, LibraryRecord};
 
 impl ScanManager {
     pub(super) async fn run(&self, scan_id: Uuid, library: LibraryRecord) -> anyhow::Result<()> {
@@ -227,7 +227,7 @@ impl ScanManager {
                                 if existing.pid.is_none() {
                                     hints.push((
                                         existing.id,
-                                        crate::catalog::track_pid(
+                                        crate::storage::catalog::track_pid(
                                             self.db.pid(),
                                             library.id,
                                             &input,
@@ -263,7 +263,7 @@ impl ScanManager {
                                     self.db
                                         .relocation_candidates_by_pid(
                                             library.id,
-                                            crate::catalog::track_pid(
+                                            crate::storage::catalog::track_pid(
                                                 self.db.pid(),
                                                 library.id,
                                                 &input,

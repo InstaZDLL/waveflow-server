@@ -32,7 +32,7 @@ pub struct KeyMaterial {
 /// not a detail of a single operation.
 pub enum Rekey<'a> {
     /// The old key is in hand. Every ciphertext is read and written back.
-    Reencrypt(&'a crate::security::SecretBox),
+    Reencrypt(&'a crate::auth::security::SecretBox),
     /// The old key is gone. Nothing can be read, so the rows go.
     Discard,
 }
@@ -129,7 +129,7 @@ impl Database {
     ///
     /// Shares are rewritten whichever plan runs, and they are the reason this
     /// is one function rather than two. A share token is *derived* from the
-    /// key rather than stored ([`crate::security::SecretBox::derive_share_token`]),
+    /// key rather than stored ([`crate::auth::security::SecretBox::derive_share_token`]),
     /// so after a key change the stored hash is one the new key can never
     /// produce: the share is not merely re-addressed, it is unreachable, and
     /// its owner is shown a URL that answers 404. Recomputing the hash is what
@@ -137,7 +137,7 @@ impl Database {
     pub async fn rekey(
         connection: &mut SqliteConnection,
         plan: Rekey<'_>,
-        new_key: &crate::security::SecretBox,
+        new_key: &crate::auth::security::SecretBox,
         new_fingerprint: &[u8],
         now_ms: i64,
     ) -> anyhow::Result<KeyMaterial> {
@@ -275,7 +275,7 @@ impl Database {
             // every synchronising client a modification with no journal entry
             // behind it.
             sqlx::query("UPDATE share SET token_hash=? WHERE id=?")
-                .bind(crate::security::token_hash(&token).as_slice())
+                .bind(crate::auth::security::token_hash(&token).as_slice())
                 .bind(&id)
                 .execute(&mut *tx)
                 .await?;

@@ -37,8 +37,8 @@ use waveflow_core::metadata::{
 
 use crate::{
     config::MetadataSettings,
-    database::Database,
-    portrait::{self, AddressPolicy, Refusal},
+    remote::portrait::{self, AddressPolicy, Refusal},
+    storage::database::Database,
 };
 
 /// Last.fm's API root. A constant, not a setting (decision 9): there is no
@@ -325,7 +325,7 @@ impl Enrichment {
     ) -> anyhow::Result<Self> {
         let mut sources = Vec::new();
         for &provider in &settings.providers {
-            let http = crate::outbound::client(settings.request_timeout)
+            let http = crate::remote::outbound::client(settings.request_timeout)
                 .map_err(|_| anyhow::anyhow!("the outbound client could not be built"))?;
             let client = match provider {
                 Provider::LastFm => {
@@ -507,7 +507,7 @@ impl Enrichment {
             return Ok(Vec::new());
         }
         let rows = engine.db.metadata_artist_rows(&canonical).await?;
-        let now = crate::authentication::now_ms();
+        let now = crate::auth::authentication::now_ms();
         let mut ordered = Vec::new();
         for (index, source) in engine.sources.iter().enumerate() {
             let row = rows.iter().find(|row| row.provider == source.provider);
@@ -608,7 +608,7 @@ impl Engine {
                 return;
             }
         };
-        let fetched_at = crate::authentication::now_ms();
+        let fetched_at = crate::auth::authentication::now_ms();
         let outcome = answer.outcome();
         let ttl = match outcome {
             Outcome::Hit => self.ttl_ms,

@@ -14,7 +14,7 @@
 //! read from the cache or sent anywhere.
 
 use super::*;
-use crate::lrclib::{FoundLyrics, LyricsLookup, TrackLookup};
+use crate::remote::lrclib::{FoundLyrics, LyricsLookup, TrackLookup};
 
 impl DomainServices {
     /// Places the LRCLIB lookup every lyrics reader goes through.

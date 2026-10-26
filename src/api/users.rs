@@ -8,12 +8,12 @@ use super::*;
 pub struct CreateUserRequest {
     pub username: String,
     pub web_password: String,
-    pub role: crate::database::AccountRole,
+    pub role: crate::storage::database::AccountRole,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateUserRequest {
-    pub role: Option<crate::database::AccountRole>,
+    pub role: Option<crate::storage::database::AccountRole>,
     pub disabled: Option<bool>,
     pub library_ids: Option<Vec<Uuid>>,
     pub subsonic_password: Option<String>,
@@ -81,7 +81,7 @@ pub async fn update_user(
             crate::services::UserUpdate {
                 admin: request
                     .role
-                    .map(|role| role == crate::database::AccountRole::Admin),
+                    .map(|role| role == crate::storage::database::AccountRole::Admin),
                 disabled: request.disabled,
                 folder_ids: request.library_ids.as_deref(),
                 subsonic_password: request.subsonic_password.as_deref(),

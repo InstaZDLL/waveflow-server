@@ -4,7 +4,7 @@
 use sqlx::{Sqlite, Transaction};
 use uuid::Uuid;
 
-use crate::{authentication::now_ms, database::Database};
+use crate::{auth::authentication::now_ms, storage::database::Database};
 
 use super::{
     credit_decisions,
@@ -38,7 +38,7 @@ pub struct CatalogTrackInput {
     pub artists: Vec<String>,
     pub album_artists: Vec<String>,
     /// Every other role the file names, as it spelled them.
-    pub roles: Vec<(crate::tags::Role, Vec<String>)>,
+    pub roles: Vec<(crate::library::tags::Role, Vec<String>)>,
     /// Performer credits, already split into instrument and name.
     pub performer_pairs: Vec<(String, String)>,
     pub album: Option<String>,
@@ -94,7 +94,7 @@ pub struct CatalogTrackInput {
     pub disc_subtitle: Option<String>,
     pub artwork: Option<ArtworkInput>,
     pub lyrics_hash: String,
-    pub lyrics: Vec<crate::lyrics::LyricsInput>,
+    pub lyrics: Vec<crate::library::lyrics::LyricsInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,11 +200,11 @@ impl Database {
     /// scan failed to find.
     pub(crate) async fn apply_catalog_track_in_transaction(
         tx: &mut Transaction<'_, Sqlite>,
-        pid: &crate::pid::PidSpecs,
+        pid: &crate::library::pid::PidSpecs,
         library_id: Uuid,
         scan_id: Option<Uuid>,
         apply: &CatalogApply,
-        decisions: &crate::credit_split::Decisions,
+        decisions: &crate::library::credit_split::Decisions,
         now: i64,
     ) -> Result<ApplyOutcome, sqlx::Error> {
         let input = &apply.input;
@@ -227,7 +227,7 @@ impl Database {
         // composer or a conductor comes from the file and nobody corrected it.
         let overrides = track_override_lists(tx, track_id).await?;
         // The library's decisions, read by the caller inside this transaction.
-        let credits = crate::credit_split::resolve(
+        let credits = crate::library::credit_split::resolve(
             &file_credits,
             decisions,
             overrides.artists.as_deref(),
@@ -246,13 +246,13 @@ impl Database {
         // tag mapper's whole job, and it applies the reference's rules rather
         // than this file's old `;`-only cut. What is left here is turning
         // names into rows.
-        let artist_names: Vec<String> = credit_names(&credits, crate::tags::Role::Artist);
+        let artist_names: Vec<String> = credit_names(&credits, crate::library::tags::Role::Artist);
         let mut artist_ids = Vec::with_capacity(artist_names.len());
         for artist in &artist_names {
             artist_ids.push(upsert_artist(tx, pid, library_id, artist, now).await?);
         }
         let album_artist_names: Vec<String> =
-            credit_names(&credits, crate::tags::Role::AlbumArtist);
+            credit_names(&credits, crate::library::tags::Role::AlbumArtist);
         // The first step's names, not the decisions': the display string is
         // what the album's identity hashes (RFC-015 decision 4).
         let album_artist = album_artist_display(input, &file_credits);
@@ -413,11 +413,11 @@ impl Database {
             .await?;
         for credit in &credits {
             let artist_id = match credit.role {
-                crate::tags::Role::Artist => artist_ids
+                crate::library::tags::Role::Artist => artist_ids
                     .get(credit.position)
                     .copied()
                     .expect("every artist credit was upserted above"),
-                crate::tags::Role::AlbumArtist => album_artist_ids
+                crate::library::tags::Role::AlbumArtist => album_artist_ids
                     .get(credit.position)
                     .copied()
                     .expect("every album-artist credit was upserted above"),
@@ -533,7 +533,7 @@ async fn upsert_artwork(
 /// real character are two artists, as they are in the reference.
 pub(super) async fn upsert_artist(
     tx: &mut Transaction<'_, Sqlite>,
-    pid: &crate::pid::PidSpecs,
+    pid: &crate::library::pid::PidSpecs,
     library: Uuid,
     name: &str,
     now: i64,
@@ -583,7 +583,7 @@ pub(super) async fn upsert_genre(
 /// and nothing has to notice.
 async fn upsert_album(
     tx: &mut Transaction<'_, Sqlite>,
-    pid: &crate::pid::PidSpecs,
+    pid: &crate::library::pid::PidSpecs,
     library: Uuid,
     input: &CatalogTrackInput,
     album_artist: Option<&str>,

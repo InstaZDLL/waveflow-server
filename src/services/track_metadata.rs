@@ -116,8 +116,10 @@ impl DomainServices {
             .bind(user_id.to_string())
             .fetch_optional(self.db.pool())
             .await?;
-            let role = crate::database::LibraryRole::from_str(&role.ok_or(ServiceError::NotFound)?)
-                .map_err(|_| ServiceError::Invalid)?;
+            let role = crate::storage::database::LibraryRole::from_str(
+                &role.ok_or(ServiceError::NotFound)?,
+            )
+            .map_err(|_| ServiceError::Invalid)?;
             if !role.may_write_metadata() {
                 return Err(ServiceError::Forbidden);
             }
@@ -164,9 +166,10 @@ impl DomainServices {
                     // not the authority and does not need to be: it exists so a
                     // caller who may not write cannot make the server read a
                     // file and hash it end to end before being told no.
-                    let role =
-                        crate::database::LibraryRole::from_str(hint.try_get::<&str, _>("role")?)
-                            .map_err(|_| ServiceError::Invalid)?;
+                    let role = crate::storage::database::LibraryRole::from_str(
+                        hint.try_get::<&str, _>("role")?,
+                    )
+                    .map_err(|_| ServiceError::Invalid)?;
                     // Only an explicit `null` drops a list. A list the patch
                     // leaves out keeps its correction, so there is nothing to
                     // restore and no reason to read the file.
@@ -227,7 +230,7 @@ impl DomainServices {
         let scanned_title: String = row.try_get("title")?;
         let full_hash: String = row.try_get("full_hash")?;
         let last_seen_scan_id: Option<String> = row.try_get("last_seen_scan_id")?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_write_metadata() {
             // Blurred onto 404 by the surfaces above, like every other refusal
@@ -244,7 +247,7 @@ impl DomainServices {
         // a stored list it cannot decode instead of reading it as none. Read as
         // none, a patch that never mentioned it would erase it by writing the
         // merge back.
-        let stored_lists = crate::catalog::track_override_lists(&mut tx, track_id).await?;
+        let stored_lists = crate::storage::catalog::track_override_lists(&mut tx, track_id).await?;
         let title = merge(requested_title, row.try_get("o_title")?);
         let sort_title = merge(requested_sort_title, row.try_get("o_sort_title")?);
         let year = merge(patch.year, row.try_get("o_year")?);
@@ -326,13 +329,13 @@ impl DomainServices {
             // have refused every received file until a scan happened to walk
             // past it.
             let scan_id = last_seen_scan_id.map(parse_uuid).transpose()?;
-            let decisions = crate::catalog::credit_decisions(&mut tx, library_id).await?;
-            crate::database::Database::apply_catalog_track_in_transaction(
+            let decisions = crate::storage::catalog::credit_decisions(&mut tx, library_id).await?;
+            crate::storage::database::Database::apply_catalog_track_in_transaction(
                 &mut tx,
                 self.db.pid(),
                 library_id,
                 scan_id,
-                &crate::catalog::CatalogApply {
+                &crate::storage::catalog::CatalogApply {
                     input,
                     existing_id: Some(track_id),
                     moved: false,
@@ -356,12 +359,12 @@ impl DomainServices {
         // something merely similar. Only for a list this patch set: one it left
         // out already has its rows, and rewriting them identically would still
         // delete and reinsert every credit.
-        let effective = crate::catalog::TrackOverrideLists {
+        let effective = crate::storage::catalog::TrackOverrideLists {
             title: title.clone(),
             artists: requested_artists.flatten(),
             genres: requested_genres.flatten(),
         };
-        crate::catalog::apply_track_override_lists(
+        crate::storage::catalog::apply_track_override_lists(
             &mut tx,
             self.db.pid(),
             library_id,
@@ -413,9 +416,9 @@ impl DomainServices {
         // belongs to the library and every member sees it. The hash travels
         // with it unchanged, which is the client's evidence that its link
         // survived the edit.
-        crate::catalog::record_library_event(
+        crate::storage::catalog::record_library_event(
             &mut tx,
-            crate::catalog::LibraryChange {
+            crate::storage::catalog::LibraryChange {
                 library_id,
                 entity_type: "track",
                 entity_id: track_id,

@@ -6,8 +6,8 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    database::{AccountRecord, AccountRole},
-    security::EncryptedSecret,
+    auth::security::EncryptedSecret,
+    storage::database::{AccountRecord, AccountRole},
 };
 
 pub struct SubsonicCredentialRecord {

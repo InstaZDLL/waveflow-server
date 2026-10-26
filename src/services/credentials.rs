@@ -80,10 +80,13 @@ impl DomainServices {
         user_id: Uuid,
         request: AuthorizationRequest<'_>,
     ) -> Result<String, ServiceError> {
-        crate::oauth::validate_redirect_uri(request.redirect_uri)
+        crate::auth::oauth::validate_redirect_uri(request.redirect_uri)
             .map_err(|_| ServiceError::Invalid)?;
-        crate::oauth::validate_challenge(request.code_challenge_method, request.code_challenge)
-            .map_err(|_| ServiceError::Invalid)?;
+        crate::auth::oauth::validate_challenge(
+            request.code_challenge_method,
+            request.code_challenge,
+        )
+        .map_err(|_| ServiceError::Invalid)?;
         let client_id = request.client_id.trim();
         let device_name = request.device_name.trim();
         // Checked before the code exists: a name the session issuer would
@@ -95,7 +98,7 @@ impl DomainServices {
         let code = security::generate_token("wfc_");
         let now = now_ms();
         self.db
-            .create_authorization(crate::database::NewAuthorization {
+            .create_authorization(crate::storage::database::NewAuthorization {
                 code_hash: security::token_hash(&code),
                 user_id,
                 client_id,
@@ -103,11 +106,11 @@ impl DomainServices {
                 code_challenge: request.code_challenge,
                 device_name,
                 now_ms: now,
-                expires_at: now + crate::oauth::AUTHORIZATION_CODE_TTL_MS,
+                expires_at: now + crate::auth::oauth::AUTHORIZATION_CODE_TTL_MS,
                 scopes: request.scopes,
             })
             .await?;
-        Ok(crate::oauth::redirect_with_code(
+        Ok(crate::auth::oauth::redirect_with_code(
             request.redirect_uri,
             &code,
             request.state,

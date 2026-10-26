@@ -50,7 +50,7 @@ impl Config {
             // Production's default: the suite purges the way a server does.
             purge_grace: Duration::from_secs(168 * 60 * 60),
             link_roots: Vec::new(),
-            subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
+            subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode::Off,
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             transcode_cache_dir,
@@ -140,7 +140,7 @@ impl Config {
                 feed_timeout: Duration::from_secs(10),
                 download_timeout: Duration::from_secs(30),
                 dir: podcast_dir_for_tests,
-                addresses: crate::portrait::AddressPolicy::AllowLoopback,
+                addresses: crate::remote::portrait::AddressPolicy::AllowLoopback,
             },
             // On, as production defaults, and admitting loopback for the same
             // reason the podcast policy above does: the image hosts the suite
@@ -149,7 +149,7 @@ impl Config {
             remote_artwork: RemoteArtworkSettings {
                 enabled: true,
                 timeout: Duration::from_secs(10),
-                addresses: crate::portrait::AddressPolicy::AllowLoopback,
+                addresses: crate::remote::portrait::AddressPolicy::AllowLoopback,
             },
             allowed_origins: Vec::new(),
             trusted_proxies: Vec::new(),

@@ -45,7 +45,7 @@ async fn a_client_can_tell_its_own_upload_from_a_discovery() {
     run_scan(
         &state,
         owner,
-        waveflow_server::catalog::LibraryRecord {
+        waveflow_server::storage::catalog::LibraryRecord {
             id: library,
             name: "Attributed".into(),
             root_path: root,

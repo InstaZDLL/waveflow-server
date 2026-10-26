@@ -3,7 +3,7 @@
 //! Split out of `http.rs`; `mod.rs` re-exports it, so `crate::api::*` paths are unchanged.
 
 use super::*;
-use crate::setup_token::Admission;
+use crate::auth::setup_token::Admission;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SetupStatusResponse {

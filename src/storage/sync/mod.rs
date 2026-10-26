@@ -11,8 +11,8 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    authentication::now_ms,
-    database::{Database, SyncOperationReservation},
+    auth::authentication::now_ms,
+    storage::database::{Database, SyncOperationReservation},
 };
 
 pub const DEFAULT_SYNC_LIMIT: i64 = 100;

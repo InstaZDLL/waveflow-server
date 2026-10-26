@@ -81,7 +81,7 @@ pub(super) async fn media_response(
     // other server ignores — the operator's default otherwise. Only a
     // transcode carries it; the original is never re-encoded to apply it.
     let replay_gain = match params.first("replayGain") {
-        Some(mode) => crate::replay_gain::ReplayGainMode::parse(mode)
+        Some(mode) => crate::media::replay_gain::ReplayGainMode::parse(mode)
             .ok_or_else(|| invalid("Invalid replayGain"))?,
         None => state.media.subsonic_replay_gain(),
     };

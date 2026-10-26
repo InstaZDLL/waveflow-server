@@ -4,7 +4,7 @@
 //! no feed at all. Written by scans in `catalog.rs`; read here.
 
 use super::*;
-use crate::sync::MAX_SYNC_LIMIT;
+use crate::storage::sync::MAX_SYNC_LIMIT;
 
 /// How often the feed is trimmed.
 ///

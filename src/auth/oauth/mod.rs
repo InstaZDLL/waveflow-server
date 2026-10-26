@@ -82,7 +82,7 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> Result<(), GrantErro
     let expected = challenge_for(verifier);
     // The challenge is public, but constant-time keeps the comparison uniform
     // with the rest of the credential handling in this codebase.
-    if crate::security::constant_time_bytes_eq(expected.as_bytes(), challenge.as_bytes()) {
+    if crate::auth::security::constant_time_bytes_eq(expected.as_bytes(), challenge.as_bytes()) {
         Ok(())
     } else {
         Err(GrantError::InvalidVerifier)

@@ -203,7 +203,7 @@ fn a_settled_library_names_the_folders_its_changes_were_in() {
     settle.touch_folder(whole, "Rock".into(), start);
     settle.touch(whole, start);
     settle.touch_folder(whole, "Jazz".into(), start);
-    for index in 0..=crate::scanner::MAX_SCOPE_FOLDERS {
+    for index in 0..=crate::library::scanner::MAX_SCOPE_FOLDERS {
         settle.touch_folder(crowded, format!("f{index}"), start);
     }
     let mut due = settle.due_with_scope(start + delay, |_| false);

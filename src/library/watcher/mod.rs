@@ -27,7 +27,9 @@ use notify::{
 use tokio::{sync::mpsc, time::Instant};
 use uuid::Uuid;
 
-use crate::{catalog::LibraryRecord, database::Database, scanner::ScanManager};
+use crate::{
+    library::scanner::ScanManager, storage::catalog::LibraryRecord, storage::database::Database,
+};
 
 /// How often the watched set is re-read even when nothing in this process said
 /// it changed: the CLI adds and removes libraries from another process.
@@ -89,7 +91,7 @@ impl Settle {
     /// The scan this settles into walks those folders only, which is what
     /// RFC-018's rules allow a scan that did not look everywhere: only what it
     /// walked may be marked missing, and relocation claims nothing outside it.
-    /// Past [`crate::scanner::MAX_SCOPE_FOLDERS`] folders the changes were
+    /// Past [`crate::library::scanner::MAX_SCOPE_FOLDERS`] folders the changes were
     /// everywhere, and the whole library is walked instead.
     pub fn touch_folder(&mut self, library_id: Uuid, folder: String, now: Instant) {
         let pending = self.pending.entry(library_id).or_insert(Pending {
@@ -100,7 +102,7 @@ impl Settle {
         pending.last = now;
         if let Some(folders) = pending.folders.as_mut() {
             folders.insert(folder);
-            if folders.len() > crate::scanner::MAX_SCOPE_FOLDERS {
+            if folders.len() > crate::library::scanner::MAX_SCOPE_FOLDERS {
                 pending.folders = None;
             }
         }

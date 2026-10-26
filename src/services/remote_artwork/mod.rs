@@ -4,7 +4,7 @@
 //! The web client cannot show either from where it lives. RFC-019's
 //! Content-Security-Policy keeps `img-src` to this origin, and an image loaded
 //! from the feed's host would hand that host the address of every listener. So
-//! the server fetches it once, through [`crate::portrait::fetch_followed`],
+//! the server fetches it once, through [`crate::remote::portrait::fetch_followed`],
 //! stores the bytes in the artwork store beside the scanned covers, and every
 //! surface hands out the hash — never the address it came from.
 //!
@@ -81,19 +81,19 @@ impl DomainServices {
             tracing::warn!(subject, reason = "unparsable", "remote artwork not fetched");
             return None;
         };
-        let policy = crate::podcast::FetchPolicy {
+        let policy = crate::remote::podcast::FetchPolicy {
             addresses: self.remote_artwork.addresses,
             allow_http,
             timeout: self.remote_artwork.timeout,
         };
-        let image = match crate::portrait::fetch_followed(&parsed, policy).await {
+        let image = match crate::remote::portrait::fetch_followed(&parsed, policy).await {
             Ok(image) => image,
             Err(refusal) => {
                 tracing::warn!(subject, reason = %refusal, "remote artwork not fetched");
                 return None;
             }
         };
-        if let Err(error) = crate::portrait::store(&self.artwork_dir, &image).await {
+        if let Err(error) = crate::remote::portrait::store(&self.artwork_dir, &image).await {
             tracing::warn!(subject, %error, "remote artwork could not be stored");
             return None;
         }

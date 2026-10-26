@@ -4,7 +4,7 @@
 use sqlx::{Sqlite, Transaction};
 use uuid::Uuid;
 
-use crate::database::Database;
+use crate::storage::database::Database;
 
 impl Database {
     /// Re-derives `album.sort_name` and `artist.sort_name` from the tags the

@@ -27,7 +27,7 @@ use std::{sync::Arc, time::Duration};
 use dashmap::DashMap;
 use serde::Deserialize;
 
-use crate::{config::LyricsSettings, database::Database, enrichment::Pace};
+use crate::{config::LyricsSettings, remote::enrichment::Pace, storage::database::Database};
 
 /// LRCLIB's root. A constant, not a setting: there is no operator field, so
 /// there is no URL to validate.
@@ -218,7 +218,7 @@ impl LyricsLookup {
         let Some(&provider) = settings.providers.first() else {
             return Ok(Self::disabled());
         };
-        let http = crate::outbound::builder(settings.request_timeout)
+        let http = crate::remote::outbound::builder(settings.request_timeout)
             .user_agent(USER_AGENT)
             .build()
             .map_err(|_| anyhow::anyhow!("the outbound client could not be built"))?;
@@ -275,7 +275,7 @@ impl LyricsLookup {
         let Some(key) = track.key() else {
             return Ok(None);
         };
-        let now = crate::authentication::now_ms();
+        let now = crate::auth::authentication::now_ms();
         if let Some(row) = engine
             .db
             .lyrics_lookup_row(engine.provider.as_str(), &key)
@@ -380,7 +380,7 @@ impl Engine {
                 return;
             }
         };
-        let fetched_at = crate::authentication::now_ms();
+        let fetched_at = crate::auth::authentication::now_ms();
         let ttl = match answer.outcome {
             LyricsOutcome::Hit | LyricsOutcome::Instrumental => self.ttl_ms,
             LyricsOutcome::Miss => self.miss_ttl_ms,
@@ -516,11 +516,11 @@ fn judge(record: Record, duration_ms: i64) -> Answer {
 /// (`outbound::read_bounded_body`), under the lyrics cap rather than its
 /// general one: a sheet is held to what an upload or a sidecar may weigh.
 async fn read_bounded(response: reqwest::Response, limit: usize) -> Result<Vec<u8>, Verdict> {
-    crate::outbound::read_bounded_body(response, limit)
+    crate::remote::outbound::read_bounded_body(response, limit)
         .await
         .map_err(|error| match error {
-            crate::outbound::BodyError::TooLarge => Verdict::TooLarge,
-            crate::outbound::BodyError::Unread => Verdict::Transport,
+            crate::remote::outbound::BodyError::TooLarge => Verdict::TooLarge,
+            crate::remote::outbound::BodyError::Unread => Verdict::Transport,
         })
 }
 

@@ -8,12 +8,16 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
-    authentication::now_ms,
-    database::{AccountRecord, AccountRole, ApiTokenRecord, Database, SubsonicCredentialStatus},
-    lyrics::{self, LyricsList, StructuredLyrics},
-    playlist_file::{self, PlaylistFileEntry},
-    security::{self, EncryptedSecret, SecretBox},
-    sync::{MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService},
+    auth::authentication::now_ms,
+    auth::security::{self, EncryptedSecret, SecretBox},
+    library::lyrics::{self, LyricsList, StructuredLyrics},
+    library::playlist_file::{self, PlaylistFileEntry},
+    storage::database::{
+        AccountRecord, AccountRole, ApiTokenRecord, Database, SubsonicCredentialStatus,
+    },
+    storage::sync::{
+        MutationContext, MutationIntent, MutationReceipt, OperationClaim, SyncService,
+    },
 };
 
 #[macro_use]
@@ -24,7 +28,7 @@ pub struct DomainServices {
     db: Database,
     secret_box: Arc<SecretBox>,
     sync: SyncService,
-    scanner: crate::scanner::ScanManager,
+    scanner: crate::library::scanner::ScanManager,
     uploads: crate::config::UploadLimits,
     library_event_retention: crate::config::LibraryEventRetention,
     /// How long a missing track is kept before the retention pass purges it,
@@ -36,7 +40,7 @@ pub struct DomainServices {
     /// The folders outside every library a stored path may lead into through
     /// a link (`WAVEFLOW_LINK_ROOTS`): the quality analysis reads those files
     /// as the stream does.
-    link_roots: crate::link_roots::LinkRoots,
+    link_roots: crate::library::link_roots::LinkRoots,
     /// Bounds a credential an account mints for itself. See the field on
     /// [`crate::config::Config`] for why the administrative path is not
     /// bounded by it.
@@ -95,7 +99,7 @@ pub struct DomainServices {
     /// Metadata enrichment — RFC-011. Disabled at construction and placed by
     /// [`Self::use_enrichment`], like the scrobbling adapters and for the same
     /// reason: a test drives it against a provider of its own.
-    enrichment: Arc<std::sync::RwLock<crate::enrichment::Enrichment>>,
+    enrichment: Arc<std::sync::RwLock<crate::remote::enrichment::Enrichment>>,
     /// How long a portrait search's task may run, in milliseconds (RFC-013):
     /// [`ARTIST_IMAGE_SEARCH_DEADLINE`], except where a test shortens it
     /// rather than wait five minutes.
@@ -105,7 +109,7 @@ pub struct DomainServices {
     quality: quality::QualityRuntime,
     /// Lyrics from LRCLIB — RFC-024. Disabled at construction and placed by
     /// [`Self::use_lyrics_lookup`], like enrichment and for the same reason.
-    lyrics_lookup: Arc<std::sync::RwLock<crate::lrclib::LyricsLookup>>,
+    lyrics_lookup: Arc<std::sync::RwLock<crate::remote::lrclib::LyricsLookup>>,
     /// Podcasts (RFC-025): the settings, and the one download permit and one
     /// refresh lock the background work shares.
     podcasts: podcasts::PodcastRuntime,
@@ -141,17 +145,16 @@ pub enum ServiceError {
     Security(#[from] security::SecurityError),
 }
 
-impl From<crate::sync::SyncError> for ServiceError {
-    fn from(error: crate::sync::SyncError) -> Self {
+impl From<crate::storage::sync::SyncError> for ServiceError {
+    fn from(error: crate::storage::sync::SyncError) -> Self {
         match error {
-            crate::sync::SyncError::Invalid => Self::Invalid,
+            crate::storage::sync::SyncError::Invalid => Self::Invalid,
             // Mutations claim operations; they never read the journal, so
             // CursorExpired cannot reach this conversion. Folded into Conflict
             // rather than given a domain variant nothing would ever construct.
-            crate::sync::SyncError::Conflict | crate::sync::SyncError::CursorExpired => {
-                Self::Conflict
-            }
-            crate::sync::SyncError::Database(error) => Self::Database(error),
+            crate::storage::sync::SyncError::Conflict
+            | crate::storage::sync::SyncError::CursorExpired => Self::Conflict,
+            crate::storage::sync::SyncError::Database(error) => Self::Database(error),
         }
     }
 }
@@ -305,7 +308,7 @@ impl DomainServices {
         db: Database,
         secret_box: Arc<SecretBox>,
         sync: SyncService,
-        scanner: crate::scanner::ScanManager,
+        scanner: crate::library::scanner::ScanManager,
         config: &crate::config::Config,
     ) -> Self {
         // Copied here rather than borrowed, which is why mutating a `Config`
@@ -320,7 +323,7 @@ impl DomainServices {
             library_event_retention: config.library_event_retention,
             unavailable_retention: config.unavailable_retention,
             purge_grace: config.purge_grace,
-            link_roots: crate::link_roots::LinkRoots::new(config.link_roots.clone()),
+            link_roots: crate::library::link_roots::LinkRoots::new(config.link_roots.clone()),
             api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
             canvas: config.canvas,
@@ -347,7 +350,7 @@ impl DomainServices {
             lastfm_unavailable: lastfm::lastfm_unavailability(config),
             lastfm_exchanges: Arc::new(dashmap::DashMap::new()),
             enrichment: Arc::new(std::sync::RwLock::new(
-                crate::enrichment::Enrichment::disabled(),
+                crate::remote::enrichment::Enrichment::disabled(),
             )),
             image_search_deadline_ms: Arc::new(std::sync::atomic::AtomicU64::new(
                 u64::try_from(ARTIST_IMAGE_SEARCH_DEADLINE.as_millis()).unwrap_or(u64::MAX),
@@ -357,7 +360,7 @@ impl DomainServices {
                 config.request_timeout,
             ),
             lyrics_lookup: Arc::new(std::sync::RwLock::new(
-                crate::lrclib::LyricsLookup::disabled(),
+                crate::remote::lrclib::LyricsLookup::disabled(),
             )),
             podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
             remote_artwork: config.remote_artwork,
@@ -367,7 +370,7 @@ impl DomainServices {
     }
 
     /// Places the enrichment engine every reader goes through.
-    pub fn use_enrichment(&self, enrichment: crate::enrichment::Enrichment) {
+    pub fn use_enrichment(&self, enrichment: crate::remote::enrichment::Enrichment) {
         *self
             .enrichment
             .write()

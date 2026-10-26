@@ -20,10 +20,10 @@ use http_body_util::BodyExt;
 use support::*;
 use tower::ServiceExt;
 use uuid::Uuid;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
-use waveflow_server::database::{LibraryRole, LibraryVisibility};
+use waveflow_server::auth::authentication::now_ms;
 use waveflow_server::services::{AnalysisState, AttentionCategory, BrowsePage, QualityVerdict};
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::{LibraryRole, LibraryVisibility};
 use waveflow_server::AppState;
 
 struct Shelf {

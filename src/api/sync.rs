@@ -34,7 +34,7 @@ pub struct SyncSnapshot {
     tag = "sync",
     params(("after" = Option<i64>, Query), ("limit" = Option<i64>, Query)),
     responses(
-        (status = 200, body = crate::sync::SyncPage),
+        (status = 200, body = crate::storage::sync::SyncPage),
         (status = 401, body = ErrorResponse),
         (
             status = 409,
@@ -51,11 +51,13 @@ pub async fn sync_changes(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(query): Query<SyncQuery>,
-) -> Result<Json<crate::sync::SyncPage>, ApiError> {
+) -> Result<Json<crate::storage::sync::SyncPage>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     let after = query.after.unwrap_or(0);
-    let limit = query.limit.unwrap_or(crate::sync::DEFAULT_SYNC_LIMIT);
-    if after < 0 || limit <= 0 || limit > crate::sync::MAX_SYNC_LIMIT {
+    let limit = query
+        .limit
+        .unwrap_or(crate::storage::sync::DEFAULT_SYNC_LIMIT);
+    if after < 0 || limit <= 0 || limit > crate::storage::sync::MAX_SYNC_LIMIT {
         return Err(ApiError::Validation);
     }
     state
@@ -79,7 +81,7 @@ pub async fn sync_snapshot(
     let user = authenticated(&state, &headers, Access::Read).await?;
     let snapshot = state
         .services
-        .sync_snapshot(user.id, crate::sync::MAX_SYNC_LIMIT)
+        .sync_snapshot(user.id, crate::storage::sync::MAX_SYNC_LIMIT)
         .await
         .map_err(service_error)?;
     let favorites = snapshot
@@ -232,9 +234,12 @@ pub(super) enum SyncNoticeAction {
 }
 
 pub(super) async fn sync_notice_action(
-    sync: &crate::sync::SyncService,
+    sync: &crate::storage::sync::SyncService,
     user_id: Uuid,
-    notice: Result<(Uuid, crate::sync::SyncNotice), tokio::sync::broadcast::error::RecvError>,
+    notice: Result<
+        (Uuid, crate::storage::sync::SyncNotice),
+        tokio::sync::broadcast::error::RecvError,
+    >,
 ) -> Result<SyncNoticeAction, sqlx::Error> {
     match notice {
         Ok((notice_user, notice)) if notice_user == user_id => {
@@ -253,8 +258,8 @@ pub(super) async fn send_sync_notice(
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
     cursor: i64,
 ) -> Result<(), axum::Error> {
-    let body =
-        serde_json::to_string(&crate::sync::SyncNotice { cursor }).expect("sync notice serializes");
+    let body = serde_json::to_string(&crate::storage::sync::SyncNotice { cursor })
+        .expect("sync notice serializes");
     sender.send(Message::Text(body.into())).await
 }
 
@@ -273,20 +278,22 @@ mod tests {
     async fn lagged_sync_socket_recovers_from_the_durable_cursor() {
         let temp = tempfile::tempdir().unwrap();
         let config = crate::Config::for_data_dir(temp.path().join("data"));
-        let db = crate::database::Database::open(&config).await.unwrap();
+        let db = crate::storage::database::Database::open(&config)
+            .await
+            .unwrap();
         db.migrate().await.unwrap();
         let user_id = db
             .create_account(
                 "lagged",
                 "hash",
-                crate::database::AccountRole::User,
-                crate::authentication::now_ms(),
+                crate::storage::database::AccountRole::User,
+                crate::auth::authentication::now_ms(),
             )
             .await
             .unwrap();
-        let sync = crate::sync::SyncService::new(db.clone());
+        let sync = crate::storage::sync::SyncService::new(db.clone());
 
-        let context = crate::sync::MutationContext::server_generated();
+        let context = crate::storage::sync::MutationContext::server_generated();
         let writer = db.writer_guard().await;
         let mut tx = db.begin_write(&writer).await.unwrap();
         sync.claim_operation(
@@ -294,7 +301,11 @@ mod tests {
             &mut tx,
             user_id,
             context,
-            crate::sync::MutationIntent::new("set-rating", "track:seed", &serde_json::json!({})),
+            crate::storage::sync::MutationIntent::new(
+                "set-rating",
+                "track:seed",
+                &serde_json::json!({}),
+            ),
         )
         .await
         .unwrap();

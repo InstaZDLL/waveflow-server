@@ -11,13 +11,13 @@ pub struct TrackQuery {
     pub limit: Option<i64>,
 }
 
-#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("q" = Option<String>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::catalog::TrackRecord]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/libraries/{library_id}/tracks", tag = "catalog", params(("library_id" = Uuid, Path), ("q" = Option<String>, Query), ("offset" = Option<i64>, Query), ("limit" = Option<i64>, Query)), responses((status = 200, body = [crate::storage::catalog::TrackRecord]), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn list_tracks(
     State(state): State<AppState>,
     Path(library_id): Path<Uuid>,
     Query(query): Query<TrackQuery>,
     headers: HeaderMap,
-) -> Result<Json<Vec<crate::catalog::TrackRecord>>, ApiError> {
+) -> Result<Json<Vec<crate::storage::catalog::TrackRecord>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     if state
         .db
@@ -92,12 +92,12 @@ pub async fn get_track(
         .ok_or(ApiError::NotFound)
 }
 
-#[utoipa::path(get, path = "/api/v2/tracks/{track_id}/lyrics", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/tracks/{track_id}/lyrics", tag = "catalog", params(("track_id" = Uuid, Path)), responses((status = 200, body = crate::library::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn get_track_lyrics(
     State(state): State<AppState>,
     Path(track_id): Path<Uuid>,
     headers: HeaderMap,
-) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
+) -> Result<Json<crate::library::lyrics::LyricsList>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     // The native answer: uploads included, in RFC-012's order, each sheet
     // naming its source. The Subsonic façade reads `lyrics` instead.
@@ -109,8 +109,8 @@ pub async fn get_track_lyrics(
         .map_err(service_error)
 }
 
-fn lyrics_format(value: &str) -> Result<crate::lyrics::UploadFormat, ApiError> {
-    crate::lyrics::UploadFormat::parse(value).ok_or(ApiError::NotFound)
+fn lyrics_format(value: &str) -> Result<crate::library::lyrics::UploadFormat, ApiError> {
+    crate::library::lyrics::UploadFormat::parse(value).ok_or(ApiError::NotFound)
 }
 
 /// Uploads a lyrics sheet to a track (RFC-012 decision 6).
@@ -120,13 +120,13 @@ fn lyrics_format(value: &str) -> Result<crate::lyrics::UploadFormat, ApiError> {
 /// again in the same format replaces it. A sheet with nothing usable in it is
 /// refused with `422`. Owners and managers only; anyone else gets the `404` a
 /// track they could not see would give.
-#[utoipa::path(put, path = "/api/v2/tracks/{track_id}/lyrics/{format}", tag = "catalog", params(("track_id" = Uuid, Path), ("format" = String, Path, description = "lrc, txt or ttml")), request_body(content = Vec<u8>, content_type = "application/octet-stream"), responses((status = 200, body = crate::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 413), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(put, path = "/api/v2/tracks/{track_id}/lyrics/{format}", tag = "catalog", params(("track_id" = Uuid, Path), ("format" = String, Path, description = "lrc, txt or ttml")), request_body(content = Vec<u8>, content_type = "application/octet-stream"), responses((status = 200, body = crate::library::lyrics::LyricsList), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 413), (status = 422, body = ErrorResponse)))]
 pub async fn put_track_lyrics(
     State(state): State<AppState>,
     Path((track_id, format)): Path<(Uuid, String)>,
     headers: HeaderMap,
     body: axum::body::Bytes,
-) -> Result<Json<crate::lyrics::LyricsList>, ApiError> {
+) -> Result<Json<crate::library::lyrics::LyricsList>, ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
     let format = lyrics_format(&format)?;
     state

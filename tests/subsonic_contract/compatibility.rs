@@ -114,7 +114,7 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
         Some(1),
         Some(1),
     );
-    foreign_input.lyrics = vec![waveflow_server::lyrics::LyricsInput {
+    foreign_input.lyrics = vec![waveflow_server::library::lyrics::LyricsInput {
         source: "embedded",
         lang: "eng".into(),
         synced: false,

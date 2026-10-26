@@ -18,7 +18,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use uuid::Uuid;
 
-use crate::security::{SecretBox, SecurityError};
+use crate::auth::security::{SecretBox, SecurityError};
 
 /// What a ticket opens.
 ///

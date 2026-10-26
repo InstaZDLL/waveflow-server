@@ -10,18 +10,18 @@ use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tower::ServiceExt;
 use uuid::Uuid;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
 use waveflow_server::services::ServiceError;
 use waveflow_server::services::MAX_QUEUE_TRACKS;
 use waveflow_server::services::MAX_SHARE_TRACKS;
-use waveflow_server::sync::MutationContext;
-use waveflow_server::sync::SyncError;
-use waveflow_server::sync::MAX_SYNC_LIMIT;
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryRole;
+use waveflow_server::storage::database::LibraryVisibility;
+use waveflow_server::storage::sync::MutationContext;
+use waveflow_server::storage::sync::SyncError;
+use waveflow_server::storage::sync::MAX_SYNC_LIMIT;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.

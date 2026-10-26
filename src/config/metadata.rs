@@ -18,7 +18,7 @@ pub struct MetadataSettings {
     /// `WAVEFLOW_METADATA_PROVIDERS`: an ordered, comma-separated list, empty
     /// by default, of `lastfm`, `deezer` and `theaudiodb`. The order is the
     /// order fields are merged in when read.
-    pub providers: Vec<crate::enrichment::Provider>,
+    pub providers: Vec<crate::remote::enrichment::Provider>,
     /// `WAVEFLOW_METADATA_IMAGES`, on by default, `off` to keep the lookups and
     /// refuse decision 8's image fetch. A narrowing only: it switches nothing
     /// on while `providers` is empty.
@@ -95,7 +95,7 @@ impl std::fmt::Debug for MetadataSettings {
 #[derive(Debug, Clone)]
 pub struct LyricsSettings {
     /// `WAVEFLOW_LYRICS_PROVIDERS`: empty by default, or `lrclib`.
-    pub providers: Vec<crate::lrclib::LyricsProvider>,
+    pub providers: Vec<crate::remote::lrclib::LyricsProvider>,
     /// `WAVEFLOW_LYRICS_TTL_DAYS`: how long lyrics found are kept.
     pub ttl: Duration,
     /// `WAVEFLOW_LYRICS_MISS_TTL_DAYS`: how long "nothing for this track" is
@@ -179,14 +179,14 @@ pub(super) fn parse_lyrics_settings() -> anyhow::Result<LyricsSettings> {
 /// to boot, for the reason [`parse_metadata_providers`] gives.
 pub(super) fn parse_lyrics_providers(
     list: &str,
-) -> anyhow::Result<Vec<crate::lrclib::LyricsProvider>> {
+) -> anyhow::Result<Vec<crate::remote::lrclib::LyricsProvider>> {
     let mut providers = Vec::new();
     for name in list
         .split(',')
         .map(str::trim)
         .filter(|name| !name.is_empty())
     {
-        let provider = crate::lrclib::LyricsProvider::parse(name)
+        let provider = crate::remote::lrclib::LyricsProvider::parse(name)
             .ok_or_else(|| anyhow::anyhow!("invalid WAVEFLOW_LYRICS_PROVIDERS entry {name:?}"))?;
         if providers.contains(&provider) {
             anyhow::bail!("WAVEFLOW_LYRICS_PROVIDERS names {name:?} twice");
@@ -207,24 +207,24 @@ pub(super) fn parse_metadata_providers(
     list: &str,
     has_lastfm_key: bool,
     has_theaudiodb_key: bool,
-) -> anyhow::Result<Vec<crate::enrichment::Provider>> {
+) -> anyhow::Result<Vec<crate::remote::enrichment::Provider>> {
     let mut providers = Vec::new();
     for name in list
         .split(',')
         .map(str::trim)
         .filter(|name| !name.is_empty())
     {
-        let provider = crate::enrichment::Provider::parse(name)
+        let provider = crate::remote::enrichment::Provider::parse(name)
             .ok_or_else(|| anyhow::anyhow!("invalid WAVEFLOW_METADATA_PROVIDERS entry {name:?}"))?;
         if providers.contains(&provider) {
             anyhow::bail!("WAVEFLOW_METADATA_PROVIDERS names {name:?} twice");
         }
-        if provider == crate::enrichment::Provider::LastFm && !has_lastfm_key {
+        if provider == crate::remote::enrichment::Provider::LastFm && !has_lastfm_key {
             anyhow::bail!(
                 "WAVEFLOW_METADATA_PROVIDERS names lastfm without WAVEFLOW_METADATA_LASTFM_KEY"
             );
         }
-        if provider == crate::enrichment::Provider::TheAudioDb && !has_theaudiodb_key {
+        if provider == crate::remote::enrichment::Provider::TheAudioDb && !has_theaudiodb_key {
             anyhow::bail!(
                 "WAVEFLOW_METADATA_PROVIDERS names theaudiodb without WAVEFLOW_METADATA_THEAUDIODB_KEY"
             );

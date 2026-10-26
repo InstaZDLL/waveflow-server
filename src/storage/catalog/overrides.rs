@@ -74,7 +74,7 @@ pub(crate) async fn track_override_lists(
 /// which is why the delete is narrowed rather than wholesale.
 pub(crate) async fn apply_track_override_lists(
     tx: &mut Transaction<'_, Sqlite>,
-    pid: &crate::pid::PidSpecs,
+    pid: &crate::library::pid::PidSpecs,
     library_id: Uuid,
     track_id: Uuid,
     lists: &TrackOverrideLists,

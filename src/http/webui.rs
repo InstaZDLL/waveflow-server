@@ -6,7 +6,7 @@
 //! client-side route resolves by returning the shell.
 //!
 //! Every response here carries the web client's security headers, a
-//! Content-Security-Policy among them ([`crate::security_headers`]).
+//! Content-Security-Policy among them ([`crate::http::security_headers`]).
 
 use axum::{
     body::Body,
@@ -73,7 +73,7 @@ const ASSET_ONLY_PREFIXES: [&str; 2] = ["icons/", "brand/"];
 
 pub async fn handler(uri: Uri) -> Response {
     let mut response = respond(uri.path().trim_start_matches('/'));
-    crate::security_headers::apply_web_client(response.headers_mut(), policy());
+    crate::http::security_headers::apply_web_client(response.headers_mut(), policy());
     response
 }
 
@@ -83,7 +83,7 @@ pub async fn handler(uri: Uri) -> Response {
 fn policy() -> &'static HeaderValue {
     static POLICY: OnceLock<HeaderValue> = OnceLock::new();
     POLICY.get_or_init(|| {
-        HeaderValue::from_str(&crate::security_headers::web_client_policy(
+        HeaderValue::from_str(&crate::http::security_headers::web_client_policy(
             &embedded_shell(),
         ))
         // A digest is base64 and every directive is ASCII, so this cannot
@@ -124,12 +124,12 @@ fn shell() -> Response {
 /// client by accident, and the one address that does is chosen by its own
 /// route. It carries the client's policy, which the shell's inline blocks need
 /// to run, with framing refused as on every share response
-/// ([`crate::security_headers::share_page_policy`]); the share route's own
+/// ([`crate::http::security_headers::share_page_policy`]); the share route's own
 /// layer adds the rest of the share headers.
 pub fn share_page() -> Response {
     static POLICY: OnceLock<HeaderValue> = OnceLock::new();
     let policy = POLICY.get_or_init(|| {
-        HeaderValue::from_str(&crate::security_headers::share_page_policy(
+        HeaderValue::from_str(&crate::http::security_headers::share_page_policy(
             &embedded_shell(),
         ))
         .unwrap_or(HeaderValue::from_static("default-src 'none'"))

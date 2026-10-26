@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 
-use crate::portrait::AddressPolicy;
+use crate::remote::portrait::AddressPolicy;
 
 /// How many redirects one fetch follows. Enclosures commonly pass through one
 /// or two measurement prefixes on their way to a CDN; five leaves room for
@@ -182,7 +182,7 @@ pub async fn open(url: &url::Url, policy: FetchPolicy) -> Result<reqwest::Respon
             .host_str()
             .ok_or(FetchError::Destination)?
             .to_owned();
-        let mut builder = crate::outbound::builder(policy.timeout);
+        let mut builder = crate::remote::outbound::builder(policy.timeout);
         if matches!(current.host(), Some(url::Host::Domain(_))) {
             builder = builder.resolve(&host, pinned);
         }
@@ -222,11 +222,11 @@ pub async fn fetch_bounded(
         let response = open(url, policy).await?;
         // The shared bounded read (RFC-023 decision 1): the same two checks,
         // written once for every fetcher.
-        crate::outbound::read_bounded_body(response, max_bytes)
+        crate::remote::outbound::read_bounded_body(response, max_bytes)
             .await
             .map_err(|error| match error {
-                crate::outbound::BodyError::TooLarge => FetchError::TooLarge,
-                crate::outbound::BodyError::Unread => FetchError::Unreached,
+                crate::remote::outbound::BodyError::TooLarge => FetchError::TooLarge,
+                crate::remote::outbound::BodyError::Unread => FetchError::Unreached,
             })
     };
     tokio::time::timeout(policy.timeout, within)

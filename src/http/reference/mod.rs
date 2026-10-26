@@ -29,7 +29,7 @@
 //! in the repository and the binary. Every browser that can run the page
 //! accepts gzip; a client that does not is handed the bytes decompressed.
 //!
-//! **Under a policy of its own** ([`crate::security_headers::reference_policy`]):
+//! **Under a policy of its own** ([`crate::http::security_headers::reference_policy`]):
 //! scripts from this origin only, and no connection anywhere else.
 
 use std::{io::Read as _, sync::OnceLock};
@@ -50,7 +50,7 @@ pub const SCALAR_VERSION: &str = "1.73.1";
 pub const SCALAR_SHA256: &str = "62c34a0dda38945864011ebaf6e7fa7812a332429120d18922b34d01c4f7ccc8";
 
 /// The bundle, as `gzip -9n` left it.
-static SCALAR_GZIP: &[u8] = include_bytes!("../assets/scalar/api-reference-1.73.1.js.gz");
+static SCALAR_GZIP: &[u8] = include_bytes!("../../../assets/scalar/api-reference-1.73.1.js.gz");
 
 /// Where the page loads the bundle from. Versioned, so it can be cached for
 /// good.
@@ -119,7 +119,10 @@ fn serve_page(page: Bytes) -> Response {
     let mut response = ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], page).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    crate::security_headers::apply_reference(headers, &crate::security_headers::reference_policy());
+    crate::http::security_headers::apply_reference(
+        headers,
+        &crate::http::security_headers::reference_policy(),
+    );
     response
 }
 
@@ -178,7 +181,7 @@ async fn serve_script(request_headers: HeaderMap) -> Response {
     if gzip {
         headers.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
     }
-    crate::security_headers::apply_reference(
+    crate::http::security_headers::apply_reference(
         headers,
         &HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
     );

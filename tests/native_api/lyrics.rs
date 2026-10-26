@@ -39,7 +39,7 @@ async fn uploaded_lyrics_lead_the_order_download_as_they_came_and_stay_off_subso
             owner,
             library_id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await

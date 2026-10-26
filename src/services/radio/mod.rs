@@ -17,7 +17,7 @@
 //! `img-src`, and the listener's address that would leak with it). So the
 //! server fetches it when an account sets or changes it — never on a timer, and
 //! never while anybody listens — through the rules a podcast cover is fetched
-//! under ([`crate::portrait::fetch_followed`]): public addresses only, checked
+//! under ([`crate::remote::portrait::fetch_followed`]): public addresses only, checked
 //! and pinned, redirects followed by hand and each hop checked, 10 MiB, and the
 //! bytes sniffed as JPEG, PNG or WebP. Only the image comes back, and only into
 //! the artwork store; a failure keeps the address and shows no image, and the

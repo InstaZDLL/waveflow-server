@@ -5,10 +5,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::{
+    auth::security,
+    auth::sign_in::{self, Refusal, SignInGuard, Surface},
     config::Config,
-    database::{AccountRole, Database, NewSession},
-    security,
-    sign_in::{self, Refusal, SignInGuard, Surface},
+    storage::database::{AccountRole, Database, NewSession},
 };
 
 #[derive(Clone)]

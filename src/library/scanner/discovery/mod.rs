@@ -175,7 +175,7 @@ impl Reach<'_> {
     /// Whether a followed link may lead to `target`, a canonical path.
     fn admits_target(&self, target: &Path) -> bool {
         target.starts_with(self.root)
-            || crate::link_roots::admits(self.link_roots, self.libraries, target)
+            || crate::library::link_roots::admits(self.link_roots, self.libraries, target)
     }
 
     /// What the walk reached at `path`: the canonical path to read it from,
@@ -196,7 +196,7 @@ impl Reach<'_> {
             let name = relative_to(self.root, &canonical);
             return Some((canonical, name));
         }
-        (crate::link_roots::admits(self.link_roots, self.libraries, &canonical)
+        (crate::library::link_roots::admits(self.link_roots, self.libraries, &canonical)
             && path.starts_with(self.root))
         .then(|| (canonical, relative_to(self.root, path)))
     }
@@ -654,10 +654,10 @@ impl Walked<'_> {
 /// a relocation is only recorded when exactly one thing did, because moving a
 /// favourite onto the wrong row is worse than not moving it at all.
 pub(super) fn unclaimed(
-    candidates: Vec<crate::catalog::ExistingTrack>,
+    candidates: Vec<crate::storage::catalog::ExistingTrack>,
     walked: &Walked<'_>,
     claimed: &HashSet<Uuid>,
-) -> Vec<crate::catalog::ExistingTrack> {
+) -> Vec<crate::storage::catalog::ExistingTrack> {
     candidates
         .into_iter()
         .filter(|candidate| {
