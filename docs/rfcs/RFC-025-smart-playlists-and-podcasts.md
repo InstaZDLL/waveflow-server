@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: [#333](https://github.com/InstaZDLL/waveflow-server/pull/333)
-  (this RFC and its implementation, together). The *Status* field above never
+  (this RFC and its implementation, together), and
+  [#342](https://github.com/InstaZDLL/waveflow-server/pull/342) (the amendment
+  on artwork for podcasts and radio stations). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
