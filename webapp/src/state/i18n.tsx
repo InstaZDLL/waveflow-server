@@ -1135,6 +1135,8 @@ const en = {
   "podcasts.emptyDetail":
     "An administrator subscribes to a show’s feed here. The server downloads its episodes, and every account on this server can listen to them.",
   "podcasts.addFirst": "Add your first podcast",
+  "podcasts.channels": "Shows",
+  "podcasts.showing": "Showing the episodes of {title}.",
   "podcasts.noEpisodes": "This feed has no episodes.",
   "podcasts.episodes": {
     one: "{count} episode",
@@ -2311,6 +2313,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "podcasts.emptyDetail":
     "Un administrateur abonne le serveur au flux d’une émission ici. Le serveur télécharge ses épisodes, et tous les comptes de ce serveur peuvent les écouter.",
   "podcasts.addFirst": "Ajouter votre premier podcast",
+  "podcasts.channels": "Émissions",
+  "podcasts.showing": "Épisodes de {title} affichés.",
   "podcasts.noEpisodes": "Ce flux ne contient aucun épisode.",
   "podcasts.episodes": {
     one: "{count} épisode",

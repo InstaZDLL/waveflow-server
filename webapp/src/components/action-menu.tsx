@@ -182,8 +182,13 @@ function ActionMenuPanel({
         event.preventDefault();
         onClose(true);
         break;
+      // Focus goes back to the button first and the Tab is left to run from
+      // there, so it lands on what follows the button (or, with Shift, what
+      // precedes it). Left in the menu, which sits at the end of the body,
+      // the Tab ran off the page and the menu's unmounting dropped focus on
+      // the body.
       case "Tab":
-        onClose(false);
+        onClose(true);
         break;
     }
   }

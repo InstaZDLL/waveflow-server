@@ -941,7 +941,14 @@ const podcastsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/podcasts",
   staticData: { layout: "workspace" },
-  component: PodcastsPage,
+  // The channel whose episodes are open, so Back and a reload keep it.
+  validateSearch: (search: Record<string, unknown>): { channel?: string } => ({
+    channel: typeof search.channel === "string" ? search.channel : undefined,
+  }),
+  component: function PodcastsRoute() {
+    const { channel } = podcastsRoute.useSearch();
+    return <PodcastsPage channel={channel} />;
+  },
 });
 
 /**

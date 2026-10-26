@@ -35,6 +35,61 @@ let radioWrites: string[] = [];
 /** Held open by the test that needs a save in flight; instant otherwise. */
 let radioGate: Promise<void> = Promise.resolve();
 let canManage = true;
+
+type Episode = {
+  id: string;
+  channel_id: string;
+  channel_title: string;
+  artwork_hash: string | null;
+  title: string;
+  description: string | null;
+  published_at: number | null;
+  duration_ms: number | null;
+  status: "new" | "downloading" | "completed" | "error" | "deleted";
+  error: string | null;
+  size: number | null;
+  suffix: string | null;
+  content_type: string | null;
+  position_ms: number | null;
+  created_at: number;
+};
+
+const episode = (channel: string, id: string, title: string): Episode => ({
+  id,
+  channel_id: channel,
+  channel_title: channel,
+  artwork_hash: null,
+  title,
+  description: null,
+  published_at: 1_704_448_800_000,
+  duration_ms: 720_000,
+  status: "new",
+  error: null,
+  size: null,
+  suffix: null,
+  content_type: null,
+  position_ms: null,
+  created_at: 1_704_448_800_000,
+});
+
+/** A channel as `GET /podcasts/{id}` answers it; listed without its episodes. */
+const channelOf = (id: string, title: string, episodes: Episode[]) => ({
+  id,
+  url: null,
+  title,
+  description: null,
+  site_url: null,
+  image_url: null,
+  artwork_hash: null,
+  status: "completed",
+  error: null,
+  created_at: 1,
+  refreshed_at: 1,
+  episode_count: episodes.length,
+  episodes,
+});
+
+let channels: Array<ReturnType<typeof channelOf>> = [];
 let folders: Array<{
   id: string;
   parent_id: string | null;
@@ -140,8 +195,20 @@ async function mockApi(page: Page) {
     }
     if (path === "/api/v2/podcasts") {
       await route.fulfill({
-        json: { enabled: true, can_manage: canManage, channels: [] },
+        json: {
+          enabled: true,
+          can_manage: canManage,
+          channels: channels.map(({ episodes: _episodes, ...listed }) => listed),
+        },
       });
+      return;
+    }
+    if (path.startsWith("/api/v2/podcasts/")) {
+      const id = path.slice("/api/v2/podcasts/".length);
+      const found = channels.find((channel) => channel.id === id);
+      await route.fulfill(
+        found ? { json: found } : { status: 404, json: { code: "not_found" } },
+      );
       return;
     }
     if (path === `/api/v2/libraries/${LIBRARY_ID}/folders`) {
@@ -178,6 +245,7 @@ test.beforeEach(async ({ page }) => {
   radioWrites = [];
   radioGate = Promise.resolve();
   canManage = true;
+  channels = [];
   folders = [];
   await mockApi(page);
 });
@@ -437,4 +505,174 @@ test("keeps the workspace pages inside a phone and a short window", async ({
   await page.goto("/radio");
   await expect(page.getByRole("list", { name: "Stations" }).getByRole("listitem")).toHaveCount(2);
   await expectNoWcagViolations(page);
+});
+
+function twoShows() {
+  channels = [
+    channelOf("channel-1", "Night Shift", [
+      episode("channel-1", "episode-1", "First night"),
+      episode("channel-1", "episode-2", "Second night"),
+    ]),
+    channelOf("channel-2", "Day Shift", [
+      episode("channel-2", "episode-9", "First day"),
+    ]),
+  ];
+}
+
+/** Whether the panel sits to the right of the list, their tops overlapping. */
+async function besideTheList(page: Page) {
+  const list = await page.getByRole("list", { name: "Shows" }).boundingBox();
+  const panel = await page.locator("#podcast-panel").boundingBox();
+  if (!list || !panel) throw new Error("both panels should be drawn");
+  return {
+    right: panel.x >= list.x + list.width - 1,
+    overlap: panel.y < list.y + list.height && list.y < panel.y + panel.height,
+    below: panel.y >= list.y + list.height - 1,
+  };
+}
+
+/**
+ * From 1024 px of window the episodes sit beside the shows, and the panel is
+ * never an empty hole: with no show named it opens the first. Choosing
+ * another show swaps the panel, keeps focus on the button that chose it, says
+ * so to a screen reader, and lands in the address, so Back and a reload agree.
+ */
+for (const [width, height] of [
+  [1440, 900],
+  [1024, 768],
+  [1024, 640],
+] as const) {
+  test(`lays the episodes beside the shows at ${width}×${height}`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a desktop window");
+    await page.setViewportSize({ width, height });
+    twoShows();
+    await page.goto("/podcasts");
+    const panel = page.locator("#podcast-panel");
+    await expect(panel.getByRole("heading", { name: "Night Shift" })).toBeVisible();
+    await expect(panel).toContainText("Second night");
+    expect(await besideTheList(page)).toMatchObject({ right: true, overlap: true });
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBe(0);
+
+    const day = page
+      .getByRole("list", { name: "Shows" })
+      .getByRole("listitem")
+      .filter({ hasText: "Day Shift" })
+      .getByRole("button", { name: "Episodes" });
+    await day.click();
+    await expect(page).toHaveURL(/[?&]channel=channel-2/);
+    await expect(panel.getByRole("heading", { name: "Day Shift" })).toBeVisible();
+    await expect(panel).toContainText("First day");
+    await expect(panel).not.toContainText("First night");
+    await expect(day).toBeFocused();
+    await expect(day).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("status").filter({ hasText: "Showing" })).toHaveText(
+      "Showing the episodes of Day Shift.",
+    );
+    expect(await besideTheList(page)).toMatchObject({ right: true, overlap: true });
+    await expectNoWcagViolations(page);
+
+    // Back returns to the first show; a reload keeps the one named.
+    await page.goBack();
+    await expect(panel.getByRole("heading", { name: "Night Shift" })).toBeVisible();
+    await page.goto("/podcasts?channel=channel-2");
+    await expect(panel.getByRole("heading", { name: "Day Shift" })).toBeVisible();
+  });
+}
+
+/** A show named in the address that no longer exists opens the first. */
+test("opens the first show when the one in the address is gone", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "a desktop window");
+  twoShows();
+  await page.goto("/podcasts?channel=channel-gone");
+  await expect(
+    page.locator("#podcast-panel").getByRole("heading", { name: "Night Shift" }),
+  ).toBeVisible();
+});
+
+/** A long feed scrolls inside its panel, and the shows stay in view. */
+test("scrolls a long feed inside its panel, leaving the shows in reach", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "a desktop window");
+  await page.setViewportSize({ width: 1024, height: 640 });
+  twoShows();
+  channels[0].episodes = Array.from({ length: 40 }, (_, index) =>
+    episode("channel-1", `episode-long-${index}`, `Night ${index + 1}`),
+  );
+  channels[0].episode_count = 40;
+  await page.goto("/podcasts");
+  const panel = page.locator("#podcast-panel");
+  await expect(panel).toContainText("Night 40");
+  const sizes = await panel.evaluate((node) => ({
+    scroll: node.scrollHeight,
+    client: node.clientHeight,
+    page: document.documentElement.scrollHeight,
+  }));
+  // The feed scrolls in its panel, which is no taller than the window: the
+  // page itself stays shorter than the feed it holds.
+  expect(sizes.scroll).toBeGreaterThan(sizes.client);
+  expect(sizes.client).toBeLessThanOrEqual(640);
+  expect(sizes.page).toBeLessThan(sizes.scroll);
+  await panel.evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+  });
+  await expect(
+    page.getByRole("list", { name: "Shows" }).getByRole("button", { name: "Episodes" }).last(),
+  ).toBeInViewport();
+});
+
+/** On a phone the episodes stay under the list, opened and closed on request. */
+test("stacks the episodes under the shows on a phone", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "a phone");
+  twoShows();
+  await page.goto("/podcasts");
+  await expect(page.locator("#podcast-panel")).toHaveCount(0);
+  const night = page
+    .getByRole("list", { name: "Shows" })
+    .getByRole("listitem")
+    .filter({ hasText: "Night Shift" });
+  await night.getByRole("button", { name: "Episodes" }).click();
+  await expect(page.locator("#podcast-panel")).toContainText("First night");
+  expect(await besideTheList(page)).toMatchObject({ below: true });
+  await night.getByRole("button", { name: "Hide" }).click();
+  await expect(page.locator("#podcast-panel")).toHaveCount(0);
+  await expectNoWcagViolations(page);
+});
+
+/**
+ * Tab leaves the card's menu the way it leaves a menu button: from the "⋯",
+ * onwards to what follows it, or back with Shift. Left to run from inside the
+ * menu, which sits at the end of the page, it dropped focus on the body.
+ */
+test("leaves a card's menu by Tab from its button, not from the page's end", async ({
+  page,
+}) => {
+  stations = [
+    stationFrom("station-1", { name: "Radio Nova", stream_url: "https://nova.example.org/live" }),
+    stationFrom("station-2", { name: "FIP", stream_url: "https://fip.example.org/live" }),
+  ];
+  await page.goto("/radio");
+  const more = page.getByRole("button", { name: "Actions for Radio Nova" });
+  const menu = page.getByRole("menu", { name: "Actions for Radio Nova" });
+
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Listen to FIP" })).toBeFocused();
+
+  await more.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Listen to Radio Nova" })).toBeFocused();
 });

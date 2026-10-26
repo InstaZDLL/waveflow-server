@@ -4388,3 +4388,59 @@ main > section > dialog {
   border-style: dashed;
   background: transparent;
 }
+
+/* Read by a screen reader, not drawn: a status the eye gets from the page. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The podcasts page in two panels from 1024 px of window: the shows on the
+   left, the open show's episodes beside them. The same breakpoint as
+   `TWO_PANELS` in `podcasts-page.tsx`, which also opens the first show when
+   none is named. Below it the episodes stack under the list, as before. */
+@media (width >= 64rem) {
+  .podcast-workspace {
+    display: grid;
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-6);
+  }
+
+  /* A narrow column: the name over the buttons, rather than beside them. */
+  .podcast-workspace .podcast-channels li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding-inline: var(--space-3);
+  }
+
+  .podcast-workspace .podcast-channels li > .resource-with-cover {
+    flex: 1 1 100%;
+  }
+
+  .podcast-workspace .podcast-channels li.selected {
+    background: var(--fe-tone-2, var(--panel-strong));
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  /* Held in view while the list scrolls, and scrolled on its own when it is
+     longer than the window, above the player bar: a long feed never pushes
+     the shows out of reach. */
+  .podcast-workspace .podcast-episodes {
+    position: sticky;
+    top: var(--space-6);
+    max-height: calc(100dvh - 9rem);
+    margin-top: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}

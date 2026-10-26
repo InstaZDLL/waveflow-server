@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -29,6 +30,33 @@ const statusKey = (status: PodcastEpisode["status"]) =>
   `podcasts.status.${status}` as TranslationKey;
 
 /**
+ * From this window width the channels and the open channel's episodes sit
+ * side by side; below it they stack. The same breakpoint as the
+ * `.podcast-workspace` rule in `styles.css`.
+ */
+const TWO_PANELS = "(min-width: 64rem)";
+
+function twoPanelsQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(TWO_PANELS)
+    : null;
+}
+
+/** Whether the window is wide enough for the two panels. */
+function useTwoPanels(): boolean {
+  const [wide, setWide] = useState(() => twoPanelsQuery()?.matches ?? false);
+  useEffect(() => {
+    const query = twoPanelsQuery();
+    if (!query) return;
+    const onChange = () => setWide(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return wide;
+}
+
+/**
  * Podcasts (RFC-025): the channels this server is subscribed to and their
  * episodes.
  *
@@ -37,13 +65,20 @@ const statusKey = (status: PodcastEpisode["status"]) =>
  * the queue, as it does a radio station, and pauses the music under it. Its
  * position is the bookmark the server keeps for it, which the player writes
  * while it plays and this page reads back to say where it resumes.
+ *
+ * The open channel is `?channel=` in the address, so Back returns to the
+ * channel before and a reload keeps the one being read. On a wide window the
+ * episodes sit beside the channels, and the panel is never empty: with no
+ * channel named, or one that is gone, it shows the first. On a narrow one the
+ * episodes open under the list, and only when asked for, as they always have.
  */
-export function PodcastsPage() {
+export function PodcastsPage({ channel }: { channel?: string }) {
   const { t } = useI18n();
+  const navigate = useNavigate();
+  const wide = useTwoPanels();
   const { data: overview, error } = useQuery(podcastsQuery());
   const reload = useReload(podcastsQuery().queryKey);
   const [url, setUrl] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   /** The feed field, which the empty state's action hands focus to. */
@@ -55,9 +90,9 @@ export function PodcastsPage() {
     setBusy(true);
     setMessage(null);
     try {
-      const channel = await subscribePodcast(url.trim());
+      const created = await subscribePodcast(url.trim());
       setUrl("");
-      setSelected(channel.id);
+      choose(created.id);
       reload();
     } catch (failure) {
       setMessage(
@@ -82,13 +117,24 @@ export function PodcastsPage() {
     }
   }
 
-  async function unsubscribe(channel: PodcastChannel) {
+  /** Opens a channel, or closes the open one, through the address. */
+  function choose(id: string | null, replace = false) {
+    void navigate({
+      to: "/podcasts",
+      search: id ? { channel: id } : {},
+      replace,
+    });
+  }
+
+  async function unsubscribe(gone: PodcastChannel) {
     if (busy) return;
     setBusy(true);
     setMessage(null);
     try {
-      await unsubscribePodcast(channel.id);
-      if (selected === channel.id) setSelected(null);
+      await unsubscribePodcast(gone.id);
+      // Replaced rather than pushed: Back should not lead to a channel that
+      // no longer exists.
+      if (channel === gone.id) choose(null, true);
       reload();
     } catch {
       setMessage(t("podcasts.mutationError"));
@@ -98,6 +144,10 @@ export function PodcastsPage() {
   }
 
   if (!overview) return <Loading error={error} />;
+
+  const named = overview.channels.find((entry) => entry.id === channel);
+  const open = named ?? (wide ? overview.channels[0] : undefined);
+  const selected = open?.id ?? null;
 
   return (
     <section className="podcasts-page">
@@ -147,52 +197,78 @@ export function PodcastsPage() {
         </p>
       ) : null}
       {overview.channels.length ? (
-        <ul className="resource-list podcast-channels">
-          {overview.channels.map((channel) => (
-            <li key={channel.id}>
-              <div className="resource-with-cover">
-                {/* Fetched by the server into the artwork store: the feed's
-                    own host is never asked by the browser. */}
-                <Artwork
-                  artworkId={channel.artwork_hash}
-                  title={channel.title}
-                  className="resource-cover"
-                  placeholder={<Icon name="podcasts" size={20} />}
-                />
-                <div className="resource-copy">
-                  <strong>{channel.title}</strong>
-                  <span className="muted">
-                    {t("podcasts.episodes", { count: channel.episode_count })}
-                    {channel.status === "error"
-                      ? ` · ${t("podcasts.failed", { reason: channel.error ?? "" })}`
-                      : ""}
-                  </span>
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-pressed={selected === channel.id}
-                onClick={() =>
-                  setSelected(selected === channel.id ? null : channel.id)
-                }
+        <div className="podcast-workspace">
+          <ul
+            className="resource-list podcast-channels"
+            aria-label={t("podcasts.channels")}
+          >
+            {overview.channels.map((channel) => (
+              <li
+                key={channel.id}
+                className={selected === channel.id ? "selected" : undefined}
               >
-                {selected === channel.id
-                  ? t("podcasts.hide")
-                  : t("podcasts.open")}
-              </button>
-              {overview.can_manage ? (
+                <div className="resource-with-cover">
+                  {/* Fetched by the server into the artwork store: the feed's
+                    own host is never asked by the browser. */}
+                  <Artwork
+                    artworkId={channel.artwork_hash}
+                    title={channel.title}
+                    className="resource-cover"
+                    placeholder={<Icon name="podcasts" size={20} />}
+                  />
+                  <div className="resource-copy">
+                    <strong>{channel.title}</strong>
+                    <span className="muted">
+                      {t("podcasts.episodes", { count: channel.episode_count })}
+                      {channel.status === "error"
+                        ? ` · ${t("podcasts.failed", { reason: channel.error ?? "" })}`
+                        : ""}
+                    </span>
+                  </div>
+                </div>
+                {/* Beside the list, a channel is chosen rather than toggled:
+                  the panel always shows one, so there is nothing to hide.
+                  Focus stays on this button; the status below says what the
+                  panel now holds. */}
                 <button
                   type="button"
-                  className="danger"
-                  disabled={busy}
-                  onClick={() => void unsubscribe(channel)}
+                  aria-pressed={selected === channel.id}
+                  aria-controls={
+                    selected === channel.id ? "podcast-panel" : undefined
+                  }
+                  onClick={() =>
+                    wide
+                      ? choose(channel.id)
+                      : choose(selected === channel.id ? null : channel.id)
+                  }
                 >
-                  {t("podcasts.unsubscribe")}
+                  {selected === channel.id && !wide
+                    ? t("podcasts.hide")
+                    : t("podcasts.open")}
                 </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+                {overview.can_manage ? (
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busy}
+                    onClick={() => void unsubscribe(channel)}
+                  >
+                    {t("podcasts.unsubscribe")}
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+          {open ? (
+            <ChannelEpisodes
+              // Another channel is another list. The episode playing is the
+              // player's, and carries on whichever list is open.
+              key={open.id}
+              channelId={open.id}
+              canManage={overview.can_manage}
+            />
+          ) : null}
+        </div>
       ) : (
         // Said to everyone, since a reader meets this page empty too; only a
         // manager is offered the way out, which is the field above.
@@ -212,15 +288,11 @@ export function PodcastsPage() {
           ) : null}
         </EmptyState>
       )}
-      {selected ? (
-        <ChannelEpisodes
-          // Another channel is another list. The episode playing is the
-          // player's, and carries on whichever list is open.
-          key={selected}
-          channelId={selected}
-          canManage={overview.can_manage}
-        />
-      ) : null}
+      {/* Said once the panel changes: a channel chosen from the list keeps
+          focus on its button, so the new episodes are announced instead. */}
+      <p className="visually-hidden" role="status">
+        {open ? t("podcasts.showing", { title: open.title }) : ""}
+      </p>
     </section>
   );
 }
@@ -256,6 +328,7 @@ function ChannelEpisodes({
 
   return (
     <section
+      id="podcast-panel"
       className="collection podcast-episodes"
       aria-labelledby="podcast-title"
     >
