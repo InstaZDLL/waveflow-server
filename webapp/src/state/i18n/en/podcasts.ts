@@ -1,5 +1,6 @@
 // Podcast subscriptions and episodes.
 export const podcasts = {
+  // Podcasts (RFC-025).
   "podcasts.detail": "Shows this server follows, for every account",
   "podcasts.off":
     "Podcasts are switched off on this server. What was kept before stays readable; nothing new is fetched.",

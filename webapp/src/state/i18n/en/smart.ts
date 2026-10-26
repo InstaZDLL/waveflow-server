@@ -1,6 +1,6 @@
 // Smart playlists.
 export const smart = {
-  // Smart playlists and podcasts (RFC-025), kept together at the end.
+  // Smart playlists (RFC-025).
   "smart.title": "Smart playlists",
   "smart.detail":
     "Defined by rules and worked out again each time they are opened, so they keep up with the library.",

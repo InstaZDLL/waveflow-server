@@ -118,7 +118,7 @@ export const track: Record<keyof typeof en, TranslationValue> = {
     "Cette feuille porte des minutages — appuyez sur une ligne pour y sauter.",
   "lyrics.seekTo": "Sauter à {when}",
   "lyrics.seekLine": "{line}, sauter à {when}",
-  // RFC-024 : paroles de LRCLIB, statistiques et mix.
+  // RFC-024: lyrics from LRCLIB.
   "lyrics.source.lrclib": "Depuis LRCLIB",
   "lyrics.fromLrclib": "Paroles fournies par LRCLIB",
   "canvas.title": "Canvas",

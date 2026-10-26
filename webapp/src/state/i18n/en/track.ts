@@ -111,7 +111,7 @@ export const track = {
   "lyrics.seekHint": "This sheet carries timings — press a line to jump to it.",
   "lyrics.seekTo": "Jump to {when}",
   "lyrics.seekLine": "{line}, jump to {when}",
-  // RFC-024: lyrics from LRCLIB, statistics and mixes.
+  // RFC-024: lyrics from LRCLIB.
   "lyrics.source.lrclib": "From LRCLIB",
   "lyrics.fromLrclib": "Lyrics from LRCLIB",
   "canvas.title": "Canvas",

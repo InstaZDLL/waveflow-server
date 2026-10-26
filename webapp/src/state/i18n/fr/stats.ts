@@ -3,6 +3,7 @@ import type { TranslationValue } from "..";
 import type { stats as en } from "../en/stats";
 
 export const stats: Record<keyof typeof en, TranslationValue> = {
+  // RFC-024: listening statistics and mixes.
   "stats.detail": "Ce que ce compte a écouté, compté à partir de ses écoutes.",
   "stats.period": "Période",
   "stats.period7d": "7 derniers jours",

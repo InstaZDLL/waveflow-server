@@ -1,5 +1,6 @@
 // Listening statistics and mixes.
 export const stats = {
+  // RFC-024: listening statistics and mixes.
   "stats.detail": "What this account listened to, counted from its own plays.",
   "stats.period": "Period",
   "stats.period7d": "Last 7 days",
