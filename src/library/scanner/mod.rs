@@ -282,6 +282,10 @@ impl ScanManager {
                     message: Some(message),
                 });
             }
+            // The job is over, whichever way: dropping its sender closes the
+            // channel, so every watcher reads what was sent and then sees the
+            // end, and a watcher who comes later finds no channel to wait on.
+            manager.events.remove(&scan_id);
         });
     }
 
