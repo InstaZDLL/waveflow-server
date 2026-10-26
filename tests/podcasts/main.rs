@@ -33,6 +33,7 @@ use waveflow_server::database::AccountRole;
 use waveflow_server::security;
 
 #[allow(dead_code)]
+#[path = "../support/mod.rs"]
 mod support;
 use support::*;
 

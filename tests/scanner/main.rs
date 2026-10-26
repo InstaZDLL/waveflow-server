@@ -13,6 +13,7 @@ use waveflow_server::security;
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
 #[allow(dead_code)]
+#[path = "../support/mod.rs"]
 mod support;
 use support::*;
 
