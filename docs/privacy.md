@@ -2,9 +2,10 @@
 
 Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
-the code is the authority if the two ever disagree: `src/outbound.rs`,
-`src/enrichment.rs`, `src/portrait.rs`, `src/lrclib.rs`, `src/podcast.rs`,
-`src/services/remote_artwork.rs` and `src/scrobblers/`.
+the code is the authority if the two ever disagree: `src/remote/outbound/`,
+`src/remote/enrichment/`, `src/remote/portrait/`, `src/remote/lrclib/`,
+`src/remote/podcast/`, `src/services/remote_artwork/` and
+`src/remote/scrobblers/`.
 
 **A server left at its defaults sends nothing on its own.** Booting makes no
 request, and no background task does unless an operator configured it *and*,
@@ -16,7 +17,7 @@ account sets it (below; `WAVEFLOW_REMOTE_ARTWORK=off` stops it).
 
 ## Rules every request follows
 
-All outbound clients are built by one function, `src/outbound.rs`:
+All outbound clients are built by one function, `src/remote/outbound/mod.rs`:
 
 - **No redirect is followed by the client.** A provider cannot bounce a
   request to another host. The one exception is the podcast fetcher, below,
@@ -202,7 +203,10 @@ is checked before it is contacted:
 - the name is resolved first, and every address must be public, by the same
   rules as the portrait fetcher above; the connection is pinned to the address
   that was checked, and a redirect is checked the same way before it is
-  followed;
+  followed — and refused if it would leave https for http, whatever
+  `WAVEFLOW_PODCAST_ALLOW_HTTP` says, so a token sent over https is not
+  handed on in clear by a redirect (an address typed or listed as http is
+  sent in clear from the start, which is what the switch admits);
 - a feed is at most `WAVEFLOW_PODCAST_MAX_FEED_BYTES` (16 MiB) within
   `WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS` (20); an episode at most
   `WAVEFLOW_PODCAST_MAX_EPISODE_BYTES` (1 GiB) within

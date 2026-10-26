@@ -5,10 +5,10 @@
 use axum::http::StatusCode;
 use serde_json::json;
 use uuid::Uuid;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::CatalogTrackInput;
-use waveflow_server::database::{AccountRole, LibraryRole, LibraryVisibility};
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::catalog::CatalogTrackInput;
+use waveflow_server::storage::database::{AccountRole, LibraryRole, LibraryVisibility};
 
 #[allow(dead_code)]
 mod support;

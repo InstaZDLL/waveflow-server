@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 
 import { canvasUrl } from "../api";
+import { onMediaChange } from "../lib/media-query";
 import type { TranslationKey } from "../state/i18n";
 
 /**
@@ -41,8 +42,7 @@ export function usePrefersReducedMotion(): boolean {
     if (!query) return;
     const onChange = () => setReduced(query.matches);
     onChange();
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
+    return onMediaChange(query, onChange);
   }, []);
   return reduced;
 }

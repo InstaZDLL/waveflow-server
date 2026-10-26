@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { lyricSheetState, playingView } from "./playing-page";
+import { detailSplit, lyricSheetState, playingView } from "./playing-page";
 
 /**
  * Which view a location asks for.
@@ -100,5 +100,24 @@ describe("lyricSheetState", () => {
     expect(lyricSheetState({ answered: true, failed: false, lines: 1 })).toBe(
       "sheet",
     );
+  });
+});
+
+/**
+ * Whether the detail view opens a column for the words.
+ *
+ * Only for words: a track without them keeps one centred column rather than
+ * half a screen with "no lyrics" in its corner. And a wait decides nothing, so
+ * the column does not fold and reopen between two tracks that both have words.
+ */
+describe("detailSplit", () => {
+  it("opens the column for a sheet and closes it for none", () => {
+    expect(detailSplit(false, "sheet")).toBe(true);
+    expect(detailSplit(true, "none")).toBe(false);
+  });
+
+  it("keeps the shape it had while the sheet is out", () => {
+    expect(detailSplit(true, "waiting")).toBe(true);
+    expect(detailSplit(false, "waiting")).toBe(false);
   });
 });

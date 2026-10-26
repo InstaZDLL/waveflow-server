@@ -31,6 +31,19 @@ const en = {
   "nav.moreClose": "Close",
   "preferences.theme": "Theme",
   "preferences.language": "Language",
+  "preferences.themeLight": "Light",
+  "preferences.themeDark": "Dark",
+  "preferences.followSystem": "Follow the system",
+  "preferences.followSystemDetail":
+    "Switch between a theme’s light and dark versions when your device does.",
+  "preferences.followingLight":
+    "Your device is in light mode, so the light version is shown. Picking a theme picks both of its versions.",
+  "preferences.followingDark":
+    "Your device is in dark mode, so the dark version is shown. Picking a theme picks both of its versions.",
+  "preferences.standInLight":
+    "{theme} has no light version, so {fallback} stands in while your device is in light mode.",
+  "preferences.standInDark":
+    "{theme} has no dark version, so {fallback} stands in while your device is in dark mode.",
   "replayGain.label": "ReplayGain",
   "replayGain.off": "Off",
   "replayGain.track": "Track gain",
@@ -274,6 +287,7 @@ const en = {
     one: "{count} record in your library",
     other: "{count} records in your library",
   },
+  "albums.gridTitle": "In your library",
   "artists.detail": {
     one: "{count} voice or collaborator",
     other: "{count} voices and collaborators",
@@ -399,7 +413,7 @@ const en = {
   "radio.listen": "Listen",
   "radio.stop": "Stop",
   "radio.visit": "Station page",
-  "radio.empty": "No stations yet. Add one above.",
+  "radio.empty": "No stations yet. Add one to keep it here.",
   "radio.addressRefused": "An address must start with http:// or https://.",
   "radio.mixedContent":
     "This page is served over HTTPS, so your browser will refuse a clear-text stream.",
@@ -408,6 +422,14 @@ const en = {
   "radio.deleteError": "The station could not be deleted.",
   "radio.playbackError":
     "That station could not be played. The server never connects to it, so this is between your browser and the station.",
+  "radio.stations": "Stations",
+  "radio.newTitle": "Add a station",
+  "radio.editTitle": "Edit “{name}”",
+  "radio.listenTo": "Listen to {name}",
+  "radio.stopNamed": "Stop {name}",
+  "radio.actions": "Actions for {name}",
+  "radio.confirmDelete":
+    "Delete the station “{name}”? Its address and image are forgotten.",
   "credential.password": "Dedicated Subsonic password",
   "credential.rotate": "Rotate credential",
   "credential.copy": "Copy this API key now:",
@@ -580,8 +602,10 @@ const en = {
   "quality.verdictLabel": "Verdict",
   "quality.highsStop": "Highs stop at",
   "quality.wall": "Fall at that point",
-  "quality.bitsUsed": "Bits used",
+  "quality.bitsUsed": "Bits in use, measured",
   "quality.bitsOf": "{used} of {declared}",
+  "quality.bitsNote":
+    "A measurement of the samples, not proof of genuine hi-res: a file that uses every bit it declares was not padded, which does not mean it was recorded at that depth.",
   "quality.analysed": "Analysed",
   "quality.chart": "Averaged spectrum: the highs stop at {where}.",
   "quality.chartFullBand": "Averaged spectrum: the highs run on with no wall.",
@@ -634,6 +658,9 @@ const en = {
   "artistImage.failed": "That did not work. Try again.",
   "artistImage.chosen": "Portrait chosen by hand",
   "artistImage.searchDeezer": "Search Deezer",
+  "artistImage.menu": "Edit images",
+  "artistImage.menuShort": "Edit",
+  "artistImage.menuLabel": "Images of {name}",
   "artistImage.deezerTitle": "Choose a portrait from Deezer",
   "artistImage.deezerQuery": "Artist name",
   "artistImage.deezerSearch": "Search",
@@ -646,10 +673,17 @@ const en = {
   "artistImage.deezerBusy":
     "Your previous search is still running. Try again in a moment.",
   "artistImage.deezerExpired": "These results have expired. Search again.",
-  "folders.count": { one: "{count} folder", other: "{count} folders" },
+  "folders.count": {
+    one: "{count} folder created in this library",
+    other: "{count} folders created in this library",
+  },
   "folders.where": "Folder path",
   "folders.subfolders": "Folders",
   "folders.noLibrary": "No library is available to this account.",
+  "folders.none": "No folder has been created in this library yet.",
+  "folders.system": "Kept by WaveFlow",
+  "folders.systemNote":
+    "To sort gathers every track that is in no folder. WaveFlow keeps it itself: it is not counted among the folders above, and it cannot be renamed, moved or deleted.",
   "filed.unfiled": "To sort",
   "filed.automatic": "Automatic",
   "filed.topLevel": "Top level",
@@ -1025,6 +1059,10 @@ const en = {
   "mixes.genre": "{genre} mix",
   "mixes.decade": "The {decade}s",
   "mixes.failed": "“{title}” could not be opened. Try again.",
+  "mixes.shelfTitle": "Mixes for you",
+  "mixes.shelfDetail":
+    "Playlists drawn from your listening, new every day. Your albums are below.",
+  "mixes.badge": "Mix",
   // Smart playlists and podcasts (RFC-025), kept together at the end.
   "smart.title": "Smart playlists",
   "smart.detail":
@@ -1110,11 +1148,18 @@ const en = {
   "podcasts.off":
     "Podcasts are switched off on this server. What was kept before stays readable; nothing new is fetched.",
   "podcasts.url": "Feed address",
+  "podcasts.shared":
+    "Visible to every account: anyone on this server sees the show and can play the episodes it downloads. Only administrators see the feed address.",
   "podcasts.subscribe": "Subscribe",
   "podcasts.refresh": "Refresh every feed",
   "podcasts.refreshing": "The feeds are being fetched again.",
   "podcasts.reload": "Reload",
   "podcasts.empty": "No podcasts yet.",
+  "podcasts.emptyDetail":
+    "An administrator subscribes to a show’s feed here. The server downloads its episodes, and every account on this server can listen to them.",
+  "podcasts.addFirst": "Add your first podcast",
+  "podcasts.channels": "Shows",
+  "podcasts.showing": "Showing the episodes of {title}.",
   "podcasts.noEpisodes": "This feed has no episodes.",
   "podcasts.episodes": {
     one: "{count} episode",
@@ -1168,6 +1213,19 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.moreClose": "Fermer",
   "preferences.theme": "Thème",
   "preferences.language": "Langue",
+  "preferences.themeLight": "Clair",
+  "preferences.themeDark": "Sombre",
+  "preferences.followSystem": "Suivre le système",
+  "preferences.followSystemDetail":
+    "Passer de la version claire d’un thème à sa version sombre en même temps que votre appareil.",
+  "preferences.followingLight":
+    "Votre appareil est en mode clair : la version claire est affichée. Choisir un thème choisit ses deux versions.",
+  "preferences.followingDark":
+    "Votre appareil est en mode sombre : la version sombre est affichée. Choisir un thème choisit ses deux versions.",
+  "preferences.standInLight":
+    "{theme} n’a pas de version claire : {fallback} le remplace tant que votre appareil est en mode clair.",
+  "preferences.standInDark":
+    "{theme} n’a pas de version sombre : {fallback} le remplace tant que votre appareil est en mode sombre.",
   "replayGain.label": "ReplayGain",
   "replayGain.off": "Désactivé",
   "replayGain.track": "Gain par piste",
@@ -1416,6 +1474,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
     one: "{count} disque dans votre bibliothèque",
     other: "{count} disques dans votre bibliothèque",
   },
+  "albums.gridTitle": "Dans votre bibliothèque",
   "artists.detail": {
     one: "{count} voix ou collaboration",
     other: "{count} voix et collaborations",
@@ -1542,7 +1601,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "radio.listen": "Écouter",
   "radio.stop": "Arrêter",
   "radio.visit": "Page de la station",
-  "radio.empty": "Aucune station. Ajoutez-en une ci-dessus.",
+  "radio.empty": "Aucune station. Ajoutez-en une pour la retrouver ici.",
   "radio.addressRefused": "Une adresse doit commencer par http:// ou https://.",
   "radio.mixedContent":
     "Cette page est servie en HTTPS : votre navigateur refusera un flux en clair.",
@@ -1551,6 +1610,14 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "radio.deleteError": "La station n’a pas pu être supprimée.",
   "radio.playbackError":
     "Cette station n’a pas pu être lue. Le serveur ne s’y connecte jamais : cela se passe entre votre navigateur et la station.",
+  "radio.stations": "Stations",
+  "radio.newTitle": "Ajouter une station",
+  "radio.editTitle": "Modifier « {name} »",
+  "radio.listenTo": "Écouter {name}",
+  "radio.stopNamed": "Arrêter {name}",
+  "radio.actions": "Actions pour {name}",
+  "radio.confirmDelete":
+    "Supprimer la station « {name} » ? Son adresse et son image sont oubliées.",
   "credential.password": "Mot de passe Subsonic dédié",
   "credential.rotate": "Renouveler l’identifiant",
   "credential.copy": "Copiez cette clé API maintenant :",
@@ -1721,8 +1788,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "quality.verdictLabel": "Verdict",
   "quality.highsStop": "Les aigus s’arrêtent à",
   "quality.wall": "Chute à cet endroit",
-  "quality.bitsUsed": "Bits utilisés",
+  "quality.bitsUsed": "Bits utilisés, mesurés",
   "quality.bitsOf": "{used} sur {declared}",
+  "quality.bitsNote":
+    "Une mesure des échantillons, pas une preuve de vraie haute résolution : un fichier qui utilise tous les bits qu’il annonce n’a pas été gonflé, ce qui ne veut pas dire qu’il a été enregistré à cette profondeur.",
   "quality.analysed": "Analysé le",
   "quality.chart": "Spectre moyen : les aigus s’arrêtent à {where}.",
   "quality.chartFullBand": "Spectre moyen : les aigus continuent sans mur.",
@@ -1777,6 +1846,9 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "artistImage.failed": "Cela n’a pas fonctionné. Réessayez.",
   "artistImage.chosen": "Portrait choisi à la main",
   "artistImage.searchDeezer": "Rechercher sur Deezer",
+  "artistImage.menu": "Modifier les images",
+  "artistImage.menuShort": "Modifier",
+  "artistImage.menuLabel": "Images de {name}",
   "artistImage.deezerTitle": "Choisir un portrait sur Deezer",
   "artistImage.deezerQuery": "Nom de l’artiste",
   "artistImage.deezerSearch": "Rechercher",
@@ -1790,10 +1862,17 @@ const fr: Record<TranslationKey, TranslationValue> = {
     "Votre recherche précédente est encore en cours. Réessayez dans un instant.",
   "artistImage.deezerExpired":
     "Ces résultats ont expiré. Relancez la recherche.",
-  "folders.count": { one: "{count} dossier", other: "{count} dossiers" },
+  "folders.count": {
+    one: "{count} dossier créé dans cette bibliothèque",
+    other: "{count} dossiers créés dans cette bibliothèque",
+  },
   "folders.where": "Chemin du dossier",
   "folders.subfolders": "Dossiers",
   "folders.noLibrary": "Aucune bibliothèque n’est accessible à ce compte.",
+  "folders.none": "Aucun dossier n’a encore été créé dans cette bibliothèque.",
+  "folders.system": "Tenu par WaveFlow",
+  "folders.systemNote":
+    "À ranger réunit toutes les pistes qui ne sont dans aucun dossier. WaveFlow le tient lui-même : il n’est pas compté parmi les dossiers ci-dessus, et il ne peut être ni renommé, ni déplacé, ni supprimé.",
   "filed.unfiled": "À ranger",
   "filed.automatic": "Automatique",
   "filed.topLevel": "Premier niveau",
@@ -2181,6 +2260,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "mixes.genre": "Mix {genre}",
   "mixes.decade": "Les années {decade}",
   "mixes.failed": "Impossible d’ouvrir « {title} ». Réessayez.",
+  "mixes.shelfTitle": "Mix pour vous",
+  "mixes.shelfDetail":
+    "Des listes tirées de vos écoutes, renouvelées chaque jour. Vos albums sont en dessous.",
+  "mixes.badge": "Mix",
   "smart.title": "Listes intelligentes",
   "smart.detail":
     "Définies par des règles et recalculées à chaque ouverture : elles suivent la bibliothèque.",
@@ -2266,11 +2349,18 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "podcasts.off":
     "Les podcasts sont désactivés sur ce serveur. Ce qui a été conservé reste lisible ; rien de nouveau n’est récupéré.",
   "podcasts.url": "Adresse du flux",
+  "podcasts.shared":
+    "Visible par tous les comptes : chacun sur ce serveur voit l’émission et peut écouter les épisodes téléchargés. Seuls les administrateurs voient l’adresse du flux.",
   "podcasts.subscribe": "S’abonner",
   "podcasts.refresh": "Actualiser tous les flux",
   "podcasts.refreshing": "Les flux sont en cours de récupération.",
   "podcasts.reload": "Recharger",
   "podcasts.empty": "Aucun podcast pour l’instant.",
+  "podcasts.emptyDetail":
+    "Un administrateur abonne le serveur au flux d’une émission ici. Le serveur télécharge ses épisodes, et tous les comptes de ce serveur peuvent les écouter.",
+  "podcasts.addFirst": "Ajouter votre premier podcast",
+  "podcasts.channels": "Émissions",
+  "podcasts.showing": "Épisodes de {title} affichés.",
   "podcasts.noEpisodes": "Ce flux ne contient aucun épisode.",
   "podcasts.episodes": {
     one: "{count} épisode",

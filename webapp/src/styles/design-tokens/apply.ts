@@ -52,12 +52,77 @@ export function applyTheme(theme: ThemePreset): void {
     "--color-surface-light-elevated",
     theme.surfaceLightElevated ?? DEFAULT_SURFACE_LIGHT_ELEVATED,
   );
+  // The dark material's surfaces, written only for a dark preset and cleared
+  // otherwise, so a light page never carries a dark preset's leftovers.
+  const surfaces = themeSurfaces(theme);
+  for (const [key, property] of Object.entries(DARK_SURFACE_PROPERTIES)) {
+    if (theme.mode === "dark") {
+      root.style.setProperty(property, surfaces[key as keyof typeof surfaces]);
+    } else {
+      root.style.removeProperty(property);
+    }
+  }
   root.setAttribute("data-theme", theme.id);
   if (theme.mode === "dark") {
     root.classList.add("dark");
   } else {
     root.classList.remove("dark");
   }
+}
+
+/**
+ * The dark material's own surfaces (`fluid.css`), which a dark preset that
+ * names none of its own keeps: Emerald dark is the guide's near-black.
+ */
+const MATERIAL_DARK_GROUND = "#0b0b0e";
+const MATERIAL_DARK_SURFACE = "#121216";
+const MATERIAL_DARK_RAISED = "#17171d";
+
+/** The variables the dark material reads its three surfaces from. */
+const DARK_SURFACE_PROPERTIES = {
+  ground: "--theme-ground",
+  surface: "--theme-surface",
+  raised: "--theme-raised",
+} as const;
+
+/**
+ * The three surfaces a preset paints in its own mode — the page's ground, a
+ * panel and a raised panel. The Settings picker draws each miniature from
+ * these, so a card shows its own preset's colours whichever is applied.
+ *
+ * **For a dark preset these are the page's surfaces too**: `applyTheme`
+ * writes them as `--theme-ground`, `--theme-surface` and `--theme-raised`,
+ * which the dark material reads (`fluid.css`), so a card and the page it
+ * previews cannot disagree. The ground is the preset's `ambient`, the raised
+ * surface its `surfaceDarkElevated`. The panel is its `surfaceDark` lifted by
+ * the step the material puts between its own ground and panels (`#0b0b0e` to
+ * `#121216`, three parts in a hundred of white): every preset sets
+ * `surfaceDark` to its ambient, as the desktop's sidebar sits flush with its
+ * page, and taken as it is the web's panels and cards would vanish into the
+ * page. A preset that names none of them keeps the material's own.
+ *
+ * A light preset's values are its raw tokens; the light material tints its
+ * paper from `--ambient-bg` itself.
+ */
+export function themeSurfaces(theme: ThemePreset): {
+  ground: string;
+  surface: string;
+  raised: string;
+} {
+  if (theme.mode === "dark") {
+    return {
+      ground: theme.ambient ?? MATERIAL_DARK_GROUND,
+      surface: theme.surfaceDark
+        ? `color-mix(in srgb, ${theme.surfaceDark} 97%, white)`
+        : MATERIAL_DARK_SURFACE,
+      raised: theme.surfaceDarkElevated ?? MATERIAL_DARK_RAISED,
+    };
+  }
+  return {
+    ground: theme.ambient ?? "#ffffff",
+    surface: theme.surfaceLight ?? DEFAULT_SURFACE_LIGHT,
+    raised: theme.surfaceLightElevated ?? DEFAULT_SURFACE_LIGHT_ELEVATED,
+  };
 }
 
 /**
@@ -88,5 +153,11 @@ export function themeCssDeclarations(theme: ThemePreset): string {
   lines.push(
     `--color-surface-light-elevated: ${theme.surfaceLightElevated ?? DEFAULT_SURFACE_LIGHT_ELEVATED};`,
   );
+  if (theme.mode === "dark") {
+    const surfaces = themeSurfaces(theme);
+    for (const [key, property] of Object.entries(DARK_SURFACE_PROPERTIES)) {
+      lines.push(`${property}: ${surfaces[key as keyof typeof surfaces]};`);
+    }
+  }
   return lines.join("\n  ");
 }

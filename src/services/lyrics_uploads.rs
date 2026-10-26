@@ -14,8 +14,8 @@ use sqlx::Row;
 use uuid::Uuid;
 
 use super::{DomainServices, ServiceError};
-use crate::authentication::now_ms;
-use crate::lyrics::{self, LyricsList, StructuredLyrics, UploadFormat};
+use crate::auth::authentication::now_ms;
+use crate::library::lyrics::{self, LyricsList, StructuredLyrics, UploadFormat};
 
 /// The sidecar's cap, so an upload is held to what a scan would read.
 pub const MAX_UPLOAD_BYTES: usize = 1024 * 1024;
@@ -313,7 +313,7 @@ impl DomainServices {
         .fetch_optional(&mut **tx)
         .await?
         .ok_or(ServiceError::NotFound)?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_write_metadata() {
             return Err(ServiceError::Forbidden);

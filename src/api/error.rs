@@ -113,12 +113,12 @@ pub(super) fn db_error(error: sqlx::Error) -> ApiError {
     ApiError::Unavailable
 }
 
-pub(super) fn sync_error(error: crate::sync::SyncError) -> ApiError {
+pub(super) fn sync_error(error: crate::storage::sync::SyncError) -> ApiError {
     match error {
-        crate::sync::SyncError::Invalid => ApiError::Validation,
-        crate::sync::SyncError::Conflict => ApiError::Conflict,
-        crate::sync::SyncError::CursorExpired => ApiError::CursorExpired,
-        crate::sync::SyncError::Database(error) => db_error(error),
+        crate::storage::sync::SyncError::Invalid => ApiError::Validation,
+        crate::storage::sync::SyncError::Conflict => ApiError::Conflict,
+        crate::storage::sync::SyncError::CursorExpired => ApiError::CursorExpired,
+        crate::storage::sync::SyncError::Database(error) => db_error(error),
     }
 }
 

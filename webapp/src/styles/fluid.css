@@ -22,10 +22,12 @@
    last. A plain `:root button` would outrank `.player-controls button`
    and dress every bare icon button as a pill.
 
-   The theme still chooses the accent and the cover chooses the light
-   (`--glow`, written by `CoverLight`); the ground, the surfaces and the
-   inks are the material's and do not move with the theme, beyond the light
-   ground's tint. */
+   The theme chooses the accent and the cover chooses the light (`--glow`,
+   written by `CoverLight`). The inks are the material's. The surfaces are
+   the theme's where it names them: a dark preset's ground, panel and raised
+   surface arrive as `--theme-ground`, `--theme-surface` and `--theme-raised`
+   (written by `applyTheme`, from the same `themeSurfaces` the Settings
+   cards are drawn with), and the light ground takes the theme's tint. */
 
 /* Drawn only beside the rail, where the player bar has room for it. */
 .progress-wave {
@@ -106,14 +108,20 @@
   --sidebar-width: 16rem;
 }
 
-/* The guide's material: tone over a near-black, no blur, hairlines. */
+/* The guide's material: tone over a near-black, no blur, hairlines. The
+   near-black is the default; a dark preset brings its own three surfaces,
+   and everything below that is a translucent white — the hairlines, the
+   tones, the rules — tints with them. */
 :root.dark {
-  --fe-bg: #0b0b0e;
-  --fe-surface: #121216;
-  --fe-surface-2: #17171d;
+  --fe-bg: var(--theme-ground, #0b0b0e);
+  --fe-surface: var(--theme-surface, #121216);
+  --fe-surface-2: var(--theme-raised, #17171d);
   --fe-ink: #f3f1ec;
   --fe-ink-2: #b5b2aa;
-  --fe-ink-3: #8e8b83;
+  /* #8e8b83 until the presets brought their own grounds: on Lavender's and
+     Ocean's deepest tone it read 4.49 and 4.46:1. One step lighter holds
+     4.70 on the worst (`themes-contrast.test.ts`). */
+  --fe-ink-3: #928f87;
   --fe-hairline: rgb(255 255 255 / 7%);
   --fe-hairline-strong: rgb(255 255 255 / 12%);
   --fe-tone-1: rgb(255 255 255 / 4%);
@@ -123,14 +131,22 @@
   /* Rows parted inside a list or a table. */
   --fe-rule: rgb(255 255 255 / 5%);
 
-  /* The cover's light as the structure spends it: at full strength here. */
+  /* The cover's light as the structure spends it: at full strength here.
+     Until a cover is sampled the accent stands in, deepened into this
+     theme's own ground rather than the default near-black, so Midnight's
+     stand-in light is a blue night and not a grey one. 40 % of the accent,
+     not the 58 % both materials shared: under the login story's 60 % pool
+     Sunset's stand-in read 3.84:1 against the muted ink, and 40 % holds
+     4.65. */
+  --glow: color-mix(in srgb, var(--accent-700) 40%, var(--fe-bg));
+  --glow-deep: color-mix(in srgb, var(--accent-700) 30%, var(--fe-bg));
   --fe-glow: var(--glow);
   --fe-glow-deep: var(--glow-deep);
 
   /* What a head lays over a blurred cover so its text stays legible: the
      ground itself, at the strengths each head asks for. Then the text set
      over that wash, and the glass of the buttons that sit on it. */
-  --fe-wash: #0b0b0e;
+  --fe-wash: var(--fe-bg);
   --fe-on-wash: #fff;
   --fe-on-wash-2: rgb(255 255 255 / 76%);
   --fe-on-wash-tone: rgb(0 0 0 / 38%);
@@ -158,7 +174,10 @@
   --fe-surface-2: #fff;
   --fe-ink: #1b1a17;
   --fe-ink-2: #46433d;
-  --fe-ink-3: #625e56;
+  /* #625e56 until the tinted grounds were measured: on Midnight, Lavender
+     and Crimson's deepest tone it fell to 4.41–4.47:1. One step darker holds
+     4.62 on the worst of them (`themes-contrast.test.ts`). */
+  --fe-ink-3: #5f5b53;
   --fe-hairline: rgb(27 26 23 / 9%);
   --fe-hairline-strong: rgb(27 26 23 / 16%);
   --fe-tone-1: rgb(27 26 23 / 4%);
@@ -168,9 +187,14 @@
   --fe-rule: rgb(27 26 23 / 7%);
 
   /* The sampled colour is deepened for a dark page; at full strength it
-     would muddy this one, so it arrives washed into the ground. */
-  --fe-glow: color-mix(in srgb, var(--glow) 34%, var(--fe-bg));
-  --fe-glow-deep: color-mix(in srgb, var(--glow-deep) 26%, var(--fe-bg));
+     would muddy this one, so it arrives washed into the ground. Washed hard:
+     a dark cover pulls the paper towards the dark ink, and at the 34 % and
+     26 % this once took, the muted ink under the strongest pools (the login
+     story's 60 %, the lower pool's 70 %) fell to 3.42:1 on Midnight light.
+     13 % and 11 % keep it at 4.64 for a cover as dark as black, on every
+     light preset (`themes-contrast.test.ts`). */
+  --fe-glow: color-mix(in srgb, var(--glow) 13%, var(--fe-bg));
+  --fe-glow-deep: color-mix(in srgb, var(--glow-deep) 11%, var(--fe-bg));
 
   --fe-wash: var(--fe-bg);
   --fe-on-wash: var(--fe-ink);
@@ -188,11 +212,12 @@
   --shadow: 0 1.5rem 3rem rgb(43 38 28 / 14%);
 }
 
-/* OLED asks for a ground that is off, and gets one. */
-:root.dark[data-theme="oled"] {
-  --fe-bg: #000;
-  --fe-surface: #0a0a0c;
-  --fe-surface-2: #121216;
+/* Sunset's amber 700 is the lightest of the light accents and its ground the
+   warmest: together they read 4.29:1, short of AA for the links and kickers
+   the accent is spent on. A fifth of the 800 stop takes it to 4.58 and keeps
+   the orange; the palette itself stays the desktop's. */
+:root:not(.dark)[data-theme="sunset-light"] {
+  --accent: color-mix(in srgb, var(--accent-700) 80%, var(--accent-800));
 }
 
 /* ── Ground and atmosphere ───────────────────────────────────── */
@@ -1538,4 +1563,226 @@
 
 :where(:root) .properties-close {
   background: var(--fe-tone-2);
+}
+
+/* ── The theme picker ────────────────────────────────────────── */
+
+/* A card per preset, as the desktop draws them: a miniature of the app in
+   the preset's own colours, its name and its mode. The miniature reads only
+   the `--preview-*` properties the card carries inline, so each card paints
+   its own theme whichever one is applied; everything around it is the
+   material's. */
+.theme-gallery {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 60rem;
+}
+
+.theme-gallery-heading,
+.theme-group-heading {
+  margin: 0;
+  color: var(--fe-ink-3);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-follow {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.theme-groups {
+  display: grid;
+  gap: var(--space-6);
+}
+
+/* A fieldset for its grouping, without its frame. `min-inline-size` matters:
+   a fieldset is as wide as its content by default, and the grid inside it
+   would push the page sideways on a phone instead of reflowing. */
+.theme-group {
+  display: grid;
+  gap: var(--space-3);
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Reflows rather than scrolls: two cards abreast on a phone, as many as fit
+   on a desktop, never narrower than a miniature stays legible. */
+.theme-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+}
+
+.theme-card {
+  position: relative;
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--fe-hairline-strong);
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface);
+  cursor: pointer;
+  transition:
+    border-color 180ms var(--fe-ease),
+    box-shadow 180ms var(--fe-ease),
+    transform 320ms var(--fe-ease);
+}
+
+.theme-card:hover {
+  transform: translateY(-1px);
+}
+
+/* The radio the card labels: laid over the whole card and see-through, so it
+   keeps the focus, the keyboard and the checked state the card only draws,
+   and a press anywhere on the card is a press on it. */
+.theme-card-input {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* The chosen card: the accent's edge, doubled so it reads as a state and not
+   as a hairline, and the check in its corner. */
+.theme-card:has(.theme-card-input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* The focus ring the hidden radio cannot show, drawn around its card. */
+.theme-card:has(.theme-card-input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.theme-card-preview {
+  display: grid;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  grid-template-columns: 28% 1fr;
+  grid-template-rows: 1fr auto;
+  border: 1px solid color-mix(in srgb, var(--preview-ink) 10%, transparent);
+  border-radius: var(--fe-radius-tile);
+  background: var(--preview-ground);
+}
+
+.theme-card-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-1);
+  background: var(--preview-sidebar);
+}
+
+.theme-card-content {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  padding: var(--space-2);
+}
+
+.theme-card-dot {
+  flex: none;
+  width: 0.375rem;
+  height: 0.375rem;
+  border-radius: 50%;
+  background: var(--preview-accent);
+}
+
+.theme-card-line {
+  height: 0.1875rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--preview-ink) 22%, transparent);
+}
+
+.theme-card-line:last-child {
+  width: 60%;
+}
+
+.theme-card-bar {
+  height: 0.875rem;
+  border-radius: 0.1875rem;
+  background: linear-gradient(
+    100deg,
+    var(--preview-accent),
+    var(--preview-accent-deep)
+  );
+}
+
+.theme-card-tiles {
+  display: grid;
+  gap: var(--space-1);
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.theme-card-tiles > span {
+  aspect-ratio: 1;
+  border-radius: 0.1875rem;
+  background: color-mix(in srgb, var(--preview-raised) 86%, var(--preview-ink));
+}
+
+.theme-card-player {
+  display: flex;
+  align-items: center;
+  grid-column: 1 / -1;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid color-mix(in srgb, var(--preview-ink) 10%, transparent);
+  background: var(--preview-raised);
+}
+
+.theme-card-progress {
+  flex: 1;
+  height: 0.125rem;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--preview-accent) 0 40%,
+    color-mix(in srgb, var(--preview-ink) 20%, transparent) 40% 100%
+  );
+}
+
+.theme-card-name {
+  color: var(--fe-ink);
+  font-size: var(--text-sm);
+  font-weight: 560;
+  line-height: 1.3;
+}
+
+.theme-card-mode {
+  color: var(--fe-ink-3);
+  font-size: var(--text-xs);
+}
+
+.theme-card-check {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--fe-accent-ink);
+  box-shadow: 0 0 0 2px var(--fe-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-card {
+    transition: none;
+  }
+
+  .theme-card:hover {
+    transform: none;
+  }
 }

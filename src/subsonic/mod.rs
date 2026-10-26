@@ -15,13 +15,13 @@ use serde_json::{Map, Value};
 use uuid::Uuid;
 
 use crate::{
-    database::AccountRole,
+    auth::security,
     media::{MediaError, OutputFormat, StreamQuery},
-    security,
     services::{
         AlbumItem, AlbumListQuery, AlbumOrder, ArtistItem, ArtistSummary, BrowsePage, PlaylistItem,
         ServiceError, SongItem,
     },
+    storage::database::AccountRole,
     AppState,
 };
 
@@ -184,7 +184,7 @@ struct ProtocolError {
 pub fn router(state: AppState) -> Router {
     // `/rest` carries none of the security headers: the façade's wire
     // behaviour is frozen (RFC-019 decision 2). The public shares, which do
-    // carry them, are served by `crate::public_share` since RFC-020.
+    // carry them, are served by `crate::http::public_share` since RFC-020.
     Router::new()
         .route("/rest/{method}", get(handle).post(handle))
         .with_state(state)
@@ -198,7 +198,7 @@ pub async fn handle(
     let request_method = request.method().clone();
     let query = request.uri().query().unwrap_or_default().to_owned();
     // Read before the body is: a POST's request is consumed below.
-    let address = crate::sign_in::request_bucket(
+    let address = crate::auth::sign_in::request_bucket(
         request.extensions(),
         request.headers(),
         &state.trusted_proxies,

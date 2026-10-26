@@ -1,0 +1,319 @@
+//! The outbound half of RFC-010: the adapters that actually speak to somebody.
+//!
+//! Apart from `src/services/` on purpose. The domain owns the queue and knows
+//! five words; these know one destination each and nothing about the queue.
+//! That line is what decision 6 exists to draw, and putting an adapter beside
+//! the drain would rub it out within a release.
+//!
+//! Decision 10 calls outbound requests the real risk of the whole RFC — a
+//! server that calls a URL is a server somebody can make call a URL — so the
+//! rules live once, in [`crate::remote::outbound`], rather than in each adapter. That
+//! module is shared with metadata enrichment (RFC-011), the server's only other
+//! outbound surface.
+
+use std::time::Duration;
+
+pub mod lastfm;
+pub mod listenbrainz;
+pub mod maloja;
+
+/// Why a destination was refused before anything was sent to it.
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum OutboundError {
+    #[error("the destination is not a valid URL")]
+    Unparseable,
+    #[error("the destination must be https")]
+    NotHttps,
+    #[error("plaintext is only allowed to a host on the operator's own network")]
+    PlaintextToPublicHost,
+    #[error("the destination must not carry credentials, a query or a fragment")]
+    NotABareOrigin,
+    #[error("the outbound client could not be built")]
+    Unbuildable,
+    #[error(
+        "a destination name must be 1 to 64 characters of letters, digits, '-', '_' or '.', and neither '.' nor '..'"
+    )]
+    UnusableName,
+}
+
+/// The longest a destination's name may be.
+///
+/// It becomes a path segment, so it is bounded like one rather than left to
+/// whatever an operator pastes.
+const MAX_DESTINATION_NAME: usize = 64;
+
+/// Checks a name an operator gave one instance of a destination.
+///
+/// The name travels in a URL path — `PUT /api/v2/scrobble-links/maloja/alice` —
+/// so it is held to what crosses a path without discussion: ASCII letters,
+/// digits, `-`, `_` and `.`. Refusing at boot costs the operator a clear
+/// message; accepting would buy a segment that decodes differently depending on
+/// who reads it.
+///
+/// `.` and `..` are refused by name. They are navigation instructions wherever
+/// a path is resolved, and a destination called `..` is one nobody can address
+/// without arguing with an intermediary about it first.
+pub fn validate_destination_name(name: &str) -> Result<(), OutboundError> {
+    if name.is_empty() || name.len() > MAX_DESTINATION_NAME || name == "." || name == ".." {
+        return Err(OutboundError::UnusableName);
+    }
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err(OutboundError::UnusableName);
+    }
+    Ok(())
+}
+
+/// The canonical spelling of a destination, as an identity rather than as an
+/// address.
+///
+/// **Not `normalize_public_url` (`src/config/access.rs`), and the difference is
+/// load-bearing.** That one answers an *origin* — scheme, host, port — and
+/// throws the path away, because that is what a share link needs. A
+/// destination is not an origin: [`validate_destination`] accepts a path, so
+/// `https://host/tenant-a` and `https://host/tenant-b` are two destinations,
+/// and reducing them to their origin would give them one identity. The guard
+/// would then wave through precisely the move it exists to catch — one tenant
+/// to another on the same machine, the likeliest shape such a change has.
+///
+/// The trailing slash is settled here rather than left to the reader:
+/// `https://host/maloja` and `https://host/maloja/` are the **same**
+/// destination, because an operator pasting either means the same machine, and
+/// a link broken by a slash an editor added would be a punishment for nothing.
+/// The canonical form is the one without it, the root apart, where there is no
+/// choice to make.
+///
+/// A query and a fragment cannot appear: `validate_destination` refuses both.
+/// Every caller hands this the `Url` that function returned.
+pub fn canonical_destination(url: &url::Url) -> String {
+    let mut canonical = String::with_capacity(url.as_str().len());
+    canonical.push_str(url.scheme());
+    canonical.push_str("://");
+    // `Url::host_str` is already lowercased and punycoded by the parser, and
+    // `port_or_known_default` restores the port an operator left implicit, so
+    // `https://host` and `https://host:443` are one destination.
+    if let Some(host) = url.host_str() {
+        canonical.push_str(host);
+    }
+    if let Some(port) = url.port_or_known_default() {
+        canonical.push(':');
+        canonical.push_str(&port.to_string());
+    }
+    let path = url.path().trim_end_matches('/');
+    canonical.push_str(if path.is_empty() { "/" } else { path });
+    canonical
+}
+
+/// What a link keeps so it can recognise the destination it meant.
+///
+/// A digest of [`canonical_destination`], hex. Comparing digests rather than
+/// URLs is not a precaution against an attacker — nobody hostile writes this
+/// configuration — it is the way to have exactly one thing to compare, and to
+/// keep `scrobble_link` free of destination addresses, which decision 10 says
+/// it holds none of.
+pub fn destination_fingerprint(url: &url::Url) -> String {
+    hex::encode(crate::auth::security::bytes_hash(
+        canonical_destination(url).as_bytes(),
+    ))
+}
+
+/// The client every adapter shares: [`crate::remote::outbound::client`], which holds
+/// decision 10's rules and is shared with metadata enrichment.
+pub fn outbound_client(timeout: Duration) -> Result<reqwest::Client, OutboundError> {
+    crate::remote::outbound::client(timeout).map_err(|_| OutboundError::Unbuildable)
+}
+
+/// Checks a destination an operator configured, before it is ever called.
+///
+/// `allow_plaintext` is the one escape, and it belongs to the operator rather
+/// than to a member: Maloja and ListenBrainz self-host, and a server talking to
+/// a container on its own network over plain HTTP is a reasonable thing that
+/// this rule must not forbid. What it must forbid is a *default* that quietly
+/// sends a personal token in clear across somebody's internet.
+///
+/// **And the escape is now no wider than that justification.** A review pointed
+/// out that `submit` sends `Authorization: Token …` on the first request, so
+/// plaintext to a *public* host is cleartext transmission of somebody's
+/// credential — CWE-319. Decision 10 had always read "sauf pour une cible
+/// explicitement déclarée par l'opérateur **en clair sur son propre réseau**",
+/// and the paragraph above said the same; neither was ever checked, so the flag
+/// bought plaintext to anywhere. The reviewer asked for HTTP to be refused
+/// outright, which would remove the self-hosted case the decision exists to
+/// permit. Making the code enforce the sentence it already claimed is the
+/// narrower and truer fix.
+///
+/// Judged on the literal, never resolved: a name that resolves privately but
+/// does not look private is refused, and the operator writes the address
+/// instead. Guessing from DNS would make this answer depend on what a resolver
+/// said at boot.
+///
+/// A bare origin only — no credentials, no query, no fragment. A path is
+/// allowed, because a self-hosted instance may well live under one.
+pub fn validate_destination(raw: &str, allow_plaintext: bool) -> Result<url::Url, OutboundError> {
+    let parsed = url::Url::parse(raw.trim()).map_err(|_| OutboundError::Unparseable)?;
+    match parsed.scheme() {
+        "https" => {}
+        "http" if allow_plaintext => {
+            if !is_on_our_own_network(parsed.host()) {
+                return Err(OutboundError::PlaintextToPublicHost);
+            }
+        }
+        _ => return Err(OutboundError::NotHttps),
+    }
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.host().is_none()
+    {
+        return Err(OutboundError::NotABareOrigin);
+    }
+    Ok(parsed)
+}
+
+/// Whether a host is plausibly on the operator's own network.
+///
+/// The addresses are the ones that cannot be routed across the internet:
+/// loopback, the three private IPv4 ranges, link-local, and their IPv6
+/// equivalents — unique-local `fc00::/7` and link-local `fe80::/10`, spelled out
+/// by hand because `Ipv6Addr`'s own predicates for those are still unstable.
+/// **An IPv4-mapped address is unwrapped and judged as the address it names**,
+/// so `[::ffff:10.0.0.1]` and `10.0.0.1` get the same answer. A review found
+/// them getting opposite ones: the refusal was safe, but it told an operator
+/// their own network was public, which is the worst kind of true-sounding lie
+/// for a boot failure to tell.
+///
+/// The deprecated IPv4-*compatible* spelling is a different thing and stays
+/// refused: `to_ipv4_mapped` answers only for `::ffff:a.b.c.d`, so `[::10.0.0.1]`
+/// falls through to the segment tests and fails them. It is now the one IPv6
+/// spelling of a private address that disagrees with its IPv4 twin, and it is
+/// left that way deliberately — the form is deprecated, nothing writes it on
+/// purpose, and refusing is the safe direction. Said here because the paragraph
+/// above, read alone, promises more agreement than there is.
+///
+/// The names are `localhost` and the mDNS and intranet suffixes — `.local`,
+/// `.internal`, `.home.arpa` — and nothing else.
+///
+/// **A bare single label was accepted here and is not any more.** The argument
+/// for it was that `http://maloja` is what a container is called on a Docker
+/// network, which is true. The argument against it is stronger, and a review had
+/// to make it twice before it landed: **a single label is completed by the
+/// resolver's own search list.** `http://maloja` on a host configured with
+/// `search corp.example.com` names a public address, and the literal does not
+/// say which. That is precisely the DNS dependence the paragraph below refuses —
+/// it was sitting inside the rule that refuses it. `com` and `ai` are single
+/// labels too, and they answer publicly.
+///
+/// An operator on a container network writes the address, or a name under one of
+/// the suffixes above. That is a smaller cost than a personal token in clear to
+/// wherever a search domain happened to point.
+///
+/// A name made only of dots trims to the empty string, which contains no dot and
+/// so read as ours. Refused — nobody's network is called that, and accepting it
+/// was an accident of how the trimming is written rather than a decision.
+///
+/// A public name is refused even if it happens to resolve to `10.0.0.2` today.
+/// That is the deliberate half: a check that asked a resolver would answer
+/// differently depending on when it was asked, and a DNS answer is not a thing
+/// to hang a credential on.
+fn is_on_our_own_network(host: Option<url::Host<&str>>) -> bool {
+    fn unroutable(address: std::net::Ipv4Addr) -> bool {
+        address.is_loopback() || address.is_private() || address.is_link_local()
+    }
+    match host {
+        Some(url::Host::Ipv4(address)) => unroutable(address),
+        Some(url::Host::Ipv6(address)) => {
+            if let Some(mapped) = address.to_ipv4_mapped() {
+                return unroutable(mapped);
+            }
+            let leading = address.segments()[0];
+            address.is_loopback() || (leading & 0xfe00) == 0xfc00 || (leading & 0xffc0) == 0xfe80
+        }
+        Some(url::Host::Domain(name)) => {
+            let name = name.trim_end_matches('.').to_ascii_lowercase();
+            if name.is_empty() {
+                return false;
+            }
+            name == "localhost"
+                || [".localhost", ".local", ".internal", ".home.arpa"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+        }
+        None => false,
+    }
+}
+
+/// Joins a path onto a configured destination without letting the path escape.
+///
+/// `Url::join` treats a leading `/` as "replace the whole path", which would
+/// quietly undo an operator's `https://host/listenbrainz` prefix, and a `..`
+/// segment can climb out of it. Neither is reachable from user input today —
+/// every caller passes a literal — and that is exactly why it is worth closing
+/// now, while the only paths are ones we wrote.
+pub fn endpoint(base: &url::Url, path: &str) -> Result<url::Url, OutboundError> {
+    let mut joined = base.clone();
+    {
+        let mut segments = joined
+            .path_segments_mut()
+            .map_err(|()| OutboundError::NotABareOrigin)?;
+        // Drops the empty segment a trailing slash leaves behind, so
+        // `https://host/` and `https://host` produce the same endpoint.
+        segments.pop_if_empty();
+        for segment in path.split('/').filter(|segment| !segment.is_empty()) {
+            if segment == ".." || segment == "." {
+                return Err(OutboundError::NotABareOrigin);
+            }
+            segments.push(segment);
+        }
+    }
+    Ok(joined)
+}
+
+/// The standard one: delta-seconds, or an HTTP date.
+///
+/// **A date already past, or one that will not parse, reads as absent** rather
+/// than as zero: "wait until a moment that has gone" is not a request to wait,
+/// and turning it into one would let a clock skew of a few seconds decide a
+/// listen's schedule.
+///
+/// **HTTP-date is three formats, and this reads one of them.** RFC 9110 §5.6.7
+/// asks a recipient to accept IMF-fixdate plus the obsolete RFC 850 and asctime
+/// spellings. `parse_from_rfc2822` covers IMF-fixdate, which is the only one
+/// anything still sends; the other two therefore read as absent and fall to this
+/// server's own backoff, which is the safe direction. Declined rather than
+/// missed: RFC 850 carries a two-digit year, and a fifty-year windowing rule is
+/// a real defect to buy in exchange for a format no destination emits. An
+/// earlier version of this comment said "either of the two forms RFC 9110
+/// allows" — it counted delta-seconds and HTTP-date, and missed that the second
+/// is itself three.
+///
+/// Delta-seconds is `1*DIGIT`, so the digits are checked before the parse:
+/// `u64::from_str` accepts a leading `+`, and `+30` is not a spelling this is
+/// allowed to understand.
+pub(super) fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    let raw = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .to_owned();
+    // `1*DIGIT` spelled out: at least one, and every one of them a digit. The
+    // emptiness half is not redundant with the parse failing on `""` — it is
+    // the rule written where the rule is, rather than inferred from what a
+    // parser happens to reject.
+    let plain_digits = !raw.is_empty() && raw.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some(seconds) = plain_digits.then(|| raw.parse::<u64>().ok()).flatten() {
+        return Some(Duration::from_secs(seconds));
+    }
+    let until = chrono::DateTime::parse_from_rfc2822(&raw).ok()?;
+    let seconds = until
+        .signed_duration_since(chrono::Utc::now())
+        .num_seconds();
+    (seconds > 0).then(|| Duration::from_secs(seconds.unsigned_abs()))
+}
+
+#[cfg(test)]
+mod tests;

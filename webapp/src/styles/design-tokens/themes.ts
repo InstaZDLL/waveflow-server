@@ -219,3 +219,26 @@ export function findTheme(id: string | null | undefined): ThemePreset {
   if (!id) return def;
   return THEME_PRESETS.find((t) => t.id === id) ?? def;
 }
+
+/**
+ * The member of a preset's family that suits a colour scheme: the preset
+ * itself when its mode already matches, else its `pair`, else — for the
+ * one-offs with no counterpart (OLED, Neon) — the Emerald preset of that
+ * mode, the same fallback the desktop's sun/moon toggle takes. Pure, so the
+ * "follow the system" preference is decided here and only wired up in React.
+ */
+export function themeForScheme(
+  preset: ThemePreset,
+  scheme: ThemeMode,
+): ThemePreset {
+  if (preset.mode === scheme) return preset;
+  const pair = preset.pair
+    ? THEME_PRESETS.find((t) => t.id === preset.pair)
+    : undefined;
+  if (pair && pair.mode === scheme) return pair;
+  const fallback = THEME_PRESETS.find(
+    (t) => t.mode === scheme && (t.id === "default" || t.id === "default-dark"),
+  );
+  // Both Emerald presets are locked into the roster by `themes.test.ts`.
+  return fallback ?? preset;
+}

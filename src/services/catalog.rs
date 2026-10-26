@@ -148,7 +148,7 @@ impl DomainServices {
         album_page: BrowsePage,
         song_page: BrowsePage,
     ) -> Result<CatalogSearch, ServiceError> {
-        let Some(fts) = crate::catalog::fts_prefix_query(query) else {
+        let Some(fts) = crate::storage::catalog::fts_prefix_query(query) else {
             return Ok(CatalogSearch {
                 artists: Vec::new(),
                 albums: Vec::new(),

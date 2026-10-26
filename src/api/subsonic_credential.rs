@@ -28,11 +28,11 @@ use super::*;
 /// A `404` would be indistinguishable from a route that is not there, and a
 /// flag beside the timestamps would tell one fact twice — the body already
 /// says it by being absent.
-#[utoipa::path(get, path = "/api/v2/subsonic-credential", tag = "account", responses((status = 200, body = Option<crate::database::SubsonicCredentialStatus>), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/subsonic-credential", tag = "account", responses((status = 200, body = Option<crate::storage::database::SubsonicCredentialStatus>), (status = 401, body = ErrorResponse)))]
 pub async fn own_subsonic_credential(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Option<crate::database::SubsonicCredentialStatus>>, ApiError> {
+) -> Result<Json<Option<crate::storage::database::SubsonicCredentialStatus>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services

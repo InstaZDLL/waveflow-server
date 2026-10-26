@@ -234,8 +234,11 @@ impl DomainServices {
         // The spent portrait searches first (RFC-013), in the same
         // transaction: their previews become unreferenced here, and a preview
         // a choice already names is kept by the clause below.
-        super::artist_image_search::forget_spent_searches(&mut tx, crate::authentication::now_ms())
-            .await?;
+        super::artist_image_search::forget_spent_searches(
+            &mut tx,
+            crate::auth::authentication::now_ms(),
+        )
+        .await?;
         let removed = sqlx::query(
             "DELETE FROM artwork WHERE \
                NOT EXISTS (SELECT 1 FROM artist WHERE artist.artwork_hash = artwork.hash) \

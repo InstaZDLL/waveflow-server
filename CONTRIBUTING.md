@@ -38,6 +38,17 @@ A DCO keeps contributing friction-free (one CLI flag), while still giving the pr
 
 By submitting a pull request, you agree that your contribution is licensed under [AGPL-3.0-only](LICENSE) for inclusion in this repository.
 
+## Where code and tests go
+
+The server's `src/` is filed by domain, with only `main.rs` and `lib.rs` at its root: `app/`, `cli/` and `config/`; the two API surfaces `api/` (`/api/v2`) and `subsonic/` over the domain services in `services/`; then `auth/`, `library/` (the music on disk), `storage/` (SQLite), `remote/` (anything that talks to another host), `http/` (HTTP outside the two surfaces), `media/` and `quality/`. Put a new module under the parent whose domain it serves. [CLAUDE.md](CLAUDE.md) describes each one.
+
+Tests follow two rules, and CI checks both with `scripts/check-rust-layout.sh`:
+
+- **Unit tests sit beside their module, never inline.** A module with tests is a directory: `foo/mod.rs` declares `#[cfg(test)] mod tests;` and the tests live in `foo/tests.rs`. Integration tests live under `tests/`, one `[[test]]` target per subject in `Cargo.toml`; a large target is a directory whose `main.rs` declares one file per subject.
+- **Files stay small.** A source file under `src/` stays within 800 lines; a `tests.rs`, or any file under `tests/`, within 1,000. Past that, split the file along its seams into a directory.
+
+CI also builds the docs with `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`, so an intra-doc link that resolves nowhere fails the build. Write a link to an item in another module as a full path, ``[`Item`](crate::module::Item)``, rather than importing the item for the link's sake.
+
 ## Commit conventions
 
 Same as the main repo: [Conventional Commits](https://www.conventionalcommits.org/) with kebab-case scopes, lowercase subject. Examples that fit this repo:

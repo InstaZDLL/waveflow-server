@@ -6,7 +6,12 @@
 import { describe, expect, it } from "vitest";
 
 import { ACCENT_PALETTES } from "./palettes";
-import { DEFAULT_THEME_ID, findTheme, THEME_PRESETS } from "./themes";
+import {
+  DEFAULT_THEME_ID,
+  findTheme,
+  THEME_PRESETS,
+  themeForScheme,
+} from "./themes";
 
 describe("THEME_PRESETS", () => {
   it("ships exactly 14 presets (6 light + 8 dark)", () => {
@@ -101,5 +106,38 @@ describe("findTheme", () => {
     expect(findTheme(null).id).toBe(DEFAULT_THEME_ID);
     expect(findTheme(undefined).id).toBe(DEFAULT_THEME_ID);
     expect(findTheme("").id).toBe(DEFAULT_THEME_ID);
+  });
+});
+
+describe("themeForScheme", () => {
+  it("keeps a preset whose mode already matches", () => {
+    expect(themeForScheme(findTheme("midnight"), "dark").id).toBe("midnight");
+    expect(themeForScheme(findTheme("ocean-light"), "light").id).toBe(
+      "ocean-light",
+    );
+  });
+
+  it("crosses to the pair when the scheme is the other one", () => {
+    expect(themeForScheme(findTheme("midnight"), "light").id).toBe(
+      "midnight-light",
+    );
+    expect(themeForScheme(findTheme("sunset-light"), "dark").id).toBe("sunset");
+    expect(themeForScheme(findTheme("default"), "dark").id).toBe(
+      "default-dark",
+    );
+  });
+
+  it("answers every preset with one of the scheme's own mode", () => {
+    for (const preset of THEME_PRESETS) {
+      for (const scheme of ["light", "dark"] as const) {
+        expect(themeForScheme(preset, scheme).mode).toBe(scheme);
+      }
+    }
+  });
+
+  it("lets Emerald stand in for the one-offs that have no pair", () => {
+    expect(themeForScheme(findTheme("oled"), "light").id).toBe("default");
+    expect(themeForScheme(findTheme("neon"), "light").id).toBe("default");
+    expect(themeForScheme(findTheme("neon"), "dark").id).toBe("neon");
   });
 });

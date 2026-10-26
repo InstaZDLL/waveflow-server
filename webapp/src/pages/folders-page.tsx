@@ -362,7 +362,7 @@ export function FoldersPage({ folder }: { folder: string }) {
     <li key={to}>
       <Link
         {...link(to)}
-        className={`folder-row${dropTarget === (target?.id ?? UNFILED) ? " drop-target" : ""}`}
+        className={`folder-row${target ? "" : " system"}${dropTarget === (target?.id ?? UNFILED) ? " drop-target" : ""}`}
         draggable={may && target !== null ? true : undefined}
         onDragStart={
           may && target
@@ -442,20 +442,38 @@ export function FoldersPage({ folder }: { folder: string }) {
         <Loading error={tree.error} />
       ) : (
         <>
-          {folder !== UNFILED && (children.length || folder === "") ? (
+          {folder !== UNFILED && children.length ? (
             <ul className="folder-list" aria-label={t("folders.subfolders")}>
               {children.map((entry) =>
                 card(entry, entry.name, entry.track_count, entry.id),
               )}
-              {folder === ""
-                ? card(
-                    null,
-                    t("filed.unfiled"),
-                    tree.data.unfiled_track_count,
-                    UNFILED,
-                  )
-                : null}
             </ul>
+          ) : folder === "" ? (
+            <p className="muted folder-none">{t("folders.none")}</p>
+          ) : null}
+          {/* To sort is not one of the folders counted in the header, so it
+              is not drawn among them: it sits apart, under a heading that
+              says who keeps it, with what it is and what cannot be done to
+              it. A badge alone, inside the same list, read as a folder
+              the header had forgotten to count. */}
+          {folder === "" ? (
+            <section
+              className="folder-system"
+              aria-labelledby="folder-system-title"
+            >
+              <h3 id="folder-system-title">{t("folders.system")}</h3>
+              <p className="muted folder-system-note">
+                {t("folders.systemNote")}
+              </p>
+              <ul className="folder-list" aria-labelledby="folder-system-title">
+                {card(
+                  null,
+                  t("filed.unfiled"),
+                  tree.data.unfiled_track_count,
+                  UNFILED,
+                )}
+              </ul>
+            </section>
           ) : null}
           {listsTracks ? (
             !tracks.data ? (

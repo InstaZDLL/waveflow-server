@@ -109,7 +109,7 @@ pub(super) fn lastfm_unavailability(
 
 /// Turns a request token into a session key.
 ///
-/// Implemented in `src/scrobblers/lastfm.rs`, because that is the only place in
+/// Implemented in `src/remote/scrobblers/lastfm/`, because that is the only place in
 /// this server that makes an outbound request. Registered like a
 /// [`ScrobbleTarget`] and for the same reason: a test drives the whole journey
 /// against a double, and a server with no application registers neither.
@@ -195,8 +195,8 @@ impl DomainServices {
         // state is the only thing separating a legitimate return from a
         // fabricated one, and the cookie is the only thing separating *this*
         // browser's return from anybody who came by the URL afterwards.
-        let state = crate::security::generate_token("");
-        let cookie = crate::security::generate_token("");
+        let state = crate::auth::security::generate_token("");
+        let cookie = crate::auth::security::generate_token("");
         let now = now_ms();
         let expires_at =
             now.saturating_add(i64::try_from(JOURNEY_TTL.as_millis()).unwrap_or(i64::MAX));
@@ -218,7 +218,7 @@ impl DomainServices {
         .bind(user_id.to_string())
         .bind(destination)
         .bind(&fingerprint)
-        .bind(crate::security::token_hash(&cookie).as_slice())
+        .bind(crate::auth::security::token_hash(&cookie).as_slice())
         .bind(now)
         .bind(expires_at)
         .execute(&mut *tx)
@@ -300,7 +300,7 @@ impl DomainServices {
             // One refusal for every way of being wrong: expired, or the wrong
             // browser. Distinguishing them would tell whoever found the URL
             // which half they are missing.
-            if now >= expires_at || !crate::security::token_matches(cookie, &cookie_hash) {
+            if now >= expires_at || !crate::auth::security::token_matches(cookie, &cookie_hash) {
                 return Err(ServiceError::NotFound);
             }
             (
