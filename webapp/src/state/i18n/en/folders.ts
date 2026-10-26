@@ -1,38 +1,5 @@
-// Artist splits and images, folders, filing and uploads.
+// Folders, filing and uploads.
 export const folders = {
-  "artistSplit.offer": "Split into {count} artists",
-  "artistSplit.confirm": "Confirm: split into {count}",
-  "artistSplit.done": "Split into {parts}.",
-  "artistSplit.failed": "This credit could not be split. Try again.",
-  "common.back": "Back",
-  "artistImage.changePortrait": "Change portrait",
-  "artistImage.changeBanner": "Change banner",
-  "artistImage.resetPortrait": "Automatic portrait",
-  "artistImage.resetBanner": "No banner",
-  "artistImage.portraitChanged": "Portrait changed.",
-  "artistImage.bannerChanged": "Banner changed.",
-  "artistImage.portraitReverted": "Back to the automatic portrait.",
-  "artistImage.bannerReverted": "Banner removed.",
-  "artistImage.tooLarge": "This image is larger than 10 MB.",
-  "artistImage.notAnImage": "Choose a JPEG, PNG or WebP image.",
-  "artistImage.failed": "That did not work. Try again.",
-  "artistImage.chosen": "Portrait chosen by hand",
-  "artistImage.searchDeezer": "Search Deezer",
-  "artistImage.menu": "Edit images",
-  "artistImage.menuShort": "Edit",
-  "artistImage.menuLabel": "Images of {name}",
-  "artistImage.deezerTitle": "Choose a portrait from Deezer",
-  "artistImage.deezerQuery": "Artist name",
-  "artistImage.deezerSearch": "Search",
-  "artistImage.deezerSearching": "Searching Deezer…",
-  "artistImage.deezerResults": "Deezer artists",
-  "artistImage.deezerNone": "Deezer knows no artist by that name.",
-  "artistImage.deezerFans": { one: "{count} fan", other: "{count} fans" },
-  "artistImage.deezerUnavailable":
-    "Searching Deezer is not enabled on this server.",
-  "artistImage.deezerBusy":
-    "Your previous search is still running. Try again in a moment.",
-  "artistImage.deezerExpired": "These results have expired. Search again.",
   "folders.count": {
     one: "{count} folder created in this library",
     other: "{count} folders created in this library",
@@ -89,7 +56,6 @@ export const folders = {
     "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed, and it cannot be renamed or deleted. To file a track, open its menu and choose “Move to folder…”.",
   "filed.unfiledNoteReader":
     "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed.",
-  "trackMenu.move": "Move to folder…",
   "upload.into": "Received files go into the folder {folder}.",
   "upload.doneUnfiled": "Added to the library, in To sort",
   "upload.folderMissing":
@@ -97,8 +63,6 @@ export const folders = {
   "upload.folderUnchecked":
     "The folder this upload was opened for could not be checked, so no file is taken yet.",
   "upload.checkAgain": "Check again",
-  "nav.group.library": "Library",
-  "nav.group.listen": "Listening",
   "upload.title": "Upload to {library}",
   "upload.detail":
     "Each file is fingerprinted in your browser first, so a file the library already holds is never sent again, and an interrupted transfer picks up where it stopped.",

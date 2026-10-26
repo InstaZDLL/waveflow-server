@@ -1,0 +1,88 @@
+// Playlists and their import, the queue, shares and bookmarks.
+import type { TranslationValue } from "..";
+import type { playlists as en } from "../en/playlists";
+
+export const playlists: Record<keyof typeof en, TranslationValue> = {
+  "playlists.detail": {
+    one: "{count} collection",
+    other: "{count} collections",
+  },
+  "playlists.newName": "Nom de la nouvelle playlist",
+  "playlists.create": "Créer la playlist",
+  "playlists.play": "Lire",
+  "playlists.addQueue": "Ajouter la file",
+  "playlists.emptyOne": "Cette playlist est vide.",
+  "playlists.export": "Enregistrer en .m3u8",
+  "playlists.exportError": "Cette playlist n’a pas pu être enregistrée.",
+  "playlists.empty": "Créez une playlist pour réunir plusieurs pistes.",
+  "playlists.createError": "La playlist n’a pas pu être créée.",
+  "playlists.queueError": "La file n’a pas pu être ajoutée à cette playlist.",
+  "playlists.deleteError": "La playlist n’a pas pu être supprimée.",
+  "playlists.public": "Visible par tous les comptes",
+  "playlists.publicError": "Cette playlist n’a pas pu être publiée.",
+  "playlists.others": "D’autres comptes",
+  "playlists.othersDetail":
+    "Les playlists publiques des autres comptes, avec les pistes que vos bibliothèques contiennent.",
+  "playlists.by": "Par {owner}",
+  "playlists.moveUp": "Monter {title}",
+  "playlists.moveDown": "Descendre {title}",
+  "playlists.removeEntry": "Retirer {title} de cette playlist",
+  "playlists.moveError":
+    "Cette entrée n’a pas pu être déplacée. La playlist a peut-être changé ailleurs ; elle a été relue.",
+  "playlists.removeEntryError": "Cette entrée n’a pas pu être retirée.",
+  "import.title": "Importer des playlists d’un autre lecteur",
+  "import.detail":
+    "Un fichier .m3u ou .m3u8. Rien n’est créé avant que vous ayez vu ce qui serait perdu.",
+  "import.pick": "Choisir un fichier de playlist",
+  "import.name": "Nom de la playlist",
+  "import.found":
+    "{resolved} entrées sur {entries} sont dans votre bibliothèque.",
+  "import.encoding":
+    "Le fichier n’était pas en UTF-8 et a été lu en {encoding}. Vérifiez les noms ci-dessous avant d’importer.",
+  "import.missing": {
+    one: "{count} entrée ne peut pas être placée :",
+    other: "{count} entrées ne peuvent pas être placées :",
+  },
+  "import.line": "Ligne {line}",
+  "import.noMatch": "aucune piste correspondante",
+  "import.ambiguous": "correspond à plusieurs pistes",
+  "import.notAPath": "n’est pas un fichier d’une bibliothèque",
+  "import.duplicate": "déjà dans cette playlist",
+  "import.confirm": "Importer",
+  "import.cancel": "Annuler",
+  "import.failed": "Ce fichier n’a pas pu être lu comme une playlist.",
+  "queue.detail": {
+    one: "{count} piste synchronisée avec votre compte",
+    other: "{count} pistes synchronisées avec votre compte",
+  },
+  "queue.playStart": "Lire depuis le début",
+  "queue.clear": "Vider la file",
+  "queue.remove": "Retirer",
+  "queue.empty": "Lisez un album ou une playlist pour construire votre file.",
+  "shares.detail": "Liens publics vers votre musique",
+  "shares.description": "Description",
+  "shares.create": "Partager la file actuelle",
+  "shares.needQueue": "Ajoutez des pistes à la file avant de créer un lien.",
+  "shares.once": "Ce lien ne sera affiché qu’une fois :",
+  "shares.defaultName": "Partage musical",
+  "shares.empty": "Aucun lien public n’a été créé.",
+  "shares.createError": "Le partage n’a pas pu être créé.",
+  "shares.tooLong":
+    "Un partage contient au plus {limit} titres, et la file en contient {count}. Raccourcissez la file pour la partager.",
+  "shares.deleteError": "Le partage n’a pas pu être supprimé.",
+  "shares.maxVisits": "Limite de visites (facultative)",
+  "shares.visits": { one: "{count} visite", other: "{count} visites" },
+  "shares.visitsOf": "{count} visites sur {max}",
+  "share.kicker": "Partagé avec vous",
+  "share.defaultTitle": "Musique partagée avec vous",
+  "share.until": "Disponible jusqu’au {date}",
+  "share.empty": "Aucune de ces pistes ne peut plus être lue.",
+  "share.player": "Lecteur",
+  "share.unavailableTitle": "Ce lien n’ouvre plus rien",
+  "share.unavailableDetail":
+    "Il a peut-être expiré, été retiré, ou été ouvert autant de fois qu’il le permet.",
+  "bookmarks.title": "Positions enregistrées",
+  "bookmarks.detail": "Une par piste. Enregistrer à nouveau la déplace.",
+  "bookmarks.save": "Enregistrer cette position",
+  "bookmarks.forget": "Oublier",
+};

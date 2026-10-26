@@ -1,26 +1,8 @@
-// Offline listening and scrobbling.
+// Scrobbling.
 import type { TranslationValue } from "..";
 import type { scrobbling as en } from "../en/scrobbling";
 
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
-  "offline.kicker": "Dans ce navigateur",
-  "offline.title": "Gardé hors ligne",
-  "offline.detail":
-    "Ces titres sont gardés dans ce navigateur pour le compte qui s’y est connecté en dernier, et se lisent sans connexion. Se déconnecter les supprime de ce navigateur. Gardez-en d’autres depuis le menu d’un titre.",
-  "offline.unsupported":
-    "Ce navigateur ne peut pas garder de titres pour l’écoute hors ligne.",
-  "offline.back": "Retour à la bibliothèque",
-  "offline.empty":
-    "Rien n’est encore gardé. Le menu d’un titre propose de le garder.",
-  "offline.player": "Lecteur hors ligne",
-  "offline.gone": "Cette copie n’est plus dans ce navigateur.",
-  "offline.forget": "Retirer la copie hors ligne de {title}",
-  "offline.forgetShort": "Retirer",
-  "offline.forgetDetail": "Libère {size}",
-  "login.offline": {
-    one: "Écouter le {count} titre gardé dans ce navigateur",
-    other: "Écouter les {count} titres gardés dans ce navigateur",
-  },
   "scrobbling.title": "Scrobbling externe",
   "scrobbling.detail":
     "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm.",

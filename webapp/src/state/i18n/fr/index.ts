@@ -1,29 +1,37 @@
-// The French strings, assembled in the same order as the English ones.
+// The French strings, assembled from the same domains as the English ones.
 import type { TranslationKey, TranslationValue } from "..";
-import { browse } from "./browse";
+import { admin } from "./admin";
+import { attention } from "./attention";
+import { clients } from "./clients";
+import { common } from "./common";
 import { folders } from "./folders";
 import { library } from "./library";
-import { maintenance } from "./maintenance";
-import { playing } from "./playing";
+import { login } from "./login";
+import { nav } from "./nav";
+import { player } from "./player";
+import { playlists } from "./playlists";
 import { podcasts } from "./podcasts";
+import { preferences } from "./preferences";
 import { quality } from "./quality";
 import { scrobbling } from "./scrobbling";
-import { settings } from "./settings";
-import { shell } from "./shell";
 import { smart } from "./smart";
 import { stats } from "./stats";
 import { track } from "./track";
 
 export const fr: Record<TranslationKey, TranslationValue> = {
-  ...shell,
-  ...settings,
-  ...track,
+  ...nav,
+  ...preferences,
+  ...common,
   ...library,
-  ...browse,
+  ...clients,
   ...quality,
+  ...track,
+  ...login,
+  ...playlists,
+  ...player,
+  ...admin,
+  ...attention,
   ...folders,
-  ...playing,
-  ...maintenance,
   ...scrobbling,
   ...stats,
   ...smart,

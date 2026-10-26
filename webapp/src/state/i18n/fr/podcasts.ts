@@ -3,7 +3,6 @@ import type { TranslationValue } from "..";
 import type { podcasts as en } from "../en/podcasts";
 
 export const podcasts: Record<keyof typeof en, TranslationValue> = {
-  "nav.podcasts": "Podcasts",
   "podcasts.detail": "Les émissions que suit ce serveur, pour tous les comptes",
   "podcasts.off":
     "Les podcasts sont désactivés sur ce serveur. Ce qui a été conservé reste lisible ; rien de nouveau n’est récupéré.",

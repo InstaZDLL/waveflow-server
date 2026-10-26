@@ -1,42 +1,8 @@
-// Artist splits and images, folders, filing and uploads.
+// Folders, filing and uploads.
 import type { TranslationValue } from "..";
 import type { folders as en } from "../en/folders";
 
 export const folders: Record<keyof typeof en, TranslationValue> = {
-  "artistSplit.offer": "Scinder en {count} artistes",
-  "artistSplit.confirm": "Confirmer : scinder en {count}",
-  "artistSplit.done": "Scindé en {parts}.",
-  "artistSplit.failed": "Ce crédit n’a pas pu être scindé. Réessayez.",
-  "common.back": "Retour",
-  "artistImage.changePortrait": "Changer le portrait",
-  "artistImage.changeBanner": "Changer la bannière",
-  "artistImage.resetPortrait": "Portrait automatique",
-  "artistImage.resetBanner": "Sans bannière",
-  "artistImage.portraitChanged": "Portrait changé.",
-  "artistImage.bannerChanged": "Bannière changée.",
-  "artistImage.portraitReverted": "Retour au portrait automatique.",
-  "artistImage.bannerReverted": "Bannière retirée.",
-  "artistImage.tooLarge": "Cette image dépasse 10 Mo.",
-  "artistImage.notAnImage": "Choisissez une image JPEG, PNG ou WebP.",
-  "artistImage.failed": "Cela n’a pas fonctionné. Réessayez.",
-  "artistImage.chosen": "Portrait choisi à la main",
-  "artistImage.searchDeezer": "Rechercher sur Deezer",
-  "artistImage.menu": "Modifier les images",
-  "artistImage.menuShort": "Modifier",
-  "artistImage.menuLabel": "Images de {name}",
-  "artistImage.deezerTitle": "Choisir un portrait sur Deezer",
-  "artistImage.deezerQuery": "Nom de l’artiste",
-  "artistImage.deezerSearch": "Rechercher",
-  "artistImage.deezerSearching": "Recherche sur Deezer…",
-  "artistImage.deezerResults": "Artistes Deezer",
-  "artistImage.deezerNone": "Deezer ne connaît aucun artiste de ce nom.",
-  "artistImage.deezerFans": { one: "{count} fan", other: "{count} fans" },
-  "artistImage.deezerUnavailable":
-    "La recherche Deezer n’est pas activée sur ce serveur.",
-  "artistImage.deezerBusy":
-    "Votre recherche précédente est encore en cours. Réessayez dans un instant.",
-  "artistImage.deezerExpired":
-    "Ces résultats ont expiré. Relancez la recherche.",
   "folders.count": {
     one: "{count} dossier créé dans cette bibliothèque",
     other: "{count} dossiers créés dans cette bibliothèque",
@@ -93,7 +59,6 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
     "Toutes les pistes qui ne sont encore dans aucun dossier. WaveFlow tient cette liste lui-même : une piste en sort dès qu’elle est rangée, et elle ne peut être ni renommée ni supprimée. Pour ranger une piste, ouvrez son menu et choisissez « Déplacer vers un dossier… ».",
   "filed.unfiledNoteReader":
     "Toutes les pistes qui ne sont encore dans aucun dossier. WaveFlow tient cette liste lui-même : une piste en sort dès qu’elle est rangée.",
-  "trackMenu.move": "Déplacer vers un dossier…",
   "upload.into": "Les fichiers reçus vont dans le dossier {folder}.",
   "upload.doneUnfiled": "Ajouté à la bibliothèque, dans À ranger",
   "upload.folderMissing":
@@ -101,8 +66,6 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.folderUnchecked":
     "Le dossier pour lequel cet envoi a été ouvert n’a pas pu être vérifié : aucun fichier n’est pris pour l’instant.",
   "upload.checkAgain": "Vérifier à nouveau",
-  "nav.group.library": "Bibliothèque",
-  "nav.group.listen": "Écoute",
   "upload.title": "Téléverser dans {library}",
   "upload.detail":
     "Chaque fichier est d’abord identifié dans votre navigateur : un fichier que la bibliothèque possède déjà n’est jamais renvoyé, et un transfert interrompu reprend là où il s’était arrêté.",

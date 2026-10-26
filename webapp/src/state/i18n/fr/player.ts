@@ -1,0 +1,81 @@
+// The player bar, now playing, radio and offline listening.
+import type { TranslationValue } from "..";
+import type { player as en } from "../en/player";
+
+export const player: Record<keyof typeof en, TranslationValue> = {
+  "player.error": "Lecture impossible. Vérifiez le serveur puis réessayez.",
+  "player.previous": "Piste précédente",
+  "player.play": "Lire",
+  "player.pause": "Pause",
+  "player.next": "Piste suivante",
+  "player.seek": "Position de lecture",
+  "player.shuffle": "Lecture aléatoire",
+  "player.repeatOff": "Répétition : aucune",
+  "player.repeatAll": "Répétition : toute la file",
+  "player.repeatOne": "Répétition : cette piste",
+  "player.volume": "Volume",
+  "player.mute": "Couper le son",
+  "player.unmute": "Rétablir le son",
+  "player.openAlbum": "Ouvrir l’album",
+  "player.live": "Direct",
+  "player.liveRadio": "Radio en direct",
+  "player.stopLive": "Arrêter la station",
+  "player.liveError": "Cette station n’a pas pu être lue.",
+  "player.closeAside": "Arrêter et fermer",
+  "playing.idle": "Rien n’est en cours de lecture.",
+  "playing.empty": "Lancez une piste et elle apparaîtra ici, avec ses paroles.",
+  "playing.viewLabel": "Comment regarder cette piste",
+  "playing.viewDetail": "Détail",
+  "playing.viewLyrics": "Paroles",
+  "playing.viewImmersive": "Immersif",
+  "playing.immersiveTitle": "Vue immersive",
+  "playing.leaveImmersive": "Quitter la vue immersive",
+  "radio.detail": "Des stations en ligne, attachées à votre compte",
+  "radio.name": "Nom de la station",
+  "radio.address": "Adresse du flux",
+  "radio.homepage": "Page de la station (facultatif)",
+  "radio.image": "Image de la station (facultatif)",
+  "radio.imageHint":
+    "Le serveur la télécharge une fois, quand vous l’enregistrez, et la garde avec les pochettes : votre navigateur ne contacte jamais l’hôte de l’image.",
+  "radio.imageMissing":
+    "L’image n’a pas pu être récupérée ; enregistrez la station pour réessayer.",
+  "radio.add": "Ajouter la station",
+  "radio.save": "Enregistrer la station",
+  "radio.edit": "Modifier",
+  "radio.replacing":
+    "Enregistrer remplace tous les champs : une page vide efface celle qui était retenue.",
+  "radio.listen": "Écouter",
+  "radio.stop": "Arrêter",
+  "radio.visit": "Page de la station",
+  "radio.empty": "Aucune station. Ajoutez-en une pour la retrouver ici.",
+  "radio.addressRefused": "Une adresse doit commencer par http:// ou https://.",
+  "radio.mixedContent":
+    "Cette page est servie en HTTPS : votre navigateur refusera un flux en clair.",
+  "radio.full": "Ce compte retient déjà le maximum de stations.",
+  "radio.saveError": "La station n’a pas pu être enregistrée.",
+  "radio.deleteError": "La station n’a pas pu être supprimée.",
+  "radio.playbackError":
+    "Cette station n’a pas pu être lue. Le serveur ne s’y connecte jamais : cela se passe entre votre navigateur et la station.",
+  "radio.stations": "Stations",
+  "radio.newTitle": "Ajouter une station",
+  "radio.editTitle": "Modifier « {name} »",
+  "radio.listenTo": "Écouter {name}",
+  "radio.stopNamed": "Arrêter {name}",
+  "radio.actions": "Actions pour {name}",
+  "radio.confirmDelete":
+    "Supprimer la station « {name} » ? Son adresse et son image sont oubliées.",
+  "offline.kicker": "Dans ce navigateur",
+  "offline.title": "Gardé hors ligne",
+  "offline.detail":
+    "Ces titres sont gardés dans ce navigateur pour le compte qui s’y est connecté en dernier, et se lisent sans connexion. Se déconnecter les supprime de ce navigateur. Gardez-en d’autres depuis le menu d’un titre.",
+  "offline.unsupported":
+    "Ce navigateur ne peut pas garder de titres pour l’écoute hors ligne.",
+  "offline.back": "Retour à la bibliothèque",
+  "offline.empty":
+    "Rien n’est encore gardé. Le menu d’un titre propose de le garder.",
+  "offline.player": "Lecteur hors ligne",
+  "offline.gone": "Cette copie n’est plus dans ce navigateur.",
+  "offline.forget": "Retirer la copie hors ligne de {title}",
+  "offline.forgetShort": "Retirer",
+  "offline.forgetDetail": "Libère {size}",
+};

@@ -1,9 +1,5 @@
-// Lyrics from LRCLIB, listening statistics and mixes.
+// Listening statistics and mixes.
 export const stats = {
-  // RFC-024: lyrics from LRCLIB, statistics and mixes.
-  "lyrics.source.lrclib": "From LRCLIB",
-  "lyrics.fromLrclib": "Lyrics from LRCLIB",
-  "nav.stats": "Statistics",
   "stats.detail": "What this account listened to, counted from its own plays.",
   "stats.period": "Period",
   "stats.period7d": "Last 7 days",

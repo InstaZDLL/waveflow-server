@@ -1,22 +1,5 @@
-// Offline listening and scrobbling.
+// Scrobbling.
 export const scrobbling = {
-  "offline.kicker": "In this browser",
-  "offline.title": "Kept for offline",
-  "offline.detail":
-    "These tracks were kept in this browser for the account that last signed in, and play without a connection. Signing out deletes them from this browser. Keep more from a track's menu.",
-  "offline.unsupported":
-    "This browser cannot keep tracks for offline listening.",
-  "offline.back": "Back to the library",
-  "offline.empty": "Nothing is kept yet. A track's menu offers to keep it.",
-  "offline.player": "Offline player",
-  "offline.gone": "That copy is no longer in this browser.",
-  "offline.forget": "Remove the offline copy of {title}",
-  "offline.forgetShort": "Remove",
-  "offline.forgetDetail": "Frees {size}",
-  "login.offline": {
-    one: "Listen to the {count} track kept in this browser",
-    other: "Listen to the {count} tracks kept in this browser",
-  },
   "scrobbling.title": "External scrobbling",
   "scrobbling.detail":
     "Forward what you listen to here to ListenBrainz, Maloja or Last.fm.",

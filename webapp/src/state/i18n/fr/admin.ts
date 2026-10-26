@@ -1,17 +1,29 @@
-// Scan progress, accounts and tokens, maintenance and missing files.
+// Administration, scans, maintenance and missing files.
 import type { TranslationValue } from "..";
-import type { maintenance as en } from "../en/maintenance";
+import type { admin as en } from "../en/admin";
 
-export const maintenance: Record<keyof typeof en, TranslationValue> = {
-  "scan.connecting": "En attente du premier relevé…",
-  "scan.queued": "En attente",
-  "scan.running": "Analyse en cours",
-  "scan.completed": "Terminé",
-  "scan.failed": "Échec",
-  "scan.progress": "Progression de l’analyse",
-  "scan.counted": "{processed} fichiers sur {total}",
-  "scan.tally":
-    "{added} ajoutés · {updated} mis à jour · {moved} déplacés · {skipped} inchangés · {errors} erreurs",
+export const admin: Record<keyof typeof en, TranslationValue> = {
+  "admin.title": "Administration",
+  "admin.detail": "Bibliothèques, scans et comptes",
+  "admin.libraries": "Bibliothèques",
+  "admin.libraryName": "Nom de la bibliothèque",
+  "admin.libraryPath": "Chemin absolu du dossier sur le serveur",
+  "admin.registering": "Ajout en cours…",
+  "admin.register": "Ajouter et scanner",
+  "admin.scan": "Scanner",
+  "admin.accounts": "Comptes",
+  "admin.webPassword": "Mot de passe web, 12 caractères minimum",
+  "admin.creating": "Création…",
+  "admin.create": "Créer le compte",
+  "admin.enable": "Activer",
+  "admin.disable": "Désactiver",
+  "admin.currentAccount": "Vous ne pouvez pas désactiver votre compte actuel",
+  "admin.libraryError": "Le dossier n’a pas pu être enregistré.",
+  "admin.accountError": "Le compte n’a pas pu être créé.",
+  "admin.statusError": "Le statut du compte n’a pas pu être modifié.",
+  "admin.scanError": "Le scan n’a pas pu démarrer.",
+  "admin.scanQueued": "Scan {id} ajouté à la file.",
+  "admin.initialScan": "Scan initial {id} ajouté à la file.",
   "admin.scanning": "Analyse en cours",
   "admin.nowPlaying": "Écoutes en cours",
   "admin.nobodyListening": "Personne n’écoute en ce moment.",
@@ -24,8 +36,6 @@ export const maintenance: Record<keyof typeof en, TranslationValue> = {
   "admin.tokenUsed": "déjà utilisé",
   "admin.tokenUnused": "jamais utilisé",
   "admin.tokenNone": "Aucun jeton sur ce compte.",
-  "scan.lost":
-    "Le flux de progression n’a pas pu s’ouvrir. L’analyse elle-même se poursuit.",
   "admin.members": "Qui peut voir cette bibliothèque",
   "admin.memberRole": "Rôle",
   "admin.memberRemove": "Retirer",
@@ -55,9 +65,18 @@ export const maintenance: Record<keyof typeof en, TranslationValue> = {
   "admin.deleted":
     "{name} a été supprimée : {tracks} titres ont quitté le catalogue.",
   "admin.deleteError": "La bibliothèque n’a pas pu être supprimée.",
+  "scan.connecting": "En attente du premier relevé…",
+  "scan.queued": "En attente",
+  "scan.running": "Analyse en cours",
+  "scan.completed": "Terminé",
+  "scan.failed": "Échec",
+  "scan.progress": "Progression de l’analyse",
+  "scan.counted": "{processed} fichiers sur {total}",
+  "scan.tally":
+    "{added} ajoutés · {updated} mis à jour · {moved} déplacés · {skipped} inchangés · {errors} erreurs",
+  "scan.lost":
+    "Le flux de progression n’a pas pu s’ouvrir. L’analyse elle-même se poursuit.",
   "scan.leftOut": "{excluded} écartés · {links} liens non suivis",
-  "nav.missing": "Fichiers manquants",
-  "nav.maintenance": "Maintenance",
   "maintenance.sections": "Sections de maintenance",
   "maintenance.none":
     "Rien ici n’est à vous d’entretenir dans cette bibliothèque.",

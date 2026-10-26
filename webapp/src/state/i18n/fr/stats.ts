@@ -1,12 +1,8 @@
-// Lyrics from LRCLIB, listening statistics and mixes.
+// Listening statistics and mixes.
 import type { TranslationValue } from "..";
 import type { stats as en } from "../en/stats";
 
 export const stats: Record<keyof typeof en, TranslationValue> = {
-  // RFC-024 : paroles de LRCLIB, statistiques et mix.
-  "lyrics.source.lrclib": "Depuis LRCLIB",
-  "lyrics.fromLrclib": "Paroles fournies par LRCLIB",
-  "nav.stats": "Statistiques",
   "stats.detail": "Ce que ce compte a écouté, compté à partir de ses écoutes.",
   "stats.period": "Période",
   "stats.period7d": "7 derniers jours",

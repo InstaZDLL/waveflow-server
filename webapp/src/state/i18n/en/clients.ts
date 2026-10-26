@@ -1,15 +1,5 @@
-// Settings, registered clients, the Subsonic password and quality labels.
-export const settings = {
-  "nav.settings": "Settings",
-  "settings.detail":
-    "Appearance, language, and the clients allowed to read your library.",
-  "settings.appearance": "Appearance",
-  "settings.playback": "Playback",
-  "settings.sections": "Settings sections",
-  "settings.section.account": "Account",
-  "settings.playbackDetail":
-    "How this browser plays your tracks. Kept in this browser, not on your account.",
-  "settings.levelling": "Volume levelling",
+// Registered clients, the Subsonic password and OAuth consent.
+export const clients = {
   "clients.title": "Registered clients",
   "clients.detail":
     "Devices and scripts holding a credential on your library. Revoking one stops it at once.",
@@ -40,14 +30,19 @@ export const settings = {
     "You have no Subsonic password, so no Subsonic client can read your library. Ask the administrator for one.",
   "subsonic.short": "Use at least 12 characters.",
   "subsonic.error": "That did not work. Nothing changed.",
-  "quality.label": "File quality",
-  "quality.unknown": "Unknown",
-  "quality.low": "Low",
-  "quality.standard": "Standard",
-  "quality.high": "High",
-  "quality.lossless": "Lossless",
-  "quality.hiRes": "Hi-res",
-  "file.channels": { one: "mono", other: "{count} ch" },
-  "common.delete": "Delete",
-  "common.cancel": "Cancel",
+  "credential.password": "Dedicated Subsonic password",
+  "credential.rotate": "Rotate credential",
+  "credential.copy": "Copy this API key now:",
+  "credential.error": "Credential rotation failed.",
+  "authorize.title": "Authorisation",
+  "authorize.invalid":
+    "This authorisation link is incomplete or asks to send you somewhere we do not trust.",
+  "authorize.client": "Authorise {client}",
+  "authorize.detail":
+    "It will be able to browse your libraries, play your music and manage your playlists, favourites and ratings, everything this account can do.",
+  "authorize.redirect": "Sending you back to {url}",
+  "authorize.error":
+    "The application sent an authorisation request we cannot honour.",
+  "authorize.busy": "Authorising…",
+  "authorize.approve": "Authorise",
 } as const;
