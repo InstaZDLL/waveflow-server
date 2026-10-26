@@ -545,33 +545,35 @@ async fn a_playlist_entry_moves_to_the_position_it_was_shown_at() {
 /// device kept a comment the server no longer had.
 #[tokio::test]
 async fn a_cleared_comment_reaches_the_journal_as_cleared() {
-    let (_temp, _config, state) = test_app().await;
-    let (owner, _) = admin_with_api_token(&state, "comment-owner").await;
-    let playlist = state
-        .services
-        .create_playlist(owner, "Notes", &[])
-        .await
-        .unwrap();
+    let (_temp, config, state) = test_app().await;
+    let (_owner, token) = admin_with_api_token(&state, "comment-owner").await;
+    let router = waveflow_server::app(&config, state.clone());
+    let created = json_body(
+        send_json(
+            &router,
+            "POST",
+            "/api/v2/playlists",
+            &token,
+            Some(serde_json::json!({ "name": "Notes", "track_ids": [] })),
+        )
+        .await,
+    )
+    .await;
+    let uri = format!("/api/v2/playlists/{}", created["id"].as_str().unwrap());
+    // Through the route a device uses, so the `clear` list's mapping onto
+    // the service is under test as well.
     let update = |comment: Option<&'static str>, clear: bool| {
-        let state = state.clone();
+        let router = router.clone();
+        let token = token.clone();
+        let uri = uri.clone();
         async move {
-            state
-                .services
-                .update_playlist(
-                    owner,
-                    playlist.id,
-                    None,
-                    comment,
-                    None,
-                    &[],
-                    &[],
-                    waveflow_server::services::PlaylistClear {
-                        comment: clear,
-                        tracks: false,
-                    },
-                )
-                .await
-                .unwrap()
+            let mut body = serde_json::json!({ "comment": comment });
+            if clear {
+                body["clear"] = serde_json::json!(["comment"]);
+            }
+            let response = send_json(&router, "PATCH", &uri, &token, Some(body)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            json_body(response).await
         }
     };
     let journalled = || {
@@ -593,7 +595,7 @@ async fn a_cleared_comment_reaches_the_journal_as_cleared() {
 
     // Cleared on its own.
     let cleared = update(None, true).await;
-    assert_eq!(cleared.comment, None);
+    assert!(cleared["comment"].is_null(), "{cleared}");
     assert_eq!(
         journalled().await,
         serde_json::Value::Null,
@@ -604,7 +606,7 @@ async fn a_cleared_comment_reaches_the_journal_as_cleared() {
     // may the journal.
     update(Some("again"), false).await;
     let cleared = update(Some("ignored"), true).await;
-    assert_eq!(cleared.comment, None);
+    assert!(cleared["comment"].is_null(), "{cleared}");
     assert_eq!(
         journalled().await,
         serde_json::Value::Null,
