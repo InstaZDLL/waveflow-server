@@ -297,13 +297,13 @@
 /* The mark under a section title: the one ornament the language allows,
    and it marks rather than fills. */
 :where(:root)
-:is(
-  .page-heading h2,
-  .album-related h3,
-  .artist-played h3,
-  .artist-discography h3,
-  .artist-similar h3
-)::after {
+  :is(
+    .page-heading h2,
+    .album-related h3,
+    .artist-played h3,
+    .artist-discography h3,
+    .artist-similar h3
+  )::after {
   display: block;
   width: 2.5rem;
   height: 0.625rem;
@@ -375,11 +375,11 @@
 /* A field is a tone with a hairline ring drawn inside it, so the ring never
    changes the box; focus brings the accent ring and the cover's halo. */
 :where(:root)
-:is(
-  input:not([type="range"], [type="checkbox"], [type="radio"]),
-  select,
-  textarea
-) {
+  :is(
+    input:not([type="range"], [type="checkbox"], [type="radio"]),
+    select,
+    textarea
+  ) {
   border: 0;
   border-radius: var(--fe-radius-input);
   background: var(--fe-tone-1);
@@ -884,15 +884,15 @@
 /* ── Surfaces: panels, cards, lists ─────────────────────────── */
 
 :where(:root)
-:is(
-  .collection,
-  .admin-panel,
-  .user-row,
-  .empty-state,
-  .error-state,
-  .settings-panel,
-  .import-panel
-) {
+  :is(
+    .collection,
+    .admin-panel,
+    .user-row,
+    .empty-state,
+    .error-state,
+    .settings-panel,
+    .import-panel
+  ) {
   border: 0;
   border-radius: var(--fe-radius-card);
   background: var(--fe-surface);
