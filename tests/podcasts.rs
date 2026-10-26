@@ -1126,22 +1126,50 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
     let router = waveflow_server::app(&config, state.clone());
     let token = login_token(&router, "cover-guard", &password).await;
 
-    for (cover, why) in [
-        ("/huge.jpg", "declared over the ceiling"),
-        ("/endless.jpg", "over the ceiling, undeclared"),
-        ("/page-as-image.jpg", "HTML labelled as an image"),
-        ("/page.htm", "HTML labelled as HTML"),
-        ("/cover-to-private", "a redirect to a private address"),
+    use waveflow_server::portrait::Refusal;
+    let cases = [
+        ("/huge.jpg", Refusal::TooLarge, "declared over the ceiling"),
+        (
+            "/endless.jpg",
+            Refusal::TooLarge,
+            "over the ceiling, undeclared",
+        ),
+        (
+            "/page-as-image.jpg",
+            Refusal::NotAnImage,
+            "HTML labelled as an image",
+        ),
+        ("/page.htm", Refusal::NotAnImage, "HTML labelled as HTML"),
+        (
+            "/cover-to-private",
+            Refusal::Address,
+            "a redirect to a private address",
+        ),
         (
             "/cover-to-mapped-private",
+            Refusal::Address,
             "a redirect to a mapped private address",
         ),
-    ] {
+    ];
+    for (cover, _, why) in cases {
         let (status, channel) =
             subscribe(&router, &token, &format!("{}/covered{cover}", host.base)).await;
         assert_eq!(status, StatusCode::CREATED, "{why}: {channel}");
         assert!(channel["artwork_hash"].is_null(), "{why}: {channel}");
         assert_eq!(host.count(cover), 1, "{why}");
+    }
+    // And each for its own reason, asked of the fetcher itself: a refusal and
+    // an unreachable host store the same nothing, and only the reason tells
+    // a checked hop from one that was attempted and happened to fail.
+    let policy = waveflow_server::podcast::FetchPolicy {
+        addresses: waveflow_server::portrait::AddressPolicy::AllowLoopback,
+        allow_http: false,
+        timeout: std::time::Duration::from_secs(10),
+    };
+    for (cover, refusal, why) in cases {
+        let url = url::Url::parse(&format!("{}{cover}", host.base)).unwrap();
+        let fetched = waveflow_server::portrait::fetch_followed(&url, policy).await;
+        assert_eq!(fetched.err(), Some(refusal), "{why}");
     }
     assert_eq!(artwork_rows(&state).await, 0);
     let written = std::fs::read_dir(&config.artwork_dir)
