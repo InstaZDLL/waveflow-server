@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
+import { onMediaChange } from "../lib/media-query";
 import {
   clampPreamp,
   PREAMP_MAX_DB,
@@ -134,8 +135,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     if (!query) return;
     const update = () => setSystemScheme(query.matches ? "dark" : "light");
     update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
+    return onMediaChange(query, update);
   }, [followSystem]);
 
   useEffect(() => {
