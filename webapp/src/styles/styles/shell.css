@@ -1,0 +1,523 @@
+/* The shell and its sidebar; the sign-in, not-found and share pages. */
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  min-height: 100dvh;
+  padding-bottom: 6.4rem;
+}
+
+.sidebar {
+  position: fixed;
+  z-index: 5;
+  inset: 0 auto 0 0;
+  display: flex;
+  width: var(--sidebar-width);
+  flex-direction: column;
+  padding: var(--space-6) var(--space-4) 7.5rem;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-soft) 88%, transparent);
+  backdrop-filter: blur(1.5rem) saturate(120%);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 2.6rem;
+  padding-inline: var(--space-2);
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.brand small {
+  margin-left: auto;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* The logo is the kit's file, never redrawn here: sizing and the choice of
+   version only. 2rem tall puts it at 131px wide, above the guide's 120px
+   minimum for the horizontal version, and its own viewBox carries the clear
+   space above and below the symbol. No filter, shadow or animation: the guide
+   rules all three out.
+
+   The colour version on a light theme and the dark one on a dark theme, by the
+   class `applyTheme` sets on the root — the reader's choice, which the system
+   colour scheme does not know about. */
+.brand-logo {
+  width: auto;
+  height: 2rem;
+  flex: none;
+}
+
+:root.dark .brand-logo-light,
+:root:not(.dark) .brand-logo-dark {
+  display: none;
+}
+
+/**
+ * What the file is, under the track's names on the playing screen.
+ *
+ * Five discrete steps rather than a filled proportion: the bands are a
+ * summary of fields that do not share one scale — a bitrate and a bit depth
+ * are not points on the same line — and a continuous bar would be claiming a
+ * precision none of them carry.
+ */
+.file-quality {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-3) 0;
+}
+
+.quality-meter {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.quality-meter span {
+  width: 1.4rem;
+  height: 0.3rem;
+  border-radius: 0.15rem;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.quality-meter span.on {
+  background: var(--accent-400);
+}
+
+.file-facts {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+/**
+ * The Settings page: two short panels side by side, and the clients below
+ * them at full width because that list is the reason to come here.
+ */
+.settings-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  margin-bottom: var(--space-4);
+}
+
+.settings-panel {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+}
+
+.settings-panel h3 {
+  margin: 0;
+}
+
+.primary-navigation {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-8);
+}
+
+.primary-navigation a,
+.nav-action {
+  display: flex;
+  min-height: 2.7rem;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 0.62rem;
+  background: transparent;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.primary-navigation a:hover,
+.nav-action:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.primary-navigation a[data-status="active"],
+.sidebar-footer a[data-status="active"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.primary-navigation a[data-status="active"]::after,
+.sidebar-footer a[data-status="active"]::after {
+  width: 0.26rem;
+  height: 0.26rem;
+  margin-left: auto;
+  border-radius: 50%;
+  background: currentcolor;
+  content: "";
+}
+
+.sidebar-footer {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: auto;
+}
+
+.theme-picker {
+  display: grid;
+  gap: var(--space-1);
+}
+
+/* Sits under the brand, above the navigation, because it frames everything
+   below it rather than being one setting among the others at the foot. */
+.library-picker {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-4) 0 var(--space-2);
+  padding-inline: var(--space-2);
+}
+
+.library-picker > span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.library-picker select {
+  width: 100%;
+  min-height: 2.35rem;
+  padding-block: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.scope-note {
+  margin: calc(var(--space-4) * -1) 0 var(--space-6);
+  font-size: var(--text-xs);
+}
+
+.language-picker {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.theme-picker span,
+.language-picker span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-picker select,
+.language-picker select {
+  width: 100%;
+  min-height: 2.35rem;
+  padding-block: var(--space-1);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.not-found {
+  position: relative;
+  width: min(100%, 38rem);
+  padding: clamp(var(--space-8), 6vw, var(--space-20));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1.2rem;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.not-found h1 {
+  max-width: 12ch;
+  margin: 0 0 var(--space-3);
+  font-size: clamp(var(--text-3xl), 8vw, var(--text-6xl));
+  line-height: 0.95;
+}
+
+.not-found a {
+  display: inline-block;
+  margin-top: var(--space-4);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.not-found-code {
+  position: absolute;
+  right: -0.4rem;
+  bottom: -2rem;
+  color: var(--accent-soft);
+  font-family: var(--font-display);
+  font-size: 12rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* What a share link opens (RFC-020): one column, no shell around it. */
+.share-page {
+  display: grid;
+  width: min(100%, 44rem);
+  gap: var(--space-6);
+  margin: 0 auto;
+  padding: clamp(var(--space-6), 6vw, var(--space-16)) var(--space-4);
+}
+
+.share-header h1 {
+  margin: var(--space-1) 0 var(--space-2);
+  font-size: clamp(var(--text-2xl), 6vw, var(--text-5xl));
+  line-height: 1;
+}
+
+.share-audio {
+  width: 100%;
+}
+
+.share-tracks {
+  display: grid;
+  gap: var(--space-1);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.share-tracks button {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 40px minmax(0, 2fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+}
+
+.share-tracks li[aria-current="true"] button {
+  border-color: var(--accent);
+}
+
+.share-track-cover {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.playlist-entry-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.share-track-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-track-duration {
+  font-variant-numeric: tabular-nums;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.account-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+}
+
+.account-chip > span {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 0.48rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.account-chip div {
+  display: grid;
+  min-width: 0;
+}
+
+.account-chip strong,
+.account-chip small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-chip small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-transform: capitalize;
+}
+
+.mobile-header,
+.mobile-navigation {
+  display: none;
+}
+
+main {
+  grid-column: 2;
+  width: min(100%, 90rem);
+  margin: 0 auto;
+  padding: var(--space-12) clamp(var(--space-6), 4vw, var(--space-20))
+    var(--space-20);
+}
+
+.centered {
+  display: grid;
+  width: 100%;
+  min-height: 100dvh;
+  max-width: none;
+  place-items: center;
+  padding: var(--space-8);
+}
+
+.login-shell {
+  display: grid;
+  width: min(100%, 67rem);
+  min-height: 38rem;
+  grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 1.4rem;
+  background: color-mix(in srgb, var(--panel-soft) 80%, transparent);
+  box-shadow: var(--shadow);
+}
+
+.login-story {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: clamp(var(--space-8), 6vw, var(--space-20));
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 25% 25%, var(--accent-soft), transparent 16rem),
+    var(--panel-soft);
+}
+
+.login-story::after {
+  position: absolute;
+  inset: 1.4rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  content: "";
+}
+
+.login-story > * {
+  z-index: 1;
+}
+
+.login-story h1 {
+  max-width: 12ch;
+  margin: 0 0 var(--space-4);
+  font-size: clamp(var(--text-3xl), 6vw, var(--text-6xl));
+  line-height: 0.93;
+}
+
+.login-story p {
+  max-width: 29rem;
+  color: var(--muted);
+}
+
+.signal {
+  width: 70%;
+  height: 3.5rem;
+  margin-block: var(--space-6);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0 2px,
+    transparent 2px 8px
+  );
+  clip-path: polygon(
+    0 45%,
+    5% 35%,
+    10% 58%,
+    15% 20%,
+    20% 68%,
+    25% 32%,
+    30% 45%,
+    35% 25%,
+    40% 68%,
+    45% 38%,
+    50% 50%,
+    55% 30%,
+    60% 64%,
+    65% 24%,
+    70% 50%,
+    75% 38%,
+    80% 60%,
+    85% 32%,
+    90% 47%,
+    95% 40%,
+    100% 50%,
+    100% 55%,
+    0 55%
+  );
+  opacity: 0.72;
+}
+
+.card {
+  display: grid;
+  align-content: center;
+  gap: var(--space-4);
+  min-width: 20rem;
+  padding: clamp(var(--space-8), 5vw, var(--space-16));
+  background: var(--panel);
+}
+
+.card h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-2xl);
+}
+
+.card p {
+  margin: 0;
+}
+
+.card label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.login-card button[type="submit"] {
+  margin-top: var(--space-1);
+  border-color: transparent;
+  background: var(--accent);
+  /* The material's ink for an accent fill. Drawn from the page's ground, it
+     was a near-black on the dark accent and a pale grey on the light one. */
+  color: var(--fe-accent-ink);
+  font-weight: 700;
+}

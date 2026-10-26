@@ -1,0 +1,192 @@
+/* The tokens: what both materials share, then the dark and the light one. */
+
+/* Drawn only beside the rail, where the player bar has room for it. */
+.progress-wave {
+  display: none;
+}
+
+/* ── Tokens ──────────────────────────────────────────────────── */
+
+/* The cover's light, registered as colours so a new record's light can fade
+   in. A gradient does not interpolate, so a transition on the backgrounds
+   that read these did nothing and the light jumped; a typed property does,
+   and every gradient built from it follows. */
+@property --glow {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #1f5a48;
+}
+
+@property --glow-deep {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0f2b22;
+}
+
+:root {
+  transition:
+    --glow 900ms var(--fe-ease),
+    --glow-deep 900ms var(--fe-ease);
+}
+
+/* What both materials share. Doubled to `.dark` and `:not(.dark)` so it
+   weighs what the refresh's light tokens weigh, and wins by coming later. */
+:root.dark,
+:root:not(.dark) {
+  /* The cover's light. `CoverLight` writes the sampled pair on the root's
+     own style, which outranks these; until the first sample lands, the
+     theme's accent stands in, deepened the way a cover would be. */
+  --glow: color-mix(in srgb, var(--accent-700) 58%, #0b0b0e);
+  --glow-deep: color-mix(in srgb, var(--accent-700) 30%, #0b0b0e);
+
+  --fe-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --fe-font:
+    "DM Sans Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fe-font-editorial: "Playfair Display", Georgia, serif;
+
+  --fe-display: clamp(2.25rem, 3vw, 3.5rem);
+  --fe-banner: clamp(3rem, 5vw, 5.25rem);
+  --fe-title: 1.5rem;
+  --fe-body: 0.9375rem;
+  --fe-label: 0.6875rem;
+  --fe-section-gap: 3.5rem;
+  --fe-rail-gap: 1.75rem;
+  --fe-radius-card: 0.875rem;
+  --fe-radius-hero: 1.25rem;
+  --fe-radius-tile: 0.625rem;
+  --fe-radius-input: 0.625rem;
+  /* The progress thumb, which the wave and the line both measure from. */
+  --fe-thumb: 0.625rem;
+
+  /* The mark: one sine-like stroke in a 40 × 10 box, used as a mask so it
+     takes whatever colour it is painted with. `--fe-wave` is the same
+     stroke as one full period, so it tiles without a seam. */
+  --fe-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 10'%3E%3Cpath d='M0.5 5 C 5 0.5, 9 0.5, 13.5 5 S 22 9.5, 26.5 5 S 35 0.5, 39.5 5' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  --fe-wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 10'%3E%3Cpath d='M0 5 C 3.3 0.5, 6.7 0.5, 10 5 S 16.7 9.5, 20 5' fill='none' stroke='black' stroke-width='1.6'/%3E%3C/svg%3E");
+
+  /* The names the rest of the stylesheet already reads, pointed at the
+     material's values. */
+  --bg: var(--fe-bg);
+  --panel: var(--fe-surface);
+  --panel-soft: var(--fe-surface);
+  --panel-strong: var(--fe-surface-2);
+  --line: var(--fe-hairline);
+  --line-strong: var(--fe-hairline-strong);
+  --text: var(--fe-ink);
+  --muted: var(--fe-ink-3);
+  --font-display: var(--fe-font);
+  --font-body: var(--fe-font);
+  --sidebar-width: 16rem;
+}
+
+/* The guide's material: tone over a near-black, no blur, hairlines. The
+   near-black is the default; a dark preset brings its own three surfaces,
+   and everything below that is a translucent white — the hairlines, the
+   tones, the rules — tints with them. */
+:root.dark {
+  --fe-bg: var(--theme-ground, #0b0b0e);
+  --fe-surface: var(--theme-surface, #121216);
+  --fe-surface-2: var(--theme-raised, #17171d);
+  --fe-ink: #f3f1ec;
+  --fe-ink-2: #b5b2aa;
+  /* #8e8b83 until the presets brought their own grounds: on Lavender's and
+     Ocean's deepest tone it read 4.49 and 4.46:1. One step lighter holds
+     4.70 on the worst (`themes-contrast.test.ts`). */
+  --fe-ink-3: #928f87;
+  --fe-hairline: rgb(255 255 255 / 7%);
+  --fe-hairline-strong: rgb(255 255 255 / 12%);
+  --fe-tone-1: rgb(255 255 255 / 4%);
+  --fe-tone-2: rgb(255 255 255 / 6%);
+  --fe-tone-3: rgb(255 255 255 / 8%);
+  --fe-accent-ink: #0b0b0e;
+  /* Rows parted inside a list or a table. */
+  --fe-rule: rgb(255 255 255 / 5%);
+
+  /* The cover's light as the structure spends it: at full strength here.
+     Until a cover is sampled the accent stands in, deepened into this
+     theme's own ground rather than the default near-black, so Midnight's
+     stand-in light is a blue night and not a grey one. 40 % of the accent,
+     not the 58 % both materials shared: under the login story's 60 % pool
+     Sunset's stand-in read 3.84:1 against the muted ink, and 40 % holds
+     4.65. */
+  --glow: color-mix(in srgb, var(--accent-700) 40%, var(--fe-bg));
+  --glow-deep: color-mix(in srgb, var(--accent-700) 30%, var(--fe-bg));
+  --fe-glow: var(--glow);
+  --fe-glow-deep: var(--glow-deep);
+
+  /* What a head lays over a blurred cover so its text stays legible: the
+     ground itself, at the strengths each head asks for. Then the text set
+     over that wash, and the glass of the buttons that sit on it. */
+  --fe-wash: var(--fe-bg);
+  --fe-on-wash: #fff;
+  --fe-on-wash-2: rgb(255 255 255 / 76%);
+  --fe-on-wash-tone: rgb(0 0 0 / 38%);
+  --fe-on-wash-line: rgb(255 255 255 / 22%);
+
+  /* Shadows in three strengths — the player's record and a sheet, a cover,
+     a popover — and the inset highlight along a popover's top edge. */
+  --fe-shadow: rgb(0 0 0 / 50%);
+  --fe-shadow-soft: rgb(0 0 0 / 45%);
+  --fe-shadow-deep: rgb(0 0 0 / 55%);
+  --fe-highlight: rgb(255 255 255 / 6%);
+
+  --accent: var(--accent-400);
+  --accent-soft: color-mix(in srgb, var(--accent-400) 14%, transparent);
+  --shadow: 0 1.5rem 3rem rgb(0 0 0 / 45%);
+}
+
+/* The light material. A ground of warm paper tinted by the theme, surfaces a
+   step towards white, dark ink in three strengths that each hold AA on the
+   ground and on its deepest tone, and the accent's 700 stop, dark enough to
+   carry white ink and to be read as text. */
+:root:not(.dark) {
+  --fe-bg: color-mix(in srgb, var(--ambient-bg) 40%, #ebe8e1);
+  --fe-surface: color-mix(in srgb, var(--fe-bg) 25%, white);
+  --fe-surface-2: #fff;
+  --fe-ink: #1b1a17;
+  --fe-ink-2: #46433d;
+  /* #625e56 until the tinted grounds were measured: on Midnight, Lavender
+     and Crimson's deepest tone it fell to 4.41–4.47:1. One step darker holds
+     4.62 on the worst of them (`themes-contrast.test.ts`). */
+  --fe-ink-3: #5f5b53;
+  --fe-hairline: rgb(27 26 23 / 9%);
+  --fe-hairline-strong: rgb(27 26 23 / 16%);
+  --fe-tone-1: rgb(27 26 23 / 4%);
+  --fe-tone-2: rgb(27 26 23 / 6.5%);
+  --fe-tone-3: rgb(27 26 23 / 9%);
+  --fe-accent-ink: #fff;
+  --fe-rule: rgb(27 26 23 / 7%);
+
+  /* The sampled colour is deepened for a dark page; at full strength it
+     would muddy this one, so it arrives washed into the ground. Washed hard:
+     a dark cover pulls the paper towards the dark ink, and at the 34 % and
+     26 % this once took, the muted ink under the strongest pools (the login
+     story's 60 %, the lower pool's 70 %) fell to 3.42:1 on Midnight light.
+     13 % and 11 % keep it at 4.64 for a cover as dark as black, on every
+     light preset (`themes-contrast.test.ts`). */
+  --fe-glow: color-mix(in srgb, var(--glow) 13%, var(--fe-bg));
+  --fe-glow-deep: color-mix(in srgb, var(--glow-deep) 11%, var(--fe-bg));
+
+  --fe-wash: var(--fe-bg);
+  --fe-on-wash: var(--fe-ink);
+  --fe-on-wash-2: var(--fe-ink-2);
+  --fe-on-wash-tone: color-mix(in srgb, var(--fe-surface) 72%, transparent);
+  --fe-on-wash-line: var(--fe-hairline-strong);
+
+  --fe-shadow: rgb(43 38 28 / 22%);
+  --fe-shadow-soft: rgb(43 38 28 / 16%);
+  --fe-shadow-deep: rgb(43 38 28 / 20%);
+  --fe-highlight: rgb(255 255 255 / 80%);
+
+  --accent: var(--accent-700);
+  --accent-soft: color-mix(in srgb, var(--accent-700) 10%, transparent);
+  --shadow: 0 1.5rem 3rem rgb(43 38 28 / 14%);
+}
+
+/* Sunset's amber 700 is the lightest of the light accents and its ground the
+   warmest: together they read 4.29:1, short of AA for the links and kickers
+   the accent is spent on. A fifth of the 800 stop takes it to 4.58 and keeps
+   the orange; the palette itself stays the desktop's. */
+:root:not(.dark)[data-theme="sunset-light"] {
+  --accent: color-mix(in srgb, var(--accent-700) 80%, var(--accent-800));
+}

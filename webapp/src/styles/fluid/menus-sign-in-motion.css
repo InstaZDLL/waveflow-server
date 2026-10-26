@@ -1,0 +1,203 @@
+/* Menus and sheets, sign-in, phones, motion, and the track menu. */
+
+/* ── Menus and sheets ───────────────────────────────────────── */
+
+:where(:root) .more-sheet {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface-2);
+  box-shadow:
+    inset 0 1px 0 var(--fe-highlight),
+    0 2rem 4rem var(--fe-shadow-deep);
+}
+
+:where(:root) .immersive {
+  background: var(--fe-bg);
+}
+
+/* ── Sign-in ─────────────────────────────────────────────────── */
+
+:where(:root) .login-shell {
+  border: 0;
+  border-radius: var(--fe-radius-hero);
+  background: var(--fe-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--fe-hairline),
+    0 2rem 5rem var(--fe-shadow-soft);
+}
+
+:where(:root) .login-story {
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 20% 10%,
+      color-mix(in srgb, var(--fe-glow) 60%, transparent),
+      transparent 70%
+    ),
+    var(--fe-bg);
+}
+
+:where(:root) .login-story h1 {
+  font-weight: 580;
+  letter-spacing: -0.04em;
+  line-height: 0.96;
+}
+
+/* The serif italic, once on the page: the line that greets. */
+:where(:root) .login-story p {
+  color: var(--fe-ink-2);
+  font-family: var(--fe-font-editorial);
+  font-size: 1.375rem;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+:where(:root) .signal {
+  width: 7.5rem;
+  height: 0.625rem;
+  background: var(--accent);
+  opacity: 1;
+  mask: var(--fe-wave) repeat-x left center / 1.25rem 0.625rem;
+  /* The light theme cuts its bars into a jagged line with a clip-path; on the
+     wave it cut the wave itself, and the motif read as broken. */
+  clip-path: none;
+}
+
+/* ── Phones ──────────────────────────────────────────────────── */
+
+@media (max-width: 820px) {
+  :where(:root) .mobile-header {
+    border-bottom: 0;
+    background: color-mix(in srgb, var(--fe-surface) 88%, transparent);
+    box-shadow: inset 0 -1px 0 var(--fe-hairline);
+  }
+
+  :where(:root) .mobile-navigation {
+    border: 0;
+    border-radius: var(--fe-radius-card);
+    background: color-mix(in srgb, var(--fe-surface-2) 94%, transparent);
+    box-shadow:
+      inset 0 1px 0 var(--fe-highlight),
+      0 1rem 2.5rem var(--fe-shadow);
+  }
+
+  :where(:root) :is(.mobile-navigation a, .mobile-navigation .more-button) {
+    color: var(--fe-ink-3);
+  }
+
+  /* The open item carries the accent's edge, here along its foot. */
+  :where(:root) .mobile-navigation a[data-status="active"] {
+    background: var(--fe-tone-2);
+    color: var(--fe-ink);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+
+  :where(:root) .player {
+    border-radius: var(--fe-radius-card);
+  }
+}
+
+/* ── Motion ──────────────────────────────────────────────────── */
+
+/* A page rises ten pixels and fades in, block after block. */
+@keyframes fe-rise {
+  from {
+    opacity: 0;
+    translate: 0 10px;
+  }
+}
+
+:where(:root) main > section > * {
+  animation: fe-rise 640ms var(--fe-ease) both;
+}
+
+:where(:root) main > section > :nth-child(2) {
+  animation-delay: 70ms;
+}
+
+:where(:root) main > section > :nth-child(3) {
+  animation-delay: 140ms;
+}
+
+:where(:root) main > section > :nth-child(n + 4) {
+  animation-delay: 210ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :where(:root) main > section > * {
+    animation: none;
+  }
+
+  /* The new record's light arrives at once. */
+  :root {
+    transition: none;
+  }
+
+  :where(:root) .grid li:hover .cover,
+  :where(:root) :is(button[type="submit"], button.action-primary):hover,
+  :where(:root) .album-actions .album-play:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* ── The track menu and its properties ──────────────────────── */
+
+/* A menu is a popover: `surface-2`, the card radius, no border, an inset
+   top highlight and a deep soft shadow; rows with their own radius. */
+:where(:root) .track-menu {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface-2);
+  box-shadow:
+    inset 0 1px 0 var(--fe-highlight),
+    0 1.5rem 3rem var(--fe-shadow-deep);
+}
+
+:where(:root) .track-menu-item {
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .track-menu-item:hover,
+:where(:root) .track-menu-item:focus-visible {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root) .track-properties[open] {
+  border: 0;
+  border-radius: var(--fe-radius-hero);
+  background: var(--fe-surface);
+  box-shadow:
+    inset 0 0 0 1px var(--fe-hairline),
+    0 2rem 5rem var(--fe-shadow-deep);
+}
+
+:where(:root) .track-properties h3 {
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  font-weight: 540;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+:where(:root) .property-row {
+  border-bottom-color: var(--fe-rule);
+}
+
+:where(:root) .property-list dt {
+  color: var(--fe-ink-3);
+}
+
+:where(:root) .property-list dd {
+  color: var(--fe-ink);
+}
+
+:where(:root) .properties-cover {
+  border-radius: var(--fe-radius-tile);
+}
+
+:where(:root) .properties-close {
+  background: var(--fe-tone-2);
+}

@@ -1,7 +1,7 @@
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 
-import css from "./styles.css?raw";
+import { styles as css } from "./sheets";
 
 /**
  * Inside the scale's range, the scale is what is used.

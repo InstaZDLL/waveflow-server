@@ -1,0 +1,143 @@
+/* Sign-in, the player bar, then the narrow layouts and reduced motion. */
+
+.login-shell {
+  border-radius: 0.7rem;
+  background: var(--panel);
+}
+
+.login-story {
+  background: var(--panel-soft);
+}
+
+.login-story::after {
+  display: none;
+}
+
+.signal {
+  height: 1.6rem;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0 2px,
+    transparent 2px 9px
+  );
+  opacity: 0.5;
+}
+
+.player {
+  border-radius: 0.7rem;
+  background: var(--panel);
+  backdrop-filter: none;
+}
+
+.player-track {
+  line-height: 1.35;
+}
+
+.player-track strong {
+  font-weight: 700;
+}
+
+@media (width <= 72rem) and (width > 820px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 820px) {
+  .settings-page .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .shell {
+    padding: var(--space-20) 0 14rem;
+  }
+
+  .mobile-header {
+    background: var(--panel-soft);
+    backdrop-filter: none;
+  }
+
+  main {
+    padding: var(--space-6) var(--space-4) var(--space-16);
+  }
+
+  .page-header {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .page-controls {
+    justify-content: start;
+  }
+
+  .grid,
+  .skeleton-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-8) var(--space-4);
+  }
+
+  .mobile-navigation {
+    border-radius: 0.7rem;
+    background: var(--panel);
+    backdrop-filter: none;
+  }
+
+  .player {
+    grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+    grid-template-rows: minmax(3.2rem, auto) auto;
+    gap: var(--space-2);
+    min-height: 0;
+    padding: var(--space-3);
+  }
+
+  .player-progress {
+    position: static;
+    display: block;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+    height: 1rem;
+  }
+
+  .player-progress input {
+    display: block;
+    min-height: 1rem;
+  }
+
+  .player-track small {
+    display: -webkit-box;
+    max-height: 2.7em;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 40rem) {
+  .credential-form > input,
+  .inline-form > input {
+    min-width: 0;
+  }
+
+  .page-controls > .control {
+    flex: 1 1 10rem;
+  }
+
+  .page-controls .control select,
+  .page-controls .control input {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .grid li:hover .cover {
+    transform: none;
+  }
+}

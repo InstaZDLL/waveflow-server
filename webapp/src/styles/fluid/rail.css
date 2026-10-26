@@ -1,0 +1,235 @@
+/* The rail: the navigation beside the page, denser in a shorter window. */
+
+/* ── The rail ────────────────────────────────────────────────── */
+
+:where(:root) .sidebar {
+  width: var(--sidebar-width);
+  border-right: 0;
+  background: color-mix(in srgb, var(--fe-surface) 82%, transparent);
+  box-shadow: inset -1px 0 0 var(--fe-hairline);
+  backdrop-filter: blur(1.5rem) saturate(115%);
+}
+
+/* The player bar runs under the rail's foot now, so the rail ends above it. */
+@media (width > 820px) {
+  :where(:root) .sidebar {
+    padding-bottom: calc(5.75rem + var(--space-4));
+  }
+}
+
+:where(:root) .brand {
+  font-family: var(--fe-font);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+:where(:root) .brand small {
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  letter-spacing: 0.12em;
+}
+
+:where(:root) .primary-navigation {
+  gap: var(--fe-rail-gap);
+  margin-top: var(--space-6);
+}
+
+:where(:root) .nav-group {
+  display: grid;
+  gap: 0.125rem;
+}
+
+:where(:root) .nav-label {
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+:where(:root) :is(.primary-navigation a, .nav-action) {
+  min-height: 2.375rem;
+  border-radius: var(--fe-radius-tile);
+  color: var(--fe-ink-2);
+  font-weight: 500;
+  transition:
+    background-color 180ms var(--fe-ease),
+    color 180ms var(--fe-ease);
+}
+
+:where(:root) .primary-navigation a:hover:not([data-status="active"]),
+:where(:root) .nav-action:hover {
+  background: var(--fe-tone-1);
+  color: var(--fe-ink);
+}
+
+/* The open row: a tone and a 2 px edge in the accent, with a faint glow. */
+:where(:root) .primary-navigation a[data-status="active"],
+:where(:root) .sidebar-footer a[data-status="active"] {
+  position: relative;
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+  font-weight: 560;
+}
+
+:where(:root) .primary-navigation a[data-status="active"]::after,
+:where(:root) .sidebar-footer a[data-status="active"]::after {
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: 0;
+  width: 2px;
+  height: auto;
+  margin: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 0.75rem color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* The four places reached for most, as tiles two to a row: the icon on a
+   tone, the name under it, the open one ringed in the accent. */
+:where(:root) .nav-group[data-group="pinned"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+:where(:root) .nav-group[data-group="pinned"] a {
+  display: grid;
+  min-height: 4.25rem;
+  align-content: center;
+  justify-items: start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-tone-1);
+  font-size: var(--text-sm);
+}
+
+:where(:root)
+  .nav-group[data-group="pinned"]
+  a:hover:not([data-status="active"]) {
+  background: var(--fe-tone-2);
+}
+
+:where(:root) .nav-group[data-group="pinned"] a[data-status="active"] {
+  background: var(--fe-tone-2);
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0.5rem 1.5rem color-mix(in srgb, var(--fe-glow) 45%, transparent);
+}
+
+:where(:root) .nav-group[data-group="pinned"] a[data-status="active"]::after {
+  display: none;
+}
+
+:where(:root) .nav-group[data-group="pinned"] a svg {
+  color: var(--fe-ink-3);
+}
+
+:where(:root) .nav-group[data-group="pinned"] a[data-status="active"] svg {
+  color: var(--accent);
+}
+
+:where(:root) .sidebar-footer {
+  border-top: 0;
+  box-shadow: inset 0 1px 0 var(--fe-hairline);
+}
+
+:where(:root) .account-chip {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-tone-1);
+}
+
+:where(:root) .account-chip > span {
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--fe-accent-ink);
+}
+
+/* A shorter window draws a denser rail, so that every destination fits
+   without the rail scrolling. Two steps rather than one: a window of
+   1080 px or so needs only the spacing taken in, and keeps the tiles and
+   the rows' height; from about 1070 px down the rows are tightened as well,
+   to fit at a laptop's 768. A tall window keeps the rail as designed.
+
+   Every row stays at least 28 px tall, above the 24 px WCAG 2.5.8 asks of a
+   target, and the type keeps its size: what is taken in is space between
+   things, never the things.
+
+   The thresholds are where each layout stops fitting, measured for the
+   longest rail an account sees: the designed one needs a window of about
+   1140 px, the first step about 1060 px, and each step starts a little
+   above that so a font that loads late cannot tip it over. */
+@media (width > 820px) and (max-height: 72rem) {
+  :where(:root) .sidebar {
+    padding-top: var(--space-4);
+  }
+
+  :where(:root) .primary-navigation {
+    gap: var(--space-4);
+    margin-top: var(--space-4);
+  }
+
+  :where(:root) .nav-group[data-group="pinned"] a {
+    min-height: 3.5rem;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  :where(:root) :is(.primary-navigation a, .nav-action) {
+    min-height: 2.125rem;
+  }
+}
+
+@media (width > 820px) and (max-height: 67rem) {
+  :where(:root) .sidebar {
+    padding-top: var(--space-3);
+  }
+
+  :where(:root) .brand {
+    min-height: 2rem;
+  }
+
+  :where(:root) .primary-navigation {
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+  }
+
+  :where(:root) .nav-group {
+    gap: 0;
+  }
+
+  :where(:root) .nav-label {
+    padding-bottom: 0.125rem;
+  }
+
+  /* The four tiles become rows of two: the icon beside the name rather than
+     over it. */
+  :where(:root) .nav-group[data-group="pinned"] {
+    gap: var(--space-1);
+  }
+
+  :where(:root) .nav-group[data-group="pinned"] a {
+    display: flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+  }
+
+  :where(:root) :is(.primary-navigation a, .nav-action) {
+    min-height: 1.75rem;
+    padding-block: 0;
+  }
+
+  :where(:root) .sidebar-footer {
+    gap: 0;
+    padding-top: var(--space-2);
+  }
+
+  :where(:root) .account-chip {
+    padding: var(--space-1) var(--space-2);
+  }
+
+  :where(:root) .account-chip > span {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}

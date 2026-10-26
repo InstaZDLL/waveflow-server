@@ -1,0 +1,211 @@
+/* Forms, panels, resource lists, empty states and loading skeletons. */
+
+.search,
+.inline-form,
+.actions,
+.credential-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.search,
+.inline-form {
+  margin-bottom: var(--space-6);
+}
+
+.search input,
+.inline-form input {
+  flex: 1 1 18rem;
+}
+
+.stack {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.collection,
+.admin-panel,
+.user-row,
+.empty-state,
+.error-state {
+  padding: var(--space-6);
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+/* A grid item grows to its content's minimum width unless told otherwise, and
+   a playlist's table with its entry controls is wider than a phone: the card
+   pushed past the screen instead of letting the table scroll inside it. */
+.stack > .collection {
+  min-width: 0;
+}
+
+.collection-header,
+.user-row > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.collection-header > div:first-child,
+.user-row header > div,
+.resource-list li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.section-actions {
+  margin-bottom: var(--space-4);
+}
+
+.queue-list li,
+.resource-list li {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(9rem, 0.7fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.queue-list li.active {
+  color: var(--accent);
+}
+
+.resource-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-list li {
+  grid-template-columns: minmax(12rem, 1fr) auto auto;
+}
+
+/* A station or a channel with its image beside its name: the image the
+   server fetched into the artwork store, or the generic symbol. */
+.resource-with-cover {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.resource-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.resource-cover {
+  width: 3rem;
+  flex: 0 0 3rem;
+  border-radius: 0.5rem;
+}
+
+.podcast-cover {
+  width: 5rem;
+  border-radius: 0.75rem;
+}
+
+.empty-state,
+.error-state {
+  min-height: 11rem;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-state,
+.error-state {
+  display: grid;
+}
+
+.empty-state p,
+.error-state p {
+  max-width: 42rem;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.stacked-form {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.compact li {
+  grid-template-columns: minmax(10rem, 1fr) auto;
+}
+
+.credential-form input {
+  flex: 1 1 16rem;
+}
+
+.secret-output {
+  flex-basis: 100%;
+  word-break: break-all;
+}
+
+.consent {
+  max-width: 34rem;
+}
+
+.consent code {
+  word-break: break-all;
+}
+
+.consent-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: var(--space-6);
+}
+
+.skeleton-card {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.skeleton-card span,
+.skeleton-card i {
+  display: block;
+  border-radius: 0.55rem;
+  background: var(--panel-strong);
+  animation: pulse 1.6s ease-in-out infinite alternate;
+}
+
+.skeleton-card span {
+  aspect-ratio: 1;
+}
+
+.skeleton-card i {
+  width: 80%;
+  height: 0.7rem;
+}
+
+.skeleton-card i:last-child {
+  width: 55%;
+  opacity: 0.72;
+}
+
+@keyframes pulse {
+  to {
+    opacity: 0.45;
+  }
+}

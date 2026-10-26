@@ -1,0 +1,510 @@
+/* Page headers, the cover grid, detail heads, lists and the song table. */
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-bottom: var(--space-8);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.page-header h2,
+.page-header p,
+.collection h3,
+.admin-panel h3 {
+  margin: 0;
+}
+
+.page-header h2 {
+  font-size: clamp(var(--text-2xl), 4vw, var(--text-5xl));
+  line-height: 1;
+}
+
+.page-heading {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.page-header p {
+  max-width: 28rem;
+}
+
+.page-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.control {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.control > span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.control select,
+.control input {
+  min-height: 2.4rem;
+  padding-block: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.control input {
+  width: min(14rem, 40vw);
+}
+
+@media (width <= 52rem) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .page-controls {
+    align-items: stretch;
+  }
+
+  .control input {
+    width: 100%;
+  }
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: clamp(var(--space-4), 2.5vw, var(--space-8));
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.grid a {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.grid span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two lines rather than one: single-line truncation cut nearly every title in
+   a real catalogue, and the second line costs a fixed 2.4em whether it is used
+   or not, so the covers below stay on a common baseline. */
+.grid strong {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 2.4em;
+  margin-top: var(--space-2);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: var(--text-sm);
+  line-height: 1.2;
+}
+
+.grid span {
+  font-size: var(--text-xs);
+}
+
+/* The card is a positioning context for its actions; the link stays the whole
+   card, and the buttons sit above it rather than inside it — a button nested in
+   an anchor is neither valid nor operable by keyboard. */
+.grid li {
+  position: relative;
+}
+
+.card-actions {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: var(--space-1);
+  opacity: 0;
+  transition:
+    opacity 160ms ease,
+    translate 240ms ease;
+}
+
+.card-action {
+  display: grid;
+  min-height: 2.1rem;
+  width: 2.1rem;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(0.5rem);
+  place-items: center;
+}
+
+.card-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.grid li:hover .card-actions,
+.grid li:focus-within .card-actions {
+  opacity: 1;
+}
+
+/* Travel with the cover so the buttons stay on it, not beside it. Keyboard
+   focus reveals them without the lift, which is what the cover does too. */
+.grid li:hover .card-actions {
+  translate: 0 -0.28rem;
+}
+
+/* Pointer-only reveal hides the actions from touch, where there is no hover to
+   reveal them with. */
+@media (hover: none) {
+  .card-actions {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-actions {
+    transition: none;
+  }
+}
+
+.cover {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--panel);
+  object-fit: cover;
+  transition:
+    transform 240ms ease,
+    box-shadow 240ms ease;
+}
+
+.cover-fallback {
+  background:
+    radial-gradient(circle at 70% 20%, var(--accent-soft), transparent 60%),
+    var(--panel-strong);
+  color: var(--accent);
+}
+
+.cover-fallback span {
+  font-family: var(--font-display);
+  font-size: clamp(var(--text-2xl), 5vw, var(--text-6xl));
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.cover.large {
+  width: clamp(10rem, 23vw, 18rem);
+  flex: 0 0 auto;
+  border-radius: 1.1rem;
+  box-shadow: var(--shadow);
+}
+
+.grid li:hover .cover {
+  transform: translateY(-0.28rem);
+  box-shadow: var(--shadow);
+}
+
+.detail-header,
+.artist-hero {
+  display: flex;
+  align-items: flex-end;
+  gap: clamp(var(--space-6), 4vw, var(--space-16));
+  margin: calc(var(--space-12) * -1)
+    calc(clamp(var(--space-6), 4vw, var(--space-20)) * -1) var(--space-8);
+  padding: var(--space-20) clamp(var(--space-6), 4vw, var(--space-20))
+    var(--space-12);
+  border-bottom: 1px solid var(--line);
+  background: radial-gradient(
+    circle at 22% 15%,
+    var(--accent-soft),
+    transparent 30rem
+  );
+}
+
+.detail-header h2,
+.artist-hero h2 {
+  max-width: 18ch;
+  margin: 0 0 var(--space-2);
+  font-size: clamp(var(--text-3xl), 6vw, var(--text-6xl));
+  line-height: 0.94;
+  text-wrap: balance;
+}
+
+.artist-portrait {
+  width: clamp(10rem, 23vw, 18rem);
+  flex: 0 0 auto;
+  border-radius: 50%;
+  box-shadow: var(--shadow);
+}
+
+/* The local history sits between the hero and the discography, so it takes the
+   rhythm a section has everywhere else rather than the browser default. */
+.artist-played {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.artist-played h3 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+.artist-about,
+.artist-discography,
+.artist-similar {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+
+.artist-about h3,
+.artist-discography h3,
+.artist-similar h3 {
+  margin: 0;
+  font-size: var(--text-xl);
+}
+
+/* Paragraphs arrive as line breaks in plain text, not as markup. */
+.artist-bio {
+  max-width: 70ch;
+  margin: 0;
+  white-space: pre-line;
+}
+
+.artist-source {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.list,
+.queue-list,
+.resource-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.artist-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-8);
+}
+
+.artist-list a {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.artist-avatar {
+  width: 3.2rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.artist-avatar span {
+  font-size: var(--text-lg);
+}
+
+.songs-scroll {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.songs {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.songs tr {
+  transition: background-color 180ms ease;
+}
+
+.songs tr:hover {
+  background: var(--accent-soft);
+}
+
+.songs tr.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.songs td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+/* Each credited artist is a link; at rest it reads as the muted text it was,
+   and says it can be followed only when pointed at or focused. */
+.song-artists a:hover,
+.song-artists a:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.songs .index {
+  width: 2.5rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+button.link,
+button.star {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+button.link:hover,
+button.star:hover {
+  background: none;
+  color: var(--accent);
+}
+
+.song-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.song-title > span {
+  display: grid;
+}
+
+.song-title small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.song-cover {
+  width: 2.7rem;
+  flex: 0 0 auto;
+  border-radius: 0.42rem;
+}
+
+.song-cover span {
+  font-size: var(--text-base);
+}
+
+button.star {
+  display: grid;
+  color: var(--muted);
+  font-size: var(--text-lg);
+  place-items: center;
+}
+
+button[aria-pressed="true"].star {
+  color: var(--accent);
+}
+
+/* Favourite and rating share a cell. They are different questions — "keep
+   this" and "how good is it" — and the table has no room for two columns.
+   The flex box is the inner div, not the cell: a `td` set to `display: flex`
+   stops being a table cell and its row's borders drift out of line. */
+.song-marks {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.song-marks > div {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* A radio group, so one of five is the shape the assistive layer sees and
+   arrow keys select. The inputs stay in the accessibility tree and out of the
+   picture; the stars beside them carry the paint. */
+.rating {
+  display: flex;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  gap: 0.05rem;
+}
+
+.rating label {
+  position: relative;
+  display: grid;
+  color: color-mix(in srgb, var(--muted) 45%, transparent);
+  cursor: pointer;
+  font-size: var(--text-base);
+  line-height: 1;
+  place-items: center;
+}
+
+.rating label.on {
+  color: var(--accent);
+}
+
+.rating:hover label {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+.rating input {
+  position: absolute;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  appearance: none;
+  background: none;
+  cursor: pointer;
+  inset: 0;
+}
+
+.rating input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The stars a hovered rating would set, so the target is visible before the
+   click commits it. `:has` walks back up from the hovered label. */
+.rating:has(label:nth-child(1):hover) label:nth-child(-n + 1),
+.rating:has(label:nth-child(2):hover) label:nth-child(-n + 2),
+.rating:has(label:nth-child(3):hover) label:nth-child(-n + 3),
+.rating:has(label:nth-child(4):hover) label:nth-child(-n + 4),
+.rating:has(label:nth-child(5):hover) label:nth-child(-n + 5) {
+  color: var(--accent);
+}
+
+button.danger {
+  color: var(--danger);
+}

@@ -1,0 +1,352 @@
+/* The folders page and its picker, and the "Needs attention" page. */
+
+/* The folders page (RFC-012). The trail first, each crumb a link back up; the
+   folder being looked at says so through `aria-current`. */
+.folder-crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.folder-crumbs li + li::before {
+  margin-right: var(--space-1);
+  color: var(--muted);
+  content: "/";
+}
+
+.folder-crumbs li a {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.folder-crumbs li a:hover,
+.folder-crumbs li a[aria-current="page"] {
+  color: var(--text);
+}
+
+.folder-note {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.folder-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.folder-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.folder-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--panel-strong);
+}
+
+.folder-row svg {
+  grid-row: span 2;
+  color: var(--accent);
+}
+
+.folder-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A link that leaves for the upload screen, drawn as the buttons beside it. */
+.folder-upload {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.55rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.55rem;
+  background: var(--panel-strong);
+}
+
+.folder-upload:hover {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+}
+
+/* The filed tree (RFC-012 decision 2). A folder a drag hovers over says it
+   will take the drop. */
+.folder-row.drop-target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-soft));
+}
+
+.folder-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.folder-form-field {
+  display: grid;
+  flex: 1 1 14rem;
+  gap: var(--space-1);
+}
+
+.folder-notice {
+  margin: 0 0 var(--space-3);
+}
+
+/* The spacing tokens go 4 then 6: there is no --space-5, and a padding naming
+   it is no padding at all — which is how this panel first shipped. */
+.folder-picker[open] {
+  display: grid;
+  gap: var(--space-6);
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: min(40rem, calc(100dvh - 2rem));
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.folder-picker::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.folder-picker header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.folder-picker h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.folder-pick-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.folder-pick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 3rem;
+  padding-block: var(--space-3);
+  padding-inline-end: var(--space-4);
+  text-align: start;
+}
+
+.folder-pick span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.upload-into {
+  margin: 0 0 var(--space-3);
+}
+
+/* The way back from a page reached from somewhere else, above its header. */
+.page-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2.25rem;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted);
+}
+
+.page-back:hover {
+  background: var(--panel-soft);
+  color: var(--text);
+}
+
+/* A list WaveFlow keeps itself, not a folder anyone made. */
+.folder-badge {
+  margin-inline-start: var(--space-2);
+  padding: 0.1rem var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  vertical-align: middle;
+}
+
+/* "Needs attention" (RFC-015). The lists read as the folder cards do, one
+   per row of a wrapping grid; an empty list stays where it is, greyed, so the
+   page keeps its shape as lists empty, as on the desktop. */
+.attention-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  list-style: none;
+}
+
+.attention-category {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.attention-category:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: var(--panel-strong);
+}
+
+.attention-category[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.attention-category.empty {
+  color: var(--muted);
+}
+
+.attention-note,
+.attention-notice {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.attention-views {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+
+.attention-views button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-rows {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 0.7rem;
+  background: var(--panel-soft);
+}
+
+.attention-row-main {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.attention-credit {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.attention-fragments {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.attention-fragment {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: var(--text-sm);
+}
+
+/* A fragment the library already knows is the strongest hint a split is
+   right, so it reads as a link to that artist. */
+.attention-fragment.known {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.attention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  gap: var(--space-2);
+}
+
+@media (max-width: 40rem) {
+  .attention-actions {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+.attention-group h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.artist-split {
+  margin-top: var(--space-2);
+}
+
+.artist-image-button.armed {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}

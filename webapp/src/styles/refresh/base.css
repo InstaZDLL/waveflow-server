@@ -1,0 +1,140 @@
+/* The quieter frame's tokens, type and controls. */
+
+/* A quieter frame for the catalogue. Theme presets still supply the ambient
+   colour and accent; these rules define how that colour is used by the web UI. */
+:root {
+  --bg: color-mix(in srgb, var(--ambient-bg) 66%, #1b1e1b 34%);
+  --panel: color-mix(in srgb, var(--bg) 87%, white 13%);
+  --panel-soft: color-mix(in srgb, var(--bg) 95%, white 5%);
+  --panel-strong: color-mix(in srgb, var(--bg) 80%, white 20%);
+  --line: color-mix(in srgb, white 9%, transparent);
+  --line-strong: color-mix(in srgb, white 16%, transparent);
+  --text: #f0f1eb;
+  --muted: #a5ada4;
+  --accent: color-mix(in srgb, var(--accent-400) 66%, #d8e0d1 34%);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --shadow: 0 1rem 3rem color-mix(in srgb, #080c09 30%, transparent);
+  --font-display:
+    "Segoe UI Variable Display", "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Segoe UI Variable Text", "Avenir Next", "Segoe UI", sans-serif;
+}
+
+:root:not(.dark) {
+  --bg: color-mix(in srgb, var(--ambient-bg) 54%, #f2f0ea 46%);
+  --panel: color-mix(in srgb, var(--bg) 24%, white 76%);
+  --panel-soft: color-mix(in srgb, var(--bg) 82%, white 18%);
+  --panel-strong: color-mix(in srgb, var(--bg) 72%, #dfddd5 28%);
+  --line: color-mix(in srgb, #2c392f 10%, transparent);
+  --line-strong: color-mix(in srgb, #2c392f 19%, transparent);
+  --text: #202721;
+  --muted: #657068;
+  --accent: color-mix(in srgb, var(--accent-700) 76%, #304b39 24%);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --shadow: 0 1rem 3rem color-mix(in srgb, #374139 11%, transparent);
+}
+
+body {
+  background: var(--bg);
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+body::before {
+  display: none;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+}
+
+button,
+input,
+select,
+.correction-field textarea {
+  border-radius: 0.45rem;
+}
+
+button {
+  border-radius: 999px;
+  border-color: var(--line-strong);
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 650;
+}
+
+button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+button[type="submit"],
+button.action-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-color: var(--accent);
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+button[type="submit"]:hover,
+button.action-primary:hover {
+  border-color: color-mix(in srgb, var(--accent) 82%, var(--text) 18%);
+  background: color-mix(in srgb, var(--accent) 82%, var(--text) 18%);
+}
+
+button.action-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border-radius: 999px;
+  padding-inline: var(--space-3);
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+
+button.action-secondary:hover {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+input,
+select,
+.correction-field textarea {
+  background: transparent;
+}
+
+/* Windows can paint a native select menu white even inside a dark page.
+   Give its popup an explicit light scheme and dark option text. */
+select {
+  color-scheme: light;
+}
+
+select option {
+  background-color: #fff;
+  color: #202721;
+}
+
+.radio-form {
+  max-width: 34rem;
+  gap: var(--space-4);
+  margin: 0 0 var(--space-8);
+}
+
+.radio-form > label {
+  display: grid;
+  gap: var(--space-2);
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}

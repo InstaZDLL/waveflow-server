@@ -1,0 +1,473 @@
+/* Library admin: scans, tokens, the tag editor, uploads, canvas, scrobbling. */
+
+/* The scan panel sits above the grid: while one runs, it is the thing the
+   operator came for. */
+.scan-panel {
+  margin-bottom: var(--space-6);
+}
+
+.scan-progress {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.scan-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.scan-progress progress {
+  width: 100%;
+  height: 0.4rem;
+  border: 0;
+  border-radius: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.scan-tally {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+/* A path is long and moves fast; it stays on one line and truncates rather
+   than reflowing the panel on every file. `direction: rtl` is what keeps the
+   ellipsis at the *start*, so the file name — the part that says where the
+   scan is — stays readable.
+   `unicode-bidi: plaintext` is what makes that safe: an RTL paragraph
+   reorders neutral characters, and a path is mostly neutrals. Without it the
+   separators and a trailing extension drift, so `/music/a.flac` could be shown
+   with its slashes in the wrong places. Plaintext takes the direction from the
+   first strong character in the string instead, which for a path is its first
+   letter. */
+.scan-path {
+  overflow: hidden;
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+
+.admin-panel .resource-list li > div {
+  display: grid;
+  min-width: 0;
+}
+
+.admin-panel .resource-list small {
+  font-size: var(--text-xs);
+}
+
+/* The token list is closed until asked for. Its heading is the control that
+   opens it, so the button has to read as the heading it sits in. */
+.token-panel h3 {
+  margin: 0;
+}
+
+.token-panel h3 button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.token-panel h3 button::before {
+  color: var(--muted);
+  content: "▸";
+  font-size: var(--text-xs);
+  transition: rotate 160ms ease;
+}
+
+.token-panel h3 button[aria-expanded="true"]::before {
+  rotate: 90deg;
+}
+
+.token-panel h3 button:hover {
+  background: none;
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .token-panel h3 button::before {
+    transition: none;
+  }
+}
+
+/* The membership panel is a row of the library list rather than a column of
+   its own: it belongs to one library, and there is one of them per library. */
+.member-row {
+  display: block;
+  padding: 0;
+  border: 0;
+}
+
+.member-row .admin-panel {
+  padding: var(--space-2) 0;
+  border: 0;
+  background: none;
+}
+
+.member-row .control {
+  min-width: 8rem;
+}
+
+/* A correction is reached from the row it corrects. A link rather than a
+   button, because it goes somewhere, and in the marks cell beside the rating
+   and the heart because the table has no room for another column. */
+.row-action {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.row-action:hover {
+  color: var(--accent);
+}
+
+/* The tag editor. One column: each field carries a second line — what the
+   file says beneath the correction — and two columns of those read as a table
+   nobody asked for. */
+.correction-page {
+  max-width: 44rem;
+}
+
+.correction-detail {
+  margin: 0 0 var(--space-6);
+}
+
+.correction-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.correction-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.correction-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* The base field rule predates any multi-line input, so the textarea is not in
+   it. It takes the same chrome, and grows downward only: it holds a list of
+   names, one per line. */
+.correction-field textarea {
+  min-height: 5.5rem;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 0.55rem;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+
+.correction-field :disabled {
+  opacity: 0.6;
+}
+
+.correction-badge {
+  padding: 0.05rem var(--space-2);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.correction-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.correction-actions p {
+  margin: 0;
+}
+
+/* Uploads. The rows are the list's own; the progress bar takes the width the
+   name does not need, and a long file name wraps rather than pushing the bar
+   out of its row. */
+.upload-detail {
+  max-width: 44rem;
+  margin: 0 0 var(--space-6);
+}
+
+.upload-pick {
+  display: inline-grid;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+/* The playlist import, on the playlists page: a panel rather than a page,
+   because it is one file and one decision. */
+.import-panel {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-8);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--panel-soft);
+}
+
+.import-panel h3,
+.import-panel p {
+  margin: 0;
+}
+
+.import-preview {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+/* The list of what would be lost. Scrollable rather than endless: a file from
+   another player can disagree with this catalogue on hundreds of lines, and a
+   report that pushes the Import button off the screen cannot be acted on. */
+.import-unresolved {
+  max-height: 14rem;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.import-unresolved li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.import-unresolved code {
+  overflow-wrap: anywhere;
+}
+
+.import-line {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.upload-formats {
+  margin: var(--space-2) 0 var(--space-6);
+  font-size: var(--text-xs);
+}
+
+.upload-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(6rem, 12rem);
+  align-items: center;
+}
+
+.upload-name {
+  overflow-wrap: anywhere;
+}
+
+.upload-status {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.upload-item.done .upload-status,
+.upload-item.present .upload-status {
+  color: var(--accent);
+}
+
+.upload-item.refused .upload-status,
+.upload-item.failed .upload-status {
+  color: var(--danger);
+  white-space: normal;
+}
+
+.upload-list progress {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+@media (max-width: 40rem) {
+  .upload-list li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}
+
+/* The canvas. On the playing page the loop lies over the cover, which keeps
+   the image's name and shows through until the loop can play; in the editor it
+   is a preview, shown whole rather than cropped to a square. */
+.canvas-stage {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.canvas-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 1.1rem;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+
+.canvas-video.ready {
+  opacity: 1;
+}
+
+.canvas-panel {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-12);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+
+.canvas-panel h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.canvas-panel > p {
+  margin: 0;
+}
+
+.canvas-preview {
+  width: min(100%, 14rem);
+  max-height: 22rem;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--panel);
+  object-fit: contain;
+}
+
+.canvas-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.canvas-actions p {
+  margin: 0;
+}
+
+/* External scrobbling — RFC-010.
+   A row per instance: who it is, how its queue is doing, and the one gesture
+   it offers. The health word carries a colour of its own because three states
+   need three, and `--muted` would say "less important" about the one state
+   that is asking for attention. */
+.scrobble-row {
+  display: grid;
+  gap: var(--space-2);
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) auto;
+}
+
+.scrobble-identity,
+.scrobble-counters {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.scrobble-counters {
+  font-size: var(--text-sm);
+}
+
+.scrobble-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* The form inside a row carries the list's own spacing, not the bottom margin
+   `.inline-form` gives a form standing alone above a list. */
+.scrobble-row .inline-form {
+  margin-bottom: 0;
+}
+
+.scrobble-row .inline-form input {
+  flex: 1 1 10rem;
+}
+
+.badge {
+  justify-self: start;
+  padding: 0.1rem var(--space-2);
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.health-healthy {
+  color: var(--accent);
+}
+
+.health-degraded {
+  color: var(--warn);
+}
+
+.health-broken {
+  color: var(--danger);
+}
+
+.scrobble-uncertain {
+  margin-top: var(--space-12);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line);
+}
+
+.scrobble-uncertain h3 {
+  margin: 0 0 var(--space-2);
+}
+
+@media (width <= 60rem) {
+  /* One column on a phone. The three-column row would put a password field and
+     two buttons on the same line as the health word, and the buttons are what
+     the screen is for. */
+  .scrobble-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scrobble-actions {
+    justify-content: flex-start;
+  }
+}
