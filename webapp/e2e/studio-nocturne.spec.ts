@@ -6992,6 +6992,20 @@ test("closes a folder's form when another folder is opened", async ({ page }) =>
 });
 
 /**
+ * Opens the artist header's image menu, where the portrait and banner actions
+ * live behind one button, and returns the menu.
+ */
+async function openImageMenu(page: Page) {
+  await page
+    .locator(".artist-hero")
+    .getByRole("button", { name: "Edit images", exact: true })
+    .click();
+  const menu = page.getByRole("menu", { name: "Images of Björk" });
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
+/**
  * A stand-in for the artist routes of RFC-013 with state: the page re-reads
  * after every write, and what it shows must be what the write did.
  */
@@ -7061,9 +7075,13 @@ test("changes an artist's banner and portrait from the artist page", async ({
   const { state, png } = await serveArtistImages(page);
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
-  await expect(hero.getByRole("button", { name: "Change portrait" })).toBeVisible();
-  await expect(hero.getByRole("button", { name: "Change banner" })).toBeVisible();
-  await expect(hero.getByRole("button", { name: "No banner" })).toHaveCount(0);
+  // The actions sit behind one button in the header's corner.
+  let menu = await openImageMenu(page);
+  await expect(menu.getByRole("menuitem", { name: "Change portrait" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Change banner" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "No banner" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
   // With no banner, the portrait is the backdrop, blurred.
   await expect(hero.locator(".artist-hero-ambient")).toBeAttached();
 
@@ -7096,10 +7114,12 @@ test("changes an artist's banner and portrait from the artist page", async ({
   await expect(hero.getByRole("alert")).toHaveText("Choose a JPEG, PNG or WebP image.");
 
   // Back to automatic: no banner, and the fetched portrait again.
-  await hero.getByRole("button", { name: "No banner" }).click();
+  menu = await openImageMenu(page);
+  await menu.getByRole("menuitem", { name: "No banner" }).click();
   await expect(hero.getByRole("status")).toHaveText("Banner removed.");
   await expect(hero.locator("img.artist-banner")).toHaveCount(0);
-  await hero.getByRole("button", { name: "Automatic portrait" }).click();
+  menu = await openImageMenu(page);
+  await menu.getByRole("menuitem", { name: "Automatic portrait" }).click();
   await expect(hero.getByRole("status")).toHaveText("Back to the automatic portrait.");
   await expect(hero.getByText("Portrait chosen by hand")).toHaveCount(0);
   expect(state.writes.slice(-2)).toEqual([
@@ -7118,6 +7138,8 @@ test("shows a listener the artist's banner with nothing to change", async ({
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
+  // Not even the button the actions sit behind.
+  await expect(hero.getByRole("button", { name: "Edit images" })).toHaveCount(0);
   await expect(hero.getByRole("button", { name: /Change/ })).toHaveCount(0);
   await expect(hero.getByRole("button", { name: "Search Deezer" })).toHaveCount(0);
 });
@@ -7230,7 +7252,9 @@ test("chooses an artist's portrait from a Deezer search", async ({ page }) => {
 
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
-  await hero.getByRole("button", { name: "Search Deezer" }).click();
+  await (await openImageMenu(page))
+    .getByRole("menuitem", { name: "Search Deezer" })
+    .click();
   const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
   await expect(picker).toBeVisible();
   const results = picker.getByRole("list", { name: "Deezer artists" });
@@ -7607,7 +7631,9 @@ test("keeps the artist hero and the Deezer picker readable in the light", async 
 
   // Opened from the hero, the picker sits inside it in the tree, and took
   // the hero's light-on-dark ink: the fan count was white on white.
-  await hero.getByRole("button", { name: "Search Deezer" }).click();
+  await (await openImageMenu(page))
+    .getByRole("menuitem", { name: "Search Deezer" })
+    .click();
   const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
   await expect(picker.getByText("1500000 fans")).toBeVisible();
   await expectNoWcagViolations(page);
@@ -7797,18 +7823,36 @@ for (const { theme, banner, portrait } of [
     ] as const) {
       expect(await lowestContrast(page, text), label).toBeGreaterThanOrEqual(4.5);
     }
-    // Every button is measured; these two are required, the plain one and the
-    // quiet one, so the loop below cannot pass over an empty list.
-    for (const required of ["Change portrait", "Automatic portrait"]) {
-      const button = hero.getByRole("button", { name: required, exact: true });
-      await expect(button).toHaveCount(1);
-      await expect(button).toBeVisible();
-    }
-    for (const button of await hero.locator(".artist-image-button").all()) {
+    // Every button over the picture is measured. The image actions sit
+    // behind one menu button now, which is required, so the loop below
+    // cannot pass over an empty list.
+    const trigger = hero.getByRole("button", { name: "Edit images", exact: true });
+    await expect(trigger).toHaveCount(1);
+    await expect(trigger).toBeVisible();
+    const overPicture = await hero.locator(".artist-image-button").all();
+    expect(overPicture.length).toBeGreaterThan(0);
+    for (const button of overPicture) {
       if (!(await button.isVisible())) continue;
       expect(
         await lowestContrast(page, button, true),
         `the button “${await button.innerText()}”`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+    // And what it opens: the plain entry and the quiet one, both required —
+    // a portrait chosen by hand is why "Automatic portrait" is offered. The
+    // menu is drawn on its own panel, outside the header, and is measured
+    // over whatever it covers all the same.
+    await trigger.click();
+    const menu = page.getByRole("menu", { name: "Images of Björk" });
+    for (const required of ["Change portrait", "Automatic portrait"]) {
+      const entry = menu.getByRole("menuitem", { name: required, exact: true });
+      await expect(entry).toHaveCount(1);
+      await expect(entry).toBeVisible();
+    }
+    for (const entry of await menu.getByRole("menuitem").all()) {
+      expect(
+        await lowestContrast(page, entry.locator("span")),
+        `the menu entry “${await entry.innerText()}”`,
       ).toBeGreaterThanOrEqual(4.5);
     }
   });
@@ -8851,7 +8895,7 @@ test("offers the day's mixes above the albums, and plays one", async ({
   await page.goto("/");
   const shelf = page.locator(".mix-shelf");
   await expect(
-    shelf.getByRole("heading", { name: "Made for you today" }),
+    shelf.getByRole("heading", { name: "Mixes for you" }),
   ).toBeVisible();
   // Named by the client, in the listener's language, from what the server
   // sent: a kind and its parameter, never a title.

@@ -115,6 +115,14 @@ export function lyricSheetState(answer: {
  */
 const BLANK_LINE = "\u00a0";
 
+/** A track's sheet as `useLyricSheet` reads it: the words, the sung line. */
+type LyricSheet = {
+  sheet: StructuredLyrics | undefined;
+  active: number;
+  keys: string[];
+  state: "waiting" | "sheet" | "none";
+};
+
 /**
  * The sheet a track travels with, and where in it the playing head is.
  *
@@ -122,7 +130,7 @@ const BLANK_LINE = "\u00a0";
  * about which line is being sung — or about how a refrain is keyed, which is
  * the part that is easy to get subtly different twice.
  */
-function useLyricSheet(trackId: string) {
+function useLyricSheet(trackId: string): LyricSheet {
   const progress = usePlayerProgress();
   const { data: value, error } = useQuery(lyricsQuery(trackId));
   const sheet: StructuredLyrics | undefined = value?.structuredLyrics[0];
@@ -270,15 +278,17 @@ function LyricLines({
 }
 
 /**
- * The words beside the cover, in the detail view.
+ * The words in the detail view: a column of their own beside the track on a
+ * wide screen, under its names on a narrow one.
  *
  * Smaller than the lyrics view and inside a box of its own, but reading the
  * same way: the sung line is held in view and, where the sheet is synced, a
- * line seeks to itself.
+ * line seeks to itself. The sheet is read by `DetailView` and handed down,
+ * because that view lays itself out by whether there is one.
  */
-function LyricsStrip({ trackId }: { trackId: string }) {
+function LyricsStrip({ lyrics }: { lyrics: LyricSheet }) {
   const { t } = useI18n();
-  const { sheet, active, keys, state } = useLyricSheet(trackId);
+  const { sheet, active, keys, state } = lyrics;
   const column = useRef<HTMLOListElement | null>(null);
   useFollowSungLine(column, sheet, active);
 
@@ -477,6 +487,78 @@ function ImmersiveView({ song }: { song: Song }) {
   );
 }
 
+/**
+ * Whether the detail view gives the words a column of their own, from what it
+ * gave them last and what the sheet now says.
+ *
+ * **Only once there are words to put in it.** A track without lyrics is most of
+ * a library, and a second column held open for them would be an empty half of
+ * the screen with "no lyrics" written in its corner; the track takes the
+ * middle instead. The queue was the other candidate for that column, and was
+ * not taken: it has a page and a panel of its own, it is empty as often as the
+ * sheet is, and a column that changes subject from one track to the next is
+ * harder to read than one that is either the words or absent.
+ *
+ * **A wait is not an answer.** While the sheet is out the layout keeps the
+ * shape it had, so moving from one track with words to the next does not fold
+ * the column away and open it again a moment later.
+ */
+export function detailSplit(
+  previous: boolean,
+  state: LyricSheet["state"],
+): boolean {
+  return state === "waiting" ? previous : state === "sheet";
+}
+
+/**
+ * The track, and its words beside it.
+ *
+ * On a wide screen, two columns: the artwork, larger than it was, with the
+ * names and what the file is under it, and the words in a tall column of their
+ * own. Without words, one column in the middle. Narrower, the two stack, cover
+ * first, as they always have — the stylesheet decides that, not this.
+ */
+function DetailView({ song }: { song: Song }) {
+  const { t } = useI18n();
+  const lyrics = useLyricSheet(song.id);
+  // Adjusted while rendering rather than in an effect, as the artwork does: an
+  // effect would paint one frame in the old shape around the new answer.
+  const [split, setSplit] = useState(false);
+  const next = detailSplit(split, lyrics.state);
+  if (next !== split) setSplit(next);
+
+  return (
+    <div className={`playing ${next ? "playing-split" : "playing-solo"}`}>
+      <div className="playing-track">
+        <CanvasStage trackId={song.id}>
+          <Artwork
+            artworkId={song.artwork_hash}
+            title={song.title}
+            className="cover large"
+          />
+        </CanvasStage>
+        <div className="playing-detail">
+          <span className="eyebrow">{song.album ?? t("common.album")}</span>
+          <h2>{song.title}</h2>
+          <p className="muted">{song.artist ?? t("common.unknownArtist")}</p>
+          {/* Under the names and above the words: what the file is belongs
+              with the track and not with the lyrics, and a listener who came
+              here to read along should not have to pass it twice. */}
+          <FileQuality song={song} />
+          {/* Without a column, the strip says here that there is nothing to
+              read, or that it is still asking. */}
+          {next ? null : <LyricsStrip lyrics={lyrics} />}
+        </div>
+      </div>
+      {next ? (
+        <div className="playing-lyrics">
+          <LyricsStrip lyrics={lyrics} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The three ways to look at the track, as links, because the view is a place. */
 function ViewSwitcher() {
   const { t } = useI18n();
@@ -588,29 +670,7 @@ export function PlayingPage() {
           {view === "lyrics" ? (
             <LyricsView song={current} />
           ) : (
-            <div className="playing">
-              <CanvasStage trackId={current.id}>
-                <Artwork
-                  artworkId={current.artwork_hash}
-                  title={current.title}
-                  className="cover large"
-                />
-              </CanvasStage>
-              <div className="playing-detail">
-                <span className="eyebrow">
-                  {current.album ?? t("common.album")}
-                </span>
-                <h2>{current.title}</h2>
-                <p className="muted">
-                  {current.artist ?? t("common.unknownArtist")}
-                </p>
-                {/* Under the names and above the words: what the file is belongs
-                    with the track and not with the lyrics, and a listener who
-                    came here to read along should not have to pass it twice. */}
-                <FileQuality song={current} />
-                <LyricsStrip trackId={current.id} />
-              </div>
-            </div>
+            <DetailView song={current} />
           )}
         </>
       ) : (

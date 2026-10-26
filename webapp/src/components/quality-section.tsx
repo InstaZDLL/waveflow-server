@@ -107,6 +107,12 @@ export function QualitySection({ song }: { song: Song }) {
           </div>
         ))}
       </dl>
+      {/* The bit count is the figure most easily read as a certificate, so it
+          says what it is: a measurement, with the same caution the quality
+          page gives "no sign of a lossy source". Nothing computed changes. */}
+      {data.effective_bits === null ? null : (
+        <p className="muted quality-note">{t("quality.bitsNote")}</p>
+      )}
       {data.spectrum && data.nyquist_hz ? (
         <SpectrumChart
           spectrum={data.spectrum}

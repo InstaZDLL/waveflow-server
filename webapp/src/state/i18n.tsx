@@ -287,6 +287,7 @@ const en = {
     one: "{count} record in your library",
     other: "{count} records in your library",
   },
+  "albums.gridTitle": "In your library",
   "artists.detail": {
     one: "{count} voice or collaborator",
     other: "{count} voices and collaborators",
@@ -601,8 +602,10 @@ const en = {
   "quality.verdictLabel": "Verdict",
   "quality.highsStop": "Highs stop at",
   "quality.wall": "Fall at that point",
-  "quality.bitsUsed": "Bits used",
+  "quality.bitsUsed": "Bits in use, measured",
   "quality.bitsOf": "{used} of {declared}",
+  "quality.bitsNote":
+    "A measurement of the samples, not proof of genuine hi-res: a file that uses every bit it declares was not padded, which does not mean it was recorded at that depth.",
   "quality.analysed": "Analysed",
   "quality.chart": "Averaged spectrum: the highs stop at {where}.",
   "quality.chartFullBand": "Averaged spectrum: the highs run on with no wall.",
@@ -655,6 +658,9 @@ const en = {
   "artistImage.failed": "That did not work. Try again.",
   "artistImage.chosen": "Portrait chosen by hand",
   "artistImage.searchDeezer": "Search Deezer",
+  "artistImage.menu": "Edit images",
+  "artistImage.menuShort": "Edit",
+  "artistImage.menuLabel": "Images of {name}",
   "artistImage.deezerTitle": "Choose a portrait from Deezer",
   "artistImage.deezerQuery": "Artist name",
   "artistImage.deezerSearch": "Search",
@@ -1053,6 +1059,10 @@ const en = {
   "mixes.genre": "{genre} mix",
   "mixes.decade": "The {decade}s",
   "mixes.failed": "“{title}” could not be opened. Try again.",
+  "mixes.shelfTitle": "Mixes for you",
+  "mixes.shelfDetail":
+    "Playlists drawn from your listening, new every day. Your albums are below.",
+  "mixes.badge": "Mix",
   // Smart playlists and podcasts (RFC-025), kept together at the end.
   "smart.title": "Smart playlists",
   "smart.detail":
@@ -1464,6 +1474,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
     one: "{count} disque dans votre bibliothèque",
     other: "{count} disques dans votre bibliothèque",
   },
+  "albums.gridTitle": "Dans votre bibliothèque",
   "artists.detail": {
     one: "{count} voix ou collaboration",
     other: "{count} voix et collaborations",
@@ -1777,8 +1788,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "quality.verdictLabel": "Verdict",
   "quality.highsStop": "Les aigus s’arrêtent à",
   "quality.wall": "Chute à cet endroit",
-  "quality.bitsUsed": "Bits utilisés",
+  "quality.bitsUsed": "Bits utilisés, mesurés",
   "quality.bitsOf": "{used} sur {declared}",
+  "quality.bitsNote":
+    "Une mesure des échantillons, pas une preuve de vraie haute résolution : un fichier qui utilise tous les bits qu’il annonce n’a pas été gonflé, ce qui ne veut pas dire qu’il a été enregistré à cette profondeur.",
   "quality.analysed": "Analysé le",
   "quality.chart": "Spectre moyen : les aigus s’arrêtent à {where}.",
   "quality.chartFullBand": "Spectre moyen : les aigus continuent sans mur.",
@@ -1833,6 +1846,9 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "artistImage.failed": "Cela n’a pas fonctionné. Réessayez.",
   "artistImage.chosen": "Portrait choisi à la main",
   "artistImage.searchDeezer": "Rechercher sur Deezer",
+  "artistImage.menu": "Modifier les images",
+  "artistImage.menuShort": "Modifier",
+  "artistImage.menuLabel": "Images de {name}",
   "artistImage.deezerTitle": "Choisir un portrait sur Deezer",
   "artistImage.deezerQuery": "Nom de l’artiste",
   "artistImage.deezerSearch": "Rechercher",
@@ -2244,6 +2260,10 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "mixes.genre": "Mix {genre}",
   "mixes.decade": "Les années {decade}",
   "mixes.failed": "Impossible d’ouvrir « {title} ». Réessayez.",
+  "mixes.shelfTitle": "Mix pour vous",
+  "mixes.shelfDetail":
+    "Des listes tirées de vos écoutes, renouvelées chaque jour. Vos albums sont en dessous.",
+  "mixes.badge": "Mix",
   "smart.title": "Listes intelligentes",
   "smart.detail":
     "Définies par des règles et recalculées à chaque ouverture : elles suivent la bibliothèque.",

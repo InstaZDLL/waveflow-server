@@ -2013,14 +2013,6 @@ button.danger {
   color: var(--accent);
 }
 
-/* Cover on the left, words on the right, stacking under the fold. */
-.playing {
-  display: flex;
-  align-items: flex-start;
-  gap: clamp(var(--space-6), 4vw, var(--space-16));
-  margin-bottom: var(--space-8);
-}
-
 .playing-detail {
   min-width: 0;
   flex: 1 1 auto;
@@ -2070,6 +2062,90 @@ button.danger {
   color: var(--text);
   font-weight: 600;
 }
+
+/* ── Editorial pages: the playing screen in two columns ─────────────────────
+   The track and its words. In the middle range the cover sits beside the
+   names with the words under both, as this screen always read; on a wide
+   screen the track becomes a column of its own — a larger cover over the
+   names — and the words a tall one beside it (`.playing-split`). A track with
+   no words keeps one column, centred (`.playing-solo`), rather than half a
+   screen held open for nothing. Narrow, everything stacks, cover first. */
+.playing {
+  display: grid;
+  gap: clamp(var(--space-6), 4vw, var(--space-16));
+  margin-bottom: var(--space-8);
+}
+
+/* The same gutter between the cover and its names as between the columns:
+   inherited, so the fluid range is written once. */
+.playing-track {
+  display: flex;
+  align-items: flex-start;
+  gap: inherit;
+  min-width: 0;
+}
+
+.playing-lyrics {
+  min-width: 0;
+}
+
+.playing-lyrics .lyrics {
+  margin-top: 0;
+}
+
+@media (width > 64rem) {
+  .playing-split {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: start;
+  }
+
+  .playing-split .playing-track,
+  .playing-solo .playing-track {
+    flex-direction: column;
+    gap: var(--space-6);
+    width: 100%;
+    max-width: 26rem;
+  }
+
+  .playing-split .playing-track .canvas-stage,
+  .playing-solo .playing-track .canvas-stage,
+  .playing-split .cover.large,
+  .playing-solo .cover.large {
+    width: 100%;
+  }
+
+  .playing-split .playing-detail,
+  .playing-solo .playing-detail {
+    width: 100%;
+  }
+
+  /* Tall enough to read a verse without scrolling, and set larger than the
+     strip it was: the words are half the screen now, not a footnote. */
+  .playing-split .lyrics ol {
+    max-height: min(70vh, 44rem);
+    scroll-padding: 40% 0;
+  }
+
+  .playing-split .lyrics li {
+    font-size: var(--text-lg);
+    line-height: 1.5;
+  }
+
+  .playing-solo {
+    justify-items: center;
+  }
+
+  .playing-solo .playing-track {
+    align-items: center;
+    text-align: center;
+  }
+
+  .playing-solo .quality-meter {
+    justify-content: center;
+  }
+}
+
+/* ── End of the playing screen's columns ── */
 
 /* The three ways to look at the track, in the page header beside the bookmark
    button. Links and not buttons, because each one is a location. */
@@ -2324,7 +2400,7 @@ button.danger {
     grid-template-columns: 1fr;
   }
 
-  .playing {
+  .playing-track {
     flex-direction: column;
   }
 }
@@ -3523,18 +3599,6 @@ button.danger {
   max-width: 50%;
 }
 
-.artist-image-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: var(--space-2);
-}
-
-.artist-image-pair {
-  display: inline-flex;
-  gap: var(--space-1);
-}
-
 .artist-image-button {
   display: inline-flex;
   align-items: center;
@@ -3552,15 +3616,12 @@ button.danger {
   backdrop-filter: blur(6px);
 }
 
-/* A bare outline is text straight on the picture — white on a pale sky or a
-   pale portrait, ink on a dark one — so the quiet button keeps a lighter
-   glass than the others instead of none. */
-.artist-hero.has-backdrop .artist-image-button.subtle {
-  background: color-mix(in srgb, var(--fe-on-wash-tone) 85%, transparent);
-}
-
-.artist-hero.has-banner .artist-image-button.subtle {
-  background: rgb(0 0 0 / 42%);
+/* Editorial pages: the image actions behind one button. It holds the corner
+   the row of five used to fill, and says it is a menu by its dots as much as
+   by its name. */
+.artist-image-menu {
+  gap: var(--space-1);
+  padding-inline: var(--space-3) var(--space-4);
 }
 
 .artist-image-notice {
@@ -3648,10 +3709,6 @@ button.danger {
     width: 100%;
     max-width: none;
     justify-items: start;
-  }
-
-  .artist-image-buttons {
-    justify-content: flex-start;
   }
 }
 
@@ -3765,6 +3822,14 @@ button.danger {
 .quality-explain {
   margin: 0 0 var(--space-3);
   font-size: var(--text-sm);
+}
+
+/* Editorial pages: the caution under the measured bit depth, set as the
+   explanation above the figures is. */
+.quality-note {
+  max-width: 62ch;
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-xs);
 }
 
 .quality-spectrum {
@@ -3938,7 +4003,7 @@ button.danger {
 }
 
 .mix-shelf h3 {
-  margin: 0 0 var(--space-3);
+  margin: 0;
   font-size: var(--text-lg);
 }
 
@@ -3981,6 +4046,75 @@ button.danger {
 .mix-shelf li:focus-within .card-actions {
   opacity: 1;
 }
+
+/* ── Editorial pages: the mixes set apart from the albums ───────────────────
+   The shelf names itself and says what a mix is; each card sits on a tinted
+   ground of its own, its cover is a mosaic of four sleeves where the mix has
+   four, and a "Mix" marker rides on the cover — so nobody takes a generated
+   playlist for another record. The albums under it carry their own heading. */
+.mix-shelf-header {
+  display: grid;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.mix-shelf-detail {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.mix-shelf .mix-card {
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel-soft));
+}
+
+.mix-cover {
+  position: relative;
+  display: block;
+}
+
+.mix-mosaic {
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+}
+
+/* Square tiles meeting edge to edge; the mosaic rounds the four together.
+   Two classes deep, or the material's own `.cover` radius, loaded later,
+   wins the tie. */
+.mix-cover .mix-mosaic > * {
+  border: 0;
+  border-radius: 0;
+}
+
+.mix-badge {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.albums-grid-title {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+}
+
+/* ── End of the mixes shelf ── */
 
 /* Statistics (RFC-024): five figures, a timeline of bars, four top lists. */
 .stats-totals {

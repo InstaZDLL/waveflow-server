@@ -13,6 +13,38 @@ import { Artwork } from "./artwork";
 import { Icon } from "./icons";
 
 /**
+ * A mix's cover: four of its sleeves in a square where it has four, the one
+ * it has otherwise, and a "Mix" marker on it either way.
+ *
+ * The mosaic is what a playlist looks like and what no album does, so a mix is
+ * told from a record at a glance; the marker says it in words for the mix
+ * with a single cover, which would otherwise be drawn exactly as an album is.
+ * The marker is text inside the link, so it is part of what the link is
+ * called as well as what it shows.
+ */
+function MixCover({ hashes, title }: { hashes: string[]; title: string }) {
+  const { t } = useI18n();
+  const four = hashes.length >= 4 ? hashes.slice(0, 4) : null;
+  return (
+    <span className="mix-cover">
+      {four ? (
+        <span className="mix-mosaic">
+          {four.map((hash) => (
+            <Artwork key={hash} artworkId={hash} title={title} />
+          ))}
+        </span>
+      ) : (
+        <Artwork artworkId={hashes[0] ?? null} title={title} />
+      )}
+      <span className="mix-badge">
+        <Icon name="random" size={12} />
+        {t("mixes.badge")}
+      </span>
+    </span>
+  );
+}
+
+/**
  * The mixes the server drew for this account today (RFC-024 decision 7), as
  * one shelf above the albums.
  *
@@ -54,7 +86,12 @@ export function MixShelves() {
   if (!mixes?.length) return null;
   return (
     <section className="mix-shelf" aria-labelledby="mix-shelf-title">
-      <h3 id="mix-shelf-title">{t("mixes.title")}</h3>
+      {/* Says what these are before anybody has to guess: generated
+          playlists, redrawn each day, and not more albums. */}
+      <header className="mix-shelf-header">
+        <h3 id="mix-shelf-title">{t("mixes.shelfTitle")}</h3>
+        <p className="muted mix-shelf-detail">{t("mixes.shelfDetail")}</p>
+      </header>
       {failed ? (
         <p className="error" role="alert">
           {t("mixes.failed", { title: failed })}
@@ -70,10 +107,7 @@ export function MixShelves() {
                 to="/mixes/$mixId"
                 params={{ mixId: mix.id }}
               >
-                <Artwork
-                  artworkId={mix.artwork_hashes[0] ?? null}
-                  title={title}
-                />
+                <MixCover hashes={mix.artwork_hashes} title={title} />
                 <strong className="mix-card-title">{title}</strong>
                 <span className="muted mix-card-detail">
                   {t("common.tracks", { count: mix.track_count })}
