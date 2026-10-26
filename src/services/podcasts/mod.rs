@@ -135,7 +135,7 @@ pub struct EpisodeBookmark {
 pub enum PodcastFailure {
     Service(ServiceError),
     /// The feed could not be fetched or read, as a word from the fixed list
-    /// `src/podcast.rs` defines. Nothing was stored.
+    /// `src/remote/podcast/` defines. Nothing was stored.
     Feed(String),
 }
 

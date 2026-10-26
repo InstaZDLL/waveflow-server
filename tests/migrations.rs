@@ -15,7 +15,7 @@
 //! nobody can correct.
 //!
 //! Not the first migration test: `a_populated_database_survives_a_table_rebuild`
-//! in `src/database.rs` already applies a prefix and migrates from there. It is
+//! in `src/storage/database/tests.rs` already applies a prefix and migrates from there. It is
 //! pinned to **one** boundary — the participants rebuild it was written for —
 //! and asserts raw counts. This asks the general question instead, from every
 //! schema a tag actually shipped, and answers it through the services rather

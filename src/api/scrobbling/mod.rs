@@ -1,7 +1,7 @@
 //! Where an account links a destination, and answers for what could not be sent.
 //!
 //! RFC-010 decision 9: a destination's base URL belongs to the deployment and
-//! lives in `src/config.rs`, but an *authorisation* belongs to a person, so it
+//! lives in `src/config/`, but an *authorisation* belongs to a person, so it
 //! is posed here rather than by an environment variable. The same gestures exist
 //! on the CLI for an operator preparing a server without a browser — both call
 //! the same `DomainServices` methods, so the two surfaces cannot drift.

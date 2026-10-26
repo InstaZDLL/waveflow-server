@@ -109,7 +109,7 @@ pub(super) fn lastfm_unavailability(
 
 /// Turns a request token into a session key.
 ///
-/// Implemented in `src/scrobblers/lastfm.rs`, because that is the only place in
+/// Implemented in `src/remote/scrobblers/lastfm/`, because that is the only place in
 /// this server that makes an outbound request. Registered like a
 /// [`ScrobbleTarget`] and for the same reason: a test drives the whole journey
 /// against a double, and a server with no application registers neither.

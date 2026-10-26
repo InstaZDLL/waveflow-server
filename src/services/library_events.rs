@@ -1,7 +1,7 @@
 //! Reading a library's change feed.
 //!
 //! The counterpart of the RFC-003 journal for the half of the server that had
-//! no feed at all. Written by scans in `catalog.rs`; read here.
+//! no feed at all. Written by scans in `storage/catalog/`; read here.
 
 use super::*;
 use crate::storage::sync::MAX_SYNC_LIMIT;

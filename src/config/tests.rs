@@ -164,7 +164,7 @@ fn public_url_is_reduced_to_a_safe_http_origin() {
 /// whatever a person pastes into an issue. The repository's rule about
 /// secrets has no exception for an error path.
 ///
-/// It used to live in `tests/scrobbling.rs` against `initialize`, which is
+/// It used to live in `tests/scrobbling/` against `initialize`, which is
 /// where the guard used to be. Named destinations moved the refusal here,
 /// to the reading of the variable, and the test follows the guard rather
 /// than staying where it was and passing for another reason.

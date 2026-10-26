@@ -69,7 +69,7 @@ pub fn validate_destination_name(name: &str) -> Result<(), OutboundError> {
 /// The canonical spelling of a destination, as an identity rather than as an
 /// address.
 ///
-/// **Not `normalize_public_url` (`src/config.rs`), and the difference is
+/// **Not `normalize_public_url` (`src/config/access.rs`), and the difference is
 /// load-bearing.** That one answers an *origin* — scheme, host, port — and
 /// throws the path away, because that is what a share link needs. A
 /// destination is not an origin: [`validate_destination`] accepts a path, so
