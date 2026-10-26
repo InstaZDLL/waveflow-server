@@ -7,14 +7,17 @@ import {
   useState,
 } from "react";
 
+import { placeMenu } from "../lib/menu-place";
 import { Icon, type IconName } from "./icons";
 
 /** One entry of a menu. */
 export type PopupMenuItem = {
   key: string;
-  icon: IconName;
+  icon?: IconName;
   label: string;
   run: () => void;
+  /** Drawn in the danger colour: the entry that destroys something. */
+  danger?: boolean;
   /**
    * The entry replaces the menu with a dialog of its own, which takes focus.
    * Such an entry closes the menu itself: closing it here would hand focus back
@@ -33,25 +36,41 @@ export type PopupMenuItem = {
  * and moved back inside the window when it would hang off an edge. It answers
  * the keys of the ARIA menu pattern, and anything outside it closes it.
  *
+ * `onClose` is told whether focus should go back to what opened the menu: yes
+ * for a key or a chosen entry, no for a press or a gesture elsewhere, which
+ * takes focus where it lands.
+ *
  * Fixed rather than absolute, so the caller portals it to the body: an
  * ancestor that clips its overflow, or that carries a transform while it
  * rises into place, would otherwise cut it off or place it inside itself.
  */
 export function PopupMenu({
+  id,
+  className,
   label,
   x,
   y,
+  above,
   align = "start",
   items,
   onClose,
   anchor,
 }: {
+  id?: string;
+  /** Added to the panel's own class. */
+  className?: string;
   label: string;
   x: number;
   y: number;
+  /**
+   * Where to hang the menu upward from when it does not fit below `y`: the
+   * top of the button that opened it, for a menu opened near the bottom of
+   * the window. Without it the menu is only pushed back up inside the window.
+   */
+  above?: number;
   align?: "start" | "end";
   items: PopupMenuItem[];
-  onClose: () => void;
+  onClose: (refocus: boolean) => void;
   /**
    * The button that opened the menu, if one did. A press on it is not a press
    * "outside": it toggles the menu, and closing here first would have the
@@ -68,20 +87,19 @@ export function PopupMenu({
     const node = list.current;
     if (!node) return;
     const rect = node.getBoundingClientRect();
-    const margin = 8;
-    const left = align === "end" ? x - rect.width : x;
-    setPlace({
-      left: Math.max(
-        margin,
-        Math.min(left, window.innerWidth - rect.width - margin),
-      ),
-      top: Math.max(
-        margin,
-        Math.min(y, window.innerHeight - rect.height - margin),
-      ),
-    });
+    setPlace(
+      placeMenu({
+        x,
+        y,
+        above,
+        align,
+        width: rect.width,
+        height: rect.height,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }),
+    );
     node.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
-  }, [align, x, y]);
+  }, [above, align, x, y]);
 
   // Anything outside the menu closes it: a click, the wheel or a finger
   // moving the page, the window losing focus.
@@ -108,7 +126,7 @@ export function PopupMenu({
       const target = event.target as Node;
       if (list.current?.contains(target)) return;
       if (anchorRef.current?.current?.contains(target)) return;
-      closeRef.current();
+      closeRef.current(false);
     };
     // The wheel closes it, over the menu too, unless the menu has rows to
     // scroll: a track credited to many artists makes it taller than a short
@@ -119,9 +137,9 @@ export function PopupMenu({
       const menu = list.current;
       const inside = menu?.contains(event.target as Node) ?? false;
       if (inside && menu && menu.scrollHeight > menu.clientHeight) return;
-      closeRef.current();
+      closeRef.current(false);
     };
-    const leave = () => closeRef.current();
+    const leave = () => closeRef.current(false);
     // A long press opens the menu with the finger still down, and that finger
     // drifts as it lifts: its moves are the gesture that opened the menu, not
     // one leaving it. Only a touch that starts after the menu is open counts.
@@ -180,10 +198,15 @@ export function PopupMenu({
         break;
       case "Escape":
         event.preventDefault();
-        onClose();
+        onClose(true);
         break;
+      // Focus goes back to what opened the menu first, and the Tab is left to
+      // run from there, so it lands on what follows it (or, with Shift, what
+      // precedes it). Left in the menu, which sits at the end of the body, the
+      // Tab ran off the page and the menu's unmounting dropped focus on the
+      // body.
       case "Tab":
-        onClose();
+        onClose(true);
         break;
     }
   }
@@ -191,7 +214,8 @@ export function PopupMenu({
   return (
     <div
       ref={list}
-      className="track-menu"
+      id={id}
+      className={className ? `track-menu ${className}` : "track-menu"}
       role="menu"
       aria-label={label}
       style={{ left: place.left, top: place.top }}
@@ -201,15 +225,15 @@ export function PopupMenu({
         <button
           key={item.key}
           type="button"
-          className="track-menu-item"
+          className={`track-menu-item${item.danger ? " danger" : ""}`}
           role="menuitem"
           tabIndex={-1}
           onClick={() => {
             item.run();
-            if (!item.opensDialog) onClose();
+            if (!item.opensDialog) onClose(true);
           }}
         >
-          <Icon name={item.icon} size={16} />
+          {item.icon ? <Icon name={item.icon} size={16} /> : null}
           <span>{item.label}</span>
         </button>
       ))}
