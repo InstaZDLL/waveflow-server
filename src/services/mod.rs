@@ -1627,7 +1627,7 @@ pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES
 pub use mixes::{Mix, MixQuery, MixSummary, DEFAULT_MIX_SIZE, MAX_MIX_SIZE};
 pub use podcasts::{
     EpisodeBookmark, PodcastChannelItem, PodcastEpisodeItem, PodcastFailure, PodcastOverview,
-    NEWEST_EPISODES_DEFAULT,
+    MAX_EPISODES_LISTED, NEWEST_EPISODES_DEFAULT,
 };
 pub use quality::{
     AnalysisState, QualityAnalysis, QualitySummary, QualityTrack, QualityVerdict,

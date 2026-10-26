@@ -36,6 +36,15 @@ const NEWEST_EPISODES_MAX: i64 = 500;
 /// How many channels one instance may hold. A refresh fetches every one.
 const MAX_PODCAST_CHANNELS: i64 = 500;
 
+/// How many episodes a channel lists: the newest, as many as one feed may
+/// carry. Episodes are never purged — a refresh adds what a feed newly names
+/// and keeps the rest — so a daily show would otherwise grow every answer by a
+/// year's worth of rows a year, and `getPodcasts` answers every channel with
+/// its episodes by default. An episode past the bound that is stored, or on
+/// its way, is listed all the same: it holds a share of the quota, and the
+/// listing is where an administrator deletes it.
+pub const MAX_EPISODES_LISTED: i64 = podcast::MAX_EPISODES_PER_FEED as i64;
+
 /// A channel, as every surface reads it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PodcastChannelItem {
@@ -69,6 +78,8 @@ pub struct PodcastChannelItem {
     pub error: Option<String>,
     pub created_at: i64,
     pub refreshed_at: Option<i64>,
+    /// Every episode the channel holds, which may be more than `episodes`
+    /// lists: see [`MAX_EPISODES_LISTED`].
     pub episode_count: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub episodes: Option<Vec<PodcastEpisodeItem>>,
@@ -258,21 +269,35 @@ impl DomainServices {
             .map(|row| channel_from_row(row, can_manage))
             .collect::<Result<Vec<_>, _>>()?;
         if with_episodes {
+            // One statement for every channel, ranked within each, rather than
+            // one per channel.
+            let rows = sqlx::query(concat!(
+                episode_columns!(),
+                "JOIN (SELECT id AS ranked_id, ROW_NUMBER() OVER (PARTITION BY channel_id \
+                         ORDER BY published_at DESC NULLS LAST, title COLLATE NOCASE, id) \
+                         AS listed_rank \
+                       FROM podcast_episode \
+                       WHERE status<>'deleted' AND (? IS NULL OR channel_id=?)) r \
+                   ON r.ranked_id=e.id \
+                 WHERE r.listed_rank<=? OR e.status IN ('completed', 'downloading') \
+                 ORDER BY e.channel_id, r.listed_rank"
+            ))
+            .bind(user_id.to_string())
+            .bind(only.as_deref())
+            .bind(only.as_deref())
+            .bind(MAX_EPISODES_LISTED)
+            .fetch_all(&mut *connection)
+            .await?;
+            let mut by_channel: HashMap<Uuid, Vec<PodcastEpisodeItem>> = HashMap::new();
+            for row in rows {
+                let episode = episode_from_row(row)?;
+                by_channel
+                    .entry(episode.channel_id)
+                    .or_default()
+                    .push(episode);
+            }
             for channel in &mut channels {
-                let rows = sqlx::query(concat!(
-                    episode_columns!(),
-                    "WHERE e.channel_id=? AND e.status<>'deleted' \
-                     ORDER BY e.published_at DESC NULLS LAST, e.title COLLATE NOCASE, e.id"
-                ))
-                .bind(user_id.to_string())
-                .bind(channel.id.to_string())
-                .fetch_all(&mut *connection)
-                .await?;
-                channel.episodes = Some(
-                    rows.into_iter()
-                        .map(episode_from_row)
-                        .collect::<Result<Vec<_>, _>>()?,
-                );
+                channel.episodes = Some(by_channel.remove(&channel.id).unwrap_or_default());
             }
         }
         Ok(channels)
