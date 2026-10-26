@@ -513,8 +513,12 @@ own checks, now shared by both doors: 10 MiB, read with
 read and judged by its bytes. A page of HTML is refused whatever it is
 labelled. Nothing is logged but a verdict.
 
-**A2 — a channel's cover.** Fetched when the channel is subscribed and on a
-refresh, before the writer gate, and recorded in the refresh's transaction:
+**A2 — a channel's cover.** Fetched when the channel is subscribed — in the
+background, once the channel is committed, so that the subscription answers
+with its cover pending rather than holding the request for a feed fetch and a
+cover fetch in a row (Subsonic's `createPodcastChannel` sits under no
+`TimeoutLayer`, so nothing else would bound that sum) — and on a refresh,
+before the writer gate, recorded in the refresh's transaction:
 `podcast_channel.artwork_hash`, with the address it was fetched from
 (`artwork_url`) and when (`artwork_fetched_at`). A refresh fetches it again
 only when the feed names an address other than the one fetched from, when no
@@ -604,7 +608,9 @@ replacement answered 404 with no request made; an account at its station
 ceiling and an instance at its channel ceiling refused with no request to the
 feed's or the image's host and nothing stored; and the sweep keeping both
 images until the channel and the station are deleted.
-`src/services/remote_artwork.rs` tests the hourly budget. The private-feed test's cover
+`src/services/remote_artwork.rs` tests the hourly budget. A Subsonic
+`createPodcastChannel` whose cover host never answers is answered within five
+seconds, the channel created and its cover pending. The private-feed test's cover
 now carries the subscriber's token, so it proves the address reaches no
 reader. `src/services/podcasts.rs` tests when a cover is due.
 
