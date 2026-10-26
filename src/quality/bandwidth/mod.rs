@@ -7,7 +7,7 @@
 //! the search are carried here unchanged; what is added is
 //! [`BandwidthMeter::finish_with_spectrum`], which hands back the averaged
 //! spectrum the meter already computed. Two tests hold the port to the
-//! original: the public constants must be equal, and `tests/quality.rs` measures
+//! original: the public constants must be equal, and `tests/quality/analysis.rs` measures
 //! the same signals through both and compares.
 //!
 //! Every lossy encoder low-passes before it encodes: LAME cuts a 128 kbps

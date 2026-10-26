@@ -543,7 +543,7 @@ async fn a_retry_refuses_an_instance_that_is_no_longer_the_one_it_was_made_again
 /// server published and never describes a URL, so a name it never published is
 /// a resource that is not there. Held here rather than only at the route,
 /// because the CLI reaches the same method — `scrobble link` cannot be driven
-/// with a secret in `tests/cli.rs`, which refuses to mutate the environment
+/// with a secret in `tests/cli/scrobbling.rs`, which refuses to mutate the environment
 /// while sibling threads read it, so what both surfaces share is tested where
 /// it lives.
 ///
