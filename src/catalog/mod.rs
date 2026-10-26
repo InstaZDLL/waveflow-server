@@ -23,10 +23,6 @@ pub use scan_jobs::ScanJobRecord;
 pub use tracks::{StreamTrack, TrackRecord, MAX_SEARCH_QUERY_CHARS, MAX_SEARCH_TERMS};
 
 pub(crate) use credits::{credit_decisions, recompute_track_participants, write_track_credits};
-// Nothing outside `credits` names these today, but they were reachable at
-// `crate::catalog::*`, and a split that moves code does not take paths away.
-#[allow(unused_imports)]
-pub(crate) use credits::{read_track_credits, Recomputed};
 pub(crate) use overrides::{
     apply_track_override_lists, display_of, track_override_lists, TrackOverrideLists,
 };

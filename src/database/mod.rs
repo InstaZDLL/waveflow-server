@@ -30,11 +30,6 @@ pub use sessions::{
 };
 pub use subsonic_credentials::SubsonicCredentialStatus;
 pub(crate) use sync_operations::SyncOperationReservation;
-// Nothing outside names it today — callers reach it through the `Replayed`
-// variant — but `crate::database::SyncOperationReplayRecord` was its path,
-// and a split that moves code does not take paths away.
-#[allow(unused_imports)]
-pub(crate) use sync_operations::SyncOperationReplayRecord;
 
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations-v2");
 
