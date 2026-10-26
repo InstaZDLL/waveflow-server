@@ -7,29 +7,6 @@ use uuid::Uuid;
 use crate::database::Database;
 
 impl Database {
-    /// Recomputes the derived MusicBrainz identifier of every album and artist
-    /// in one library from the tracks that currently back them.
-    ///
-    /// Tracks of one album routinely disagree: a release id is written per file
-    /// by whatever tagger touched it, and a library assembled over years holds
-    /// files tagged against different releases of the same record. The album's
-    /// identifier is therefore the one most of its available tracks agree on,
-    /// not the one the last file scanned happened to carry.
-    ///
-    /// Ties are broken by the earliest disc and track number, zero-padded into
-    /// a single sortable key so `MIN` compares the pair rather than each half
-    /// independently, and finally by the identifier itself. A tie means the
-    /// tags genuinely split the album down the middle; what matters is that two
-    /// scans of unchanged files answer the same thing, so nothing flaps.
-    ///
-    /// An artist takes the identifier from the tracks it is the *primary*
-    /// credit of (`track_artist.position = 0`), because `musicbrainz_artist_id`
-    /// is one value on a track that may credit several artists, and only the
-    /// first credit is the one the tag is about.
-    ///
-    /// Albums and artists whose tracks carry no identifier are set back to
-    /// `NULL` rather than left alone: this runs after every scan, so a tag
-    /// removed from the files has to disappear from the catalogue too.
     /// Re-derives `album.sort_name` and `artist.sort_name` from the tags the
     /// library's available tracks still carry.
     ///
@@ -105,6 +82,30 @@ impl Database {
     /// A test that builds a catalogue by applying tracks directly runs this
     /// too, for the same reason the scanner does: without it the album has no
     /// credits and no artist has a count.
+    ///
+    /// Recomputes the derived MusicBrainz identifier of every album and artist
+    /// in one library from the tracks that currently back them.
+    ///
+    /// Tracks of one album routinely disagree: a release id is written per file
+    /// by whatever tagger touched it, and a library assembled over years holds
+    /// files tagged against different releases of the same record. The album's
+    /// identifier is therefore the one most of its available tracks agree on,
+    /// not the one the last file scanned happened to carry.
+    ///
+    /// Ties are broken by the earliest disc and track number, zero-padded into
+    /// a single sortable key so `MIN` compares the pair rather than each half
+    /// independently, and finally by the identifier itself. A tie means the
+    /// tags genuinely split the album down the middle; what matters is that two
+    /// scans of unchanged files answer the same thing, so nothing flaps.
+    ///
+    /// An artist takes the identifier from the tracks it is the *primary*
+    /// credit of (`track_artist.position = 0`), because `musicbrainz_artist_id`
+    /// is one value on a track that may credit several artists, and only the
+    /// first credit is the one the tag is about.
+    ///
+    /// Albums and artists whose tracks carry no identifier are set back to
+    /// `NULL` rather than left alone: this runs after every scan, so a tag
+    /// removed from the files has to disappear from the catalogue too.
     pub async fn consolidate_catalog_derivations(
         &self,
         library_id: Uuid,
