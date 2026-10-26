@@ -1,5 +1,4 @@
-// The root route, the addresses open without a session, the session gate
-// everything else sits under, and the authorisation a native client asks for.
+// The root, the routes outside a session, the session gate and /authorize.
 import { createRootRoute, createRoute, redirect } from "@tanstack/react-router";
 
 import { ensureSession } from "../../api";

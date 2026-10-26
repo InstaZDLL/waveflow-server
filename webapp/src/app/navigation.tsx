@@ -1,5 +1,4 @@
-// The rail and the phone's bar: the brand, which entries an account sees, and
-// the tab switch that waits for its destination's first answer.
+// The brand, the rail and the phone's bar, and the tab switch that waits.
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useRef, useState } from "react";

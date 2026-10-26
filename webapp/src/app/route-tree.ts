@@ -1,4 +1,4 @@
-// The route tree: every route in the order the router matches them.
+// The route tree: every route, in the order the router matches them.
 import {
   albumRoute,
   albumsRoute,

@@ -1,5 +1,4 @@
-// The frames every screen sits inside: the root, and the signed-in shell
-// with its rail, its bars and the player.
+// The root frame, and the signed-in shell: rail, bars and the player.
 import { Outlet, useMatches } from "@tanstack/react-router";
 import { useEffect } from "react";
 

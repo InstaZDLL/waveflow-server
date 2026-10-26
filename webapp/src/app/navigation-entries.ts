@@ -1,5 +1,4 @@
-// The rail's entries: the groups they are filed under, their labels and icons,
-// and the addresses they open.
+// The rail's entries: their groups, labels, icons and addresses.
 import type { IconName } from "../components/icons";
 import type { TranslationKey } from "../state/i18n";
 

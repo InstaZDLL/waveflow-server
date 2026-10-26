@@ -1,5 +1,4 @@
-// Maintenance and its sections, and the addresses those sections had before
-// they moved under it.
+// Maintenance and its sections, and the addresses they had before it.
 import { createRoute, redirect } from "@tanstack/react-router";
 
 import { AttentionPage, isAttentionCategory } from "../../pages/attention-page";

@@ -1,5 +1,4 @@
-// The sheet behind the phone bar's seventh slot: the entries the bar has no
-// room for.
+// The sheet behind the phone bar's More slot: what the bar has no room for.
 import { Link } from "@tanstack/react-router";
 import type { MouseEvent, RefObject } from "react";
 

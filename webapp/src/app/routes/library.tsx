@@ -1,5 +1,4 @@
-// The catalogue's routes: albums, artists, songs, genres, folders, search,
-// the account's own lists and listening, and the track editor.
+// The catalogue's routes, the account's lists and listening, the editor.
 import { createRoute } from "@tanstack/react-router";
 
 import { TrackEditorPage } from "../../components/track-editor";

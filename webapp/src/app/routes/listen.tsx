@@ -1,5 +1,4 @@
-// The listening routes: what plays now, the queue, a random draw, radio and
-// podcasts.
+// The listening routes: now playing, the queue, random, radio, podcasts.
 import { createRoute } from "@tanstack/react-router";
 
 import { PlayingPage } from "../../pages/playing-page";
