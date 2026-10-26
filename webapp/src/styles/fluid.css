@@ -158,7 +158,10 @@
   --fe-surface-2: #fff;
   --fe-ink: #1b1a17;
   --fe-ink-2: #46433d;
-  --fe-ink-3: #625e56;
+  /* #625e56 until the tinted grounds were measured: on Midnight, Lavender
+     and Crimson's deepest tone it fell to 4.41–4.47:1. One step darker holds
+     4.62 on the worst of them (`themes-contrast.test.ts`). */
+  --fe-ink-3: #5f5b53;
   --fe-hairline: rgb(27 26 23 / 9%);
   --fe-hairline-strong: rgb(27 26 23 / 16%);
   --fe-tone-1: rgb(27 26 23 / 4%);
@@ -193,6 +196,14 @@
   --fe-bg: #000;
   --fe-surface: #0a0a0c;
   --fe-surface-2: #121216;
+}
+
+/* Sunset's amber 700 is the lightest of the light accents and its ground the
+   warmest: together they read 4.29:1, short of AA for the links and kickers
+   the accent is spent on. A fifth of the 800 stop takes it to 4.58 and keeps
+   the orange; the palette itself stays the desktop's. */
+:root:not(.dark)[data-theme="sunset-light"] {
+  --accent: color-mix(in srgb, var(--accent-700) 80%, var(--accent-800));
 }
 
 /* ── Ground and atmosphere ───────────────────────────────────── */
