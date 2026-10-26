@@ -190,8 +190,10 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
             "text/html",
             b"<html><body>not a cover</body></html>".to_vec(),
         ),
-        "/cover-to-private" => redirect("http://10.255.255.1/cover.jpg"),
-        "/cover-to-mapped-private" => redirect("http://[::ffff:192.168.1.1]/cover.jpg"),
+        // Over https, so that the address check is the only rule that refuses
+        // the hop: a plain-http hop would be refused for its scheme first.
+        "/cover-to-private" => redirect("https://10.255.255.1/cover.jpg"),
+        "/cover-to-mapped-private" => redirect("https://[::ffff:192.168.1.1]/cover.jpg"),
         // Streamed, so no length is declared and the ceiling has to be met
         // while reading.
         "/big.xml" => {
