@@ -98,7 +98,7 @@ impl Default for BrowsePage {
 ///
 /// This is the single implementation of the ten Subsonic `getAlbumList2` modes,
 /// and it lives in the domain services rather than in the facade for two
-/// reasons. The facade used to sort in Rust over [`DomainServices::catalog_snapshot`],
+/// reasons. The facade used to sort in Rust over [`DomainServices::catalog_snapshot`](crate::services::DomainServices::catalog_snapshot),
 /// which materialises every folder, artist, album *and track* the tenant can
 /// see on each call — `byGenre` then rescanned every track once per album, and
 /// `songCount` needed the whole track list just to be counted. And the native

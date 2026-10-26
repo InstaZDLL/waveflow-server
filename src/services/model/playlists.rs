@@ -82,7 +82,7 @@ pub enum UnresolvedReason {
     Duplicate,
 }
 
-/// Optional fields a playlist update may blank out. See [`ShareClear`].
+/// Optional fields a playlist update may blank out. See [`ShareClear`](crate::services::ShareClear).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlaylistClear {
     pub comment: bool,
