@@ -530,6 +530,13 @@ refresh tries again, because the addresses still differ. A feed that stops
 naming a cover has it forgotten. Plain http is allowed for a cover exactly
 when `WAVEFLOW_PODCAST_ALLOW_HTTP` allows it for the feed.
 
+Two fetches of one channel's cover can be in flight at once — the
+subscription's, in the background, and a refresh's — so the write that records
+one names what its fetch assumed: the channel still names the address it came
+from (or, to forget a cover, names none), and `artwork_fetched_at` is still
+what it was when the fetch began. Otherwise the cover is dropped and the newer
+state stands; its `artwork` row names nothing, and the sweep collects it.
+
 **A3 — episodes show their channel's cover.** An episode's own
 `itunes:image` is not fetched: a refresh keeps up to five hundred episodes, and
 fetching one image each would make the cover traffic proportional to the
