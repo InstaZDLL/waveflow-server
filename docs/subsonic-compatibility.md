@@ -364,14 +364,28 @@ lists episode bookmarks after the track ones, their `entry` the episode
   The schema requires the attribute, and a private feed carries its
   subscriber's token in its path as often as in its query. Episodes carry no
   enclosure address at all: they are played from the server.
-- **No cover art**: a channel carries `originalImageUrl`, the feed's own
-  address, and no `coverArt` — the server does not fetch it.
+- **Cover art, fetched by the server** (RFC-025, amended). A channel carries
+  `coverArt`, the hash of the copy of the feed's cover the server fetched into
+  the artwork store, and every episode carries its channel's — an episode's own
+  `itunes:image` is not fetched. `getCoverArt` serves it to every account, as
+  every account reads the channels. Both are absent until a fetch succeeds,
+  and when `WAVEFLOW_REMOTE_ARTWORK` is off. **Changed values**: there was no
+  `coverArt` on a channel or an episode before, and `originalImageUrl`, the
+  feed's own address for the cover, is now given only to an account holding
+  `podcastRole`, as `channel.url` is — a private feed's cover can carry its
+  subscriber's token. Both are optional in the schema.
+- **Internet radio stations carry no `coverArt`**, though a station may now
+  have an image set through the native API: `InternetRadioStation` defines no
+  such field, and the frozen contract is left as it was.
+  `createInternetRadioStation` takes no image, and `updateInternetRadioStation`
+  leaves a station's image as it is rather than clearing it.
 - **A feed that cannot be read** answers `createPodcastChannel` with error 0
   and a generic message; nothing is stored.
 
 To check in the next campaign: that DSub and Symfonium list channels and play a
-downloaded episode through `streamId`, and that a client which never sees
-`podcastRole="true"` keeps hiding its podcast screens.
+downloaded episode through `streamId`, that a client which never sees
+`podcastRole="true"` keeps hiding its podcast screens, and that both show a
+channel's and an episode's `coverArt` through `getCoverArt`.
 
 ## The replay this alignment required
 

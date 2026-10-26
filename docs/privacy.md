@@ -3,22 +3,25 @@
 Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
 the code is the authority if the two ever disagree: `src/outbound.rs`,
-`src/enrichment.rs`, `src/portrait.rs`, `src/lrclib.rs`, `src/podcast.rs` and
-`src/scrobblers/`.
+`src/enrichment.rs`, `src/portrait.rs`, `src/lrclib.rs`, `src/podcast.rs`,
+`src/services/remote_artwork.rs` and `src/scrobblers/`.
 
-**A server left at its defaults sends nothing.** Booting makes no request, and
-no background task does unless an operator configured it *and*, for
-scrobbling, an account linked a destination — or, for podcasts, an
+**A server left at its defaults sends nothing on its own.** Booting makes no
+request, and no background task does unless an operator configured it *and*,
+for scrobbling, an account linked a destination — or, for podcasts, an
 administrator subscribed to a feed. The clients are built at boot;
-building one sends nothing.
+building one sends nothing. The one request a default server makes is one an
+account asks for by name: the image of a radio station, fetched once when the
+account sets it (below; `WAVEFLOW_REMOTE_ARTWORK=off` stops it).
 
 ## Rules every request follows
 
 All outbound clients are built by one function, `src/outbound.rs`:
 
 - **No redirect is followed by the client.** A provider cannot bounce a
-  request to another host. The one exception is the podcast fetcher, below:
-  it follows at most five redirects by hand, and puts every hop through the
+  request to another host. The one exception is the podcast fetcher, below,
+  and the podcast covers and station images fetched under its rules: it
+  follows at most five redirects by hand, and puts every hop through the
   same scheme and public-address checks as the first address before
   contacting it.
 - **`HTTP_PROXY` and the other proxy variables are ignored.**
@@ -35,9 +38,10 @@ All outbound clients are built by one function, `src/outbound.rs`:
   verdict, never with its URL or its body.
 
 The server never turns a request it receives into a request of its own, with
-one exception an operator switches on: an administrator subscribing to a
-podcast, or asking for an episode, below. Radio
-station URLs are stored and handed to clients, never fetched; remote entries in
+two exceptions: an administrator subscribing to a podcast, or asking for an
+episode, which an operator switches on; and an account setting a radio
+station's image, which an operator can switch off — both below. Radio
+station stream URLs are stored and handed to clients, never fetched; remote entries in
 an imported playlist are dropped; FFmpeg and ffprobe are only ever given local
 files inside a library or the data directory, and are told so: every input is
 passed with `-protocol_whitelist file`, so neither can open a network or
@@ -213,9 +217,9 @@ one interval after boot, not at boot — and when one asks for an episode.
 the server's disk, so the podcast host sees the server, once, and no listener.
 
 **What.** A plain `GET` with the server's User-Agent and nothing about who
-asked. The channel's cover address is stored and handed to clients, and never
-fetched by the server; a client that shows it fetches it from the feed's host
-itself.
+asked. The channel's cover is fetched by the server too — see the next
+section — and handed to clients by hash, so no client needs to contact the
+feed's host for it.
 
 **Kept.** The channel's title, description, links and cover address; each
 episode's title, description, dates, duration and enclosure address; the
@@ -226,6 +230,50 @@ account is shown at most its scheme and host. Enclosure addresses are shown to
 nobody. No feed or enclosure address, and no part of a response, is written to
 the log.
 
+## Podcast covers and station images
+
+**On by default; `WAVEFLOW_REMOTE_ARTWORK=off` stops both**
+([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md), amended). Off, the
+addresses are still stored and nothing is fetched; images already fetched stay
+shown.
+
+**Which hosts.**
+
+- **A podcast cover**: the host the feed names for its image — the feed's own
+  host, or another one the feed chose, such as a CDN — and every redirect it
+  answers with, up to five. Only while `WAVEFLOW_PODCASTS` is on.
+- **A station image**: the host in the address an account typed as its
+  station's image, and its redirects, up to five. Nothing is fetched for a
+  station without one.
+
+Every address is held to the podcast fetcher's rules, above: http or https
+(plain http for a cover only while `WAVEFLOW_PODCAST_ALLOW_HTTP` is on; always
+for a station image, as for its stream), no user name or password, the name
+resolved first and every address public, the connection pinned to the address
+checked, each redirect checked before it is followed. An answer is read up to
+10 MiB within 20 seconds, and kept only if its bytes are a JPEG, PNG or WebP.
+
+**When.** A podcast cover when a channel is subscribed, and on a refresh that
+finds the feed naming a cover the server does not hold — a new address, one
+whose last fetch failed, a file gone from the store, or a copy older than a
+week; an unchanged address is otherwise not fetched again. A station image
+once, when an account sets or changes it, and again only when the account
+saves the station after a fetch that failed. Never at boot, never on a timer of
+its own, and **never while anybody listens**: the image is served from the
+server's artwork store, so the image's host sees the server, once, and no
+listener — which is why the browser does not load it itself.
+
+**What.** A plain `GET` with the server's User-Agent and nothing about who
+asked or who listens.
+
+**Kept.** The image, under `artwork/` in the data directory, named by the hash
+of its bytes. A cover's address is shown to administrators only, as the feed's
+is — a private feed's cover can carry its subscriber's token — and every other
+account is given the hash alone. A station's image address is shown to the
+account the station belongs to, and its image is served to that account alone.
+Deleting the channel or the station releases the image, and the artwork sweep
+removes it. No image address, and no part of an answer, is written to the log.
+
 ## What the browser contacts
 
 The embedded web client loads nothing from a third party: its fonts are
@@ -235,7 +283,9 @@ to that (RFC-019 decision 2). Two exceptions, each deliberate:
 
 - **Internet radio.** The browser plays a station straight from the station's
   own server, at the URL a user entered. That host sees the listener's address.
-  Subsonic clients receive the same URLs and connect themselves.
+  Subsonic clients receive the same URLs and connect themselves. A station's
+  image is not part of this: the server fetched it, and the browser reads it
+  from the server.
 - **Linking Last.fm**, above: a navigation the user starts.
 
 **`/reference`**, the API reference page, was a third until RFC-023: it loaded
