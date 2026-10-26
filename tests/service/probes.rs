@@ -197,6 +197,17 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     );
 }
 
+/// A request is named by this server, whatever the caller proposed.
+///
+/// The name goes in every `http_request` span, and `CLAUDE.md` allows no header
+/// into a trace sink. A well-formed id is no safer than a malformed one for
+/// that purpose — reuse somebody else's and the trace record stops telling two
+/// callers apart — so the header is dropped on the way in and one is minted
+/// here, whatever arrived.
+///
+/// The round trip below is the only way to see which id the server actually
+/// used: `PropagateRequestIdLayer` puts it on the response, which is also what
+/// keeps correlation possible — an upstream records the name it was given.
 #[tokio::test]
 async fn a_caller_cannot_name_its_own_request() {
     let (_temp, config, state) = test_app().await;

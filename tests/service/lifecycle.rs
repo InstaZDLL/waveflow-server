@@ -97,17 +97,6 @@ async fn sqlite_and_instance_key_backup_restore_as_one_consistent_bundle() {
     assert!(restored.db.integrity_check().await.unwrap());
 }
 
-/// A request is named by this server, whatever the caller proposed.
-///
-/// The name goes in every `http_request` span, and `CLAUDE.md` allows no header
-/// into a trace sink. A well-formed id is no safer than a malformed one for
-/// that purpose — reuse somebody else's and the trace record stops telling two
-/// callers apart — so the header is dropped on the way in and one is minted
-/// here, whatever arrived.
-///
-/// The round trip below is the only way to see which id the server actually
-/// used: `PropagateRequestIdLayer` puts it on the response, which is also what
-/// keeps correlation possible — an upstream records the name it was given.
 /// A boot that is refused closes the database before it says so.
 ///
 /// Dropping a pool is not closing it: sqlx closes each connection on its own
