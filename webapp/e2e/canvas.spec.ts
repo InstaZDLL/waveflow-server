@@ -125,6 +125,12 @@ test("asks once whether a track carries a canvas, not once per visit", async ({
   expect(tickets).toHaveLength(1);
 });
 
+/**
+ * The loop over the cover, rendered as the desktop renders it: muted, looping
+ * and hidden from assistive technology, with the cover underneath keeping its
+ * name. It steps aside when motion is reduced, and when the browser cannot play
+ * it — the cover shows then, never an empty frame.
+ */
 test("plays a track's canvas over its cover, and steps aside for it", async ({
   page,
 }) => {

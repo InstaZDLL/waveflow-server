@@ -111,12 +111,15 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
  * not.
  *
  * **The held request below is what makes this test able to fail.** Every other
- * mock in this file answers instantly, and against an instant answer a guarded
- * form and an unguarded one look identical: the save is over before a second
- * click or a second edit could begin. A request held open until this test lets
- * it go leaves the window open for as long as the assertions need — where a
- * fixed delay would be a race the slowest runner loses (constat de revue,
- * pris; the two tests above it hold their requests the same way).
+ * mock under `fixtures/` answers instantly, and against an instant answer a
+ * guarded form and an unguarded one look identical: the save is over before a
+ * second click or a second edit could begin. A request held open until this
+ * test lets it go leaves the window open for as long as the assertions need —
+ * where a fixed delay would be a race the slowest runner loses (a review
+ * finding, taken; the two credential tests in `settings.spec.ts`, "shows the
+ * clients that can read the library, and revokes one" and "sends one rotation
+ * however many times the button is pressed", hold their requests the same
+ * way).
  */
 test("closes the form while a station is saving, and leaves listening alone", async ({
   page,

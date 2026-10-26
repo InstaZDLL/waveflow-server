@@ -503,7 +503,8 @@ test("scopes the catalogue to the active library, and hides the picker when ther
 
   // The picker exists in the sidebar and in the mobile header; only one of the
   // two is on screen, so the locator has to say which — as the appearance test
-  // above already does for theme and language.
+  // in `shell.spec.ts` ("renders the studio shell and persists appearance
+  // preferences") already does for theme and language.
   const chrome =
     testInfo.project.name === "mobile"
       ? page.locator(".mobile-header")

@@ -13,9 +13,10 @@ test.beforeEach(resetAndMockApi);
  *
  * Until 2026-09-15 `LyricsList` declared a `snake_case` envelope the server has
  * never sent, so this page threw on its first property and showed nothing at
- * all. Nothing caught it because the mock above was written from that type. An
- * assertion on the words themselves is what tells the two shapes apart: an
- * empty sheet renders the same "no lyrics" line under either name.
+ * all. Nothing caught it because the mock in `fixtures/api.ts` was written
+ * from that type. An assertion on the words themselves is what tells the two
+ * shapes apart: an empty sheet renders the same "no lyrics" line under either
+ * name.
  */
 test("shows the words a track travels with", async ({ page }) => {
   mock.lyricSheets.set("song-1", [
@@ -174,10 +175,10 @@ test("centres a sheet that lands after the head has moved", async ({
     // waiting on the route — so the test would not fail, it would hang. The
     // reset in `beforeEach` guards the tests after this one, not this one.
     //
-    // The two gates added with the credential panels, and the canvas one
-    // above them, carry the same hazard and are left as they are: wrapping
-    // them means restructuring three tests this branch has no other reason to
-    // touch.
+    // The two gates added with the credential panels (`settings.spec.ts`), and
+    // the canvas one (`canvas.spec.ts`), carry the same hazard and are left as
+    // they are: wrapping them means restructuring three tests this branch has
+    // no other reason to touch.
     release();
   }
   const column = page.locator(".lyrics-view ol");

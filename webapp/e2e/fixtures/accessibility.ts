@@ -36,7 +36,8 @@ export async function expectNoWcagViolations(page: Page) {
  * The light themes on the 2.0 structure. fluid.css lays the same rail, heads
  * and player bar over a light material, so every page the dark redesign
  * recomposed is audited again in the light: the home page has its own test
- * above, and these follow the pages and the dialogs added since.
+ * in `shell.spec.ts` ("keeps the light appearance readable"), and the tests
+ * that call this follow the pages and the dialogs added since.
  */
 export function chooseLightTheme(page: Page) {
   return page.addInitScript(() => {

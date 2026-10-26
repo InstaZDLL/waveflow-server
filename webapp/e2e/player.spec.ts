@@ -194,12 +194,6 @@ test("shows queue artwork beside tracks without crowding times or actions", asyn
   expect(narrow.overflow).toBeLessThanOrEqual(1);
 });
 
-/**
- * The loop over the cover, rendered as the desktop renders it: muted, looping
- * and hidden from assistive technology, with the cover underneath keeping its
- * name. It steps aside when motion is reduced, and when the browser cannot play
- * it — the cover shows then, never an empty frame.
- */
 /** Saved positions use their song artwork and a shared time column. */
 test("shows saved tracks with artwork and one aligned time column", async ({
   page,
@@ -314,10 +308,11 @@ test("keeps the shuffle still when a track in it is favourited", async ({
  *
  * Asserted on the rendered line rather than on the mock that fed it. The mock
  * carries these fields because `Song` declares them, so it agrees with the
- * declaration by construction — exactly the loop the lyrics test above was
- * written against, where a `snake_case` envelope the server never sent was
- * confirmed by a mock built from it. What the server really answers is
- * pinned in `tests/native_api.rs`, against the bytes of a WAV.
+ * declaration by construction — exactly the loop the lyrics test in
+ * `lyrics.spec.ts` ("shows the words a track travels with") was written
+ * against, where a `snake_case` envelope the server never sent was confirmed
+ * by a mock built from it. What the server really answers is pinned in
+ * `tests/native_api.rs`, against the bytes of a WAV.
  */
 test("says what the file is on the playing screen", async ({ page }) => {
   await page.goto("/playing");

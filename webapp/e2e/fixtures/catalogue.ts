@@ -344,8 +344,9 @@ export type Recipient = "listenbrainz" | "maloja" | "lastfm";
  * What `lastfm_unavailability` answers — a case, not a sentence.
  *
  * It used to be the server's own English prose, copied here and asserted
- * verbatim below, so the test agreed with the server about a string neither of
- * them should have been sending to a client that ships in two languages.
+ * verbatim in `scrobbling.spec.ts`, so the test agreed with the server about a
+ * string neither of them should have been sending to a client that ships in
+ * two languages.
  */
 const NO_PUBLIC_URL = "browser_journey_needs_https";
 
