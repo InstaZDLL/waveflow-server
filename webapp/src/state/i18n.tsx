@@ -412,7 +412,7 @@ const en = {
   "radio.listen": "Listen",
   "radio.stop": "Stop",
   "radio.visit": "Station page",
-  "radio.empty": "No stations yet. Add one above.",
+  "radio.empty": "No stations yet. Add one to keep it here.",
   "radio.addressRefused": "An address must start with http:// or https://.",
   "radio.mixedContent":
     "This page is served over HTTPS, so your browser will refuse a clear-text stream.",
@@ -421,6 +421,14 @@ const en = {
   "radio.deleteError": "The station could not be deleted.",
   "radio.playbackError":
     "That station could not be played. The server never connects to it, so this is between your browser and the station.",
+  "radio.stations": "Stations",
+  "radio.newTitle": "Add a station",
+  "radio.editTitle": "Edit “{name}”",
+  "radio.listenTo": "Listen to {name}",
+  "radio.stopNamed": "Stop {name}",
+  "radio.actions": "Actions for {name}",
+  "radio.confirmDelete":
+    "Delete the station “{name}”? Its address and image are forgotten.",
   "credential.password": "Dedicated Subsonic password",
   "credential.rotate": "Rotate credential",
   "credential.copy": "Copy this API key now:",
@@ -659,10 +667,17 @@ const en = {
   "artistImage.deezerBusy":
     "Your previous search is still running. Try again in a moment.",
   "artistImage.deezerExpired": "These results have expired. Search again.",
-  "folders.count": { one: "{count} folder", other: "{count} folders" },
+  "folders.count": {
+    one: "{count} folder created in this library",
+    other: "{count} folders created in this library",
+  },
   "folders.where": "Folder path",
   "folders.subfolders": "Folders",
   "folders.noLibrary": "No library is available to this account.",
+  "folders.none": "No folder has been created in this library yet.",
+  "folders.system": "Kept by WaveFlow",
+  "folders.systemNote":
+    "To sort gathers every track that is in no folder. WaveFlow keeps it itself: it is not counted among the folders above, and it cannot be renamed, moved or deleted.",
   "filed.unfiled": "To sort",
   "filed.automatic": "Automatic",
   "filed.topLevel": "Top level",
@@ -1130,6 +1145,11 @@ const en = {
   "podcasts.refreshing": "The feeds are being fetched again.",
   "podcasts.reload": "Reload",
   "podcasts.empty": "No podcasts yet.",
+  "podcasts.emptyDetail":
+    "An administrator subscribes to a show’s feed here. The server downloads its episodes, and every account on this server can listen to them.",
+  "podcasts.addFirst": "Add your first podcast",
+  "podcasts.channels": "Shows",
+  "podcasts.showing": "Showing the episodes of {title}.",
   "podcasts.noEpisodes": "This feed has no episodes.",
   "podcasts.episodes": {
     one: "{count} episode",
@@ -1570,7 +1590,7 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "radio.listen": "Écouter",
   "radio.stop": "Arrêter",
   "radio.visit": "Page de la station",
-  "radio.empty": "Aucune station. Ajoutez-en une ci-dessus.",
+  "radio.empty": "Aucune station. Ajoutez-en une pour la retrouver ici.",
   "radio.addressRefused": "Une adresse doit commencer par http:// ou https://.",
   "radio.mixedContent":
     "Cette page est servie en HTTPS : votre navigateur refusera un flux en clair.",
@@ -1579,6 +1599,14 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "radio.deleteError": "La station n’a pas pu être supprimée.",
   "radio.playbackError":
     "Cette station n’a pas pu être lue. Le serveur ne s’y connecte jamais : cela se passe entre votre navigateur et la station.",
+  "radio.stations": "Stations",
+  "radio.newTitle": "Ajouter une station",
+  "radio.editTitle": "Modifier « {name} »",
+  "radio.listenTo": "Écouter {name}",
+  "radio.stopNamed": "Arrêter {name}",
+  "radio.actions": "Actions pour {name}",
+  "radio.confirmDelete":
+    "Supprimer la station « {name} » ? Son adresse et son image sont oubliées.",
   "credential.password": "Mot de passe Subsonic dédié",
   "credential.rotate": "Renouveler l’identifiant",
   "credential.copy": "Copiez cette clé API maintenant :",
@@ -1818,10 +1846,17 @@ const fr: Record<TranslationKey, TranslationValue> = {
     "Votre recherche précédente est encore en cours. Réessayez dans un instant.",
   "artistImage.deezerExpired":
     "Ces résultats ont expiré. Relancez la recherche.",
-  "folders.count": { one: "{count} dossier", other: "{count} dossiers" },
+  "folders.count": {
+    one: "{count} dossier créé dans cette bibliothèque",
+    other: "{count} dossiers créés dans cette bibliothèque",
+  },
   "folders.where": "Chemin du dossier",
   "folders.subfolders": "Dossiers",
   "folders.noLibrary": "Aucune bibliothèque n’est accessible à ce compte.",
+  "folders.none": "Aucun dossier n’a encore été créé dans cette bibliothèque.",
+  "folders.system": "Tenu par WaveFlow",
+  "folders.systemNote":
+    "À ranger réunit toutes les pistes qui ne sont dans aucun dossier. WaveFlow le tient lui-même : il n’est pas compté parmi les dossiers ci-dessus, et il ne peut être ni renommé, ni déplacé, ni supprimé.",
   "filed.unfiled": "À ranger",
   "filed.automatic": "Automatique",
   "filed.topLevel": "Premier niveau",
@@ -2301,6 +2336,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "podcasts.refreshing": "Les flux sont en cours de récupération.",
   "podcasts.reload": "Recharger",
   "podcasts.empty": "Aucun podcast pour l’instant.",
+  "podcasts.emptyDetail":
+    "Un administrateur abonne le serveur au flux d’une émission ici. Le serveur télécharge ses épisodes, et tous les comptes de ce serveur peuvent les écouter.",
+  "podcasts.addFirst": "Ajouter votre premier podcast",
+  "podcasts.channels": "Émissions",
+  "podcasts.showing": "Épisodes de {title} affichés.",
   "podcasts.noEpisodes": "Ce flux ne contient aucun épisode.",
   "podcasts.episodes": {
     one: "{count} épisode",

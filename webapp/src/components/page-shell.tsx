@@ -22,6 +22,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { useI18n } from "../state/i18n";
+import { Icon, type IconName } from "./icons";
 
 /** Eight placeholder cards, keyed by name because their order is their only identity. */
 const SKELETON_KEYS = [
@@ -139,10 +140,32 @@ export function PageHeader({
  * second copy of four lines is how two screens start saying "nothing here"
  * with different spacing.
  */
-export function EmptyState({ message }: { message: string }) {
+export function EmptyState({
+  message,
+  icon,
+  detail,
+  children,
+}: {
+  message: string;
+  /** A discreet symbol over the message, for a page that is new to someone. */
+  icon?: IconName;
+  /** What the page is for, said under the message while there is nothing. */
+  detail?: string;
+  /** The way out of the empty state, for those who may take it. */
+  children?: ReactNode;
+}) {
   return (
-    <div className="empty-state">
-      <p>{message}</p>
+    <div className={`empty-state${icon || detail ? " empty-state-rich" : ""}`}>
+      {icon ? (
+        <span className="empty-state-icon">
+          <Icon name={icon} size={28} />
+        </span>
+      ) : null}
+      <p className={icon || detail ? "empty-state-title" : undefined}>
+        {message}
+      </p>
+      {detail ? <p className="empty-state-detail">{detail}</p> : null}
+      {children ? <div className="empty-state-actions">{children}</div> : null}
     </div>
   );
 }

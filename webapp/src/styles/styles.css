@@ -4131,3 +4131,318 @@ button.danger {
 .lyrics-credit {
   margin-top: var(--space-2);
 }
+
+/* ── Workspace pages ───────────────────────────────────────────
+   Radio, Podcasts, Folders and the Maintenance hub manage something rather
+   than present it, and a wide window is room for more of their cards and
+   rows. Their routes mark `main` with `.workspace` (see `staticData.layout`
+   in `main.tsx`); every other page keeps the contained column. The class
+   outranks every sheet's plain `main` rule, and on a phone `min()` resolves
+   to the full width those rules already give, gutters untouched. */
+main.workspace {
+  width: min(100%, 150rem);
+}
+
+/* The radio page: one card per station, its image, its name and the button
+   that plays it; the rest behind the card's "⋯" menu. */
+.station-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 12.5rem), 1fr));
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Two to a row on a phone: one card the width of the screen is a poster,
+   and a short list of stations should be seen at a glance. */
+@media (max-width: 820px) {
+  .station-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+
+  .station-art .station-play {
+    right: var(--space-2);
+    bottom: var(--space-2);
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
+.station-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.station-art {
+  position: relative;
+}
+
+.station-cover {
+  width: 100%;
+}
+
+/* On the image, where the eye already is, as a cover's play button is. */
+.station-art .station-play {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: grid;
+  width: 3rem;
+  min-height: 3rem;
+  padding: 0;
+  place-items: center;
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--fe-accent-ink, var(--bg));
+  box-shadow: var(--shadow);
+}
+
+.station-art .station-play:hover {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.station-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.station-title {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.station-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-url {
+  overflow: hidden;
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-note {
+  font-size: var(--text-xs);
+}
+
+.station-link {
+  justify-self: start;
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+
+/* A card's "⋯": quiet until it is pointed at, a full target all the same. */
+.action-menu-button {
+  display: grid;
+  width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0;
+  place-items: center;
+  border-color: transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.action-menu-button:hover,
+.action-menu-button[aria-expanded="true"] {
+  color: var(--text);
+}
+
+.track-menu-item.danger {
+  background: transparent;
+  color: var(--danger);
+}
+
+.track-menu-item.danger:hover,
+.track-menu-item.danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* The station form, in a dialog drawn as the folder picker is. */
+.station-dialog[open] {
+  display: grid;
+  gap: var(--space-4);
+  width: min(34rem, calc(100vw - 2rem));
+  max-height: min(48rem, calc(100dvh - 2rem));
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+/* A page's blocks rise into place as it opens (`fe-rise` in fluid.css), and
+   a dialog mounted later as one of them rose with them: invisible for the
+   delay, then fading in under the reader's click. A dialog opens at once. */
+main > section > dialog {
+  animation: none;
+}
+
+.station-dialog::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.station-dialog header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.station-dialog h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.station-dialog .radio-form {
+  margin: 0;
+}
+
+/* The form's notes sit in its grid gap, without margins of their own. */
+.station-dialog .radio-form > :where(p) {
+  margin: 0;
+}
+
+/* An empty page that is new to somebody: a discreet symbol, what the page
+   is for, and the first step when the reader may take it. */
+.empty-state-rich {
+  align-content: center;
+  gap: var(--space-3);
+  padding: var(--space-8) var(--space-6);
+}
+
+.empty-state-icon {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.empty-state-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.empty-state-detail {
+  margin: 0;
+  max-width: 36rem;
+  font-size: var(--text-sm);
+}
+
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+/* The folders page: To sort apart from the folders it does not count. */
+.folder-none {
+  margin: 0 0 var(--space-6);
+}
+
+.folder-system {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.folder-system h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.folder-system-note {
+  max-width: 48rem;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.folder-system .folder-list {
+  margin-bottom: 0;
+}
+
+/* Drawn in outline, not filled: a tray WaveFlow keeps, not a folder. */
+.folder-row.system {
+  border-style: dashed;
+  background: transparent;
+}
+
+/* Read by a screen reader, not drawn: a status the eye gets from the page. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The podcasts page in two panels from 1024 px of window: the shows on the
+   left, the open show's episodes beside them. The same breakpoint as
+   `TWO_PANELS` in `podcasts-page.tsx`, which also opens the first show when
+   none is named. Below it the episodes stack under the list, as before. */
+@media (width >= 64rem) {
+  .podcast-workspace {
+    display: grid;
+    /* A third of the room for the shows, never more than 22rem: at 1024 px
+       the episodes, which carry the buttons, keep the larger share. */
+    grid-template-columns: minmax(14rem, min(22rem, 34%)) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-6);
+  }
+
+  /* A narrow column: the name over the buttons, rather than beside them. */
+  .podcast-workspace .podcast-channels li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    padding-inline: var(--space-3);
+  }
+
+  .podcast-workspace .podcast-channels li > .resource-with-cover {
+    flex: 1 1 100%;
+  }
+
+  .podcast-workspace .podcast-channels li.selected {
+    background: var(--fe-tone-2, var(--panel-strong));
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+
+  /* Held in view while the list scrolls, and scrolled on its own when it is
+     longer than the window, above the player bar: a long feed never pushes
+     the shows out of reach. */
+  .podcast-workspace .podcast-episodes {
+    position: sticky;
+    top: var(--space-6);
+    max-height: calc(100dvh - 9rem);
+    margin-top: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
