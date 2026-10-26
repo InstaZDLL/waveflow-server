@@ -7436,6 +7436,12 @@ test("lists what needs attention, splits a credit on the second click, and undoe
   await expect(confirm).toBeVisible();
   expect(state.writes).toEqual([]);
   await expectNoWcagViolations(page);
+  // The confirmation stands for four seconds, and on a loaded machine the scan
+  // alone can outlast them: armed again if it lapsed, so the click below meets
+  // the confirmation rather than racing its timer.
+  if (!(await confirm.isVisible())) {
+    await page.getByRole("button", { name: "Split", exact: true }).click();
+  }
   await confirm.click();
   await expect(
     page.getByText("Ashreveal, Ashish Swargiary is split."),

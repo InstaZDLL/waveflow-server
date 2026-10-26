@@ -583,14 +583,17 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   );
   await page.getByLabel("Feed address").fill("https://feeds.example.org/night.xml");
   await page.getByRole("button", { name: "Subscribe" }).click();
-  expect(podcastWrites).toEqual(["subscribe https://feeds.example.org/night.xml"]);
+  // The route sees the write after the click returns, not before it: polled.
+  await expect
+    .poll(() => podcastWrites)
+    .toEqual(["subscribe https://feeds.example.org/night.xml"]);
 
   const episodes = page.locator(".podcast-episodes");
   await expect(episodes.getByRole("heading", { name: "Night Shift" })).toBeVisible();
   const first = episodes.locator("li").filter({ hasText: "First night" });
   await expect(first).toContainText("not downloaded");
   await first.getByRole("button", { name: "Download" }).click();
-  expect(podcastWrites).toContain("download episode-1");
+  await expect.poll(() => podcastWrites).toContain("download episode-1");
   await expect(first).toContainText("ready");
 
   // The saved place is shown, and playing resumes from it.
@@ -604,7 +607,7 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   await expect.poll(() => bookmarkWrites.map((write) => write.id)).toContain("episode-1");
 
   await page.getByRole("button", { name: "Refresh every feed" }).click();
-  expect(podcastWrites).toContain("refresh");
+  await expect.poll(() => podcastWrites).toContain("refresh");
 });
 
 /**
