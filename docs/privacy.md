@@ -203,8 +203,9 @@ is checked before it is contacted:
   rules as the portrait fetcher above; the connection is pinned to the address
   that was checked, and a redirect is checked the same way before it is
   followed — and refused if it would leave https for http, whatever
-  `WAVEFLOW_PODCAST_ALLOW_HTTP` says, so a private feed's token is never
-  handed on in clear;
+  `WAVEFLOW_PODCAST_ALLOW_HTTP` says, so a token sent over https is not
+  handed on in clear by a redirect (an address typed or listed as http is
+  sent in clear from the start, which is what the switch admits);
 - a feed is at most `WAVEFLOW_PODCAST_MAX_FEED_BYTES` (16 MiB) within
   `WAVEFLOW_PODCAST_FEED_TIMEOUT_SECS` (20); an episode at most
   `WAVEFLOW_PODCAST_MAX_EPISODE_BYTES` (1 GiB) within
