@@ -96,7 +96,7 @@ impl DomainServices {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ServiceError::NotFound)?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_upload() {
             // Blurred onto 404 by the surface above. A caller who may not

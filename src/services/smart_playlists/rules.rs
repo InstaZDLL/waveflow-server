@@ -263,7 +263,7 @@ impl SmartOperator {
 impl SmartSort {
     /// The sort keys, in the order their codes are numbered: entry `i` sorts
     /// ascending under code `2i + 1` and descending under `2i + 2`. The codes
-    /// are what [`EVALUATE`] compares against, so this order and the `ORDER BY`
+    /// are what [`EVALUATE`](crate::services::smart_playlists::statement::EVALUATE) compares against, so this order and the `ORDER BY`
     /// list there are one table written twice; `the_sort_codes_match_the_statement`
     /// holds them together.
     const ALL: [(&'static str, SmartSort); 11] = [
@@ -281,7 +281,7 @@ impl SmartSort {
     ];
 }
 
-/// The code [`EVALUATE`] reads for "no sort": its fixed tie-break alone.
+/// The code [`EVALUATE`](crate::services::smart_playlists::statement::EVALUATE) reads for "no sort": its fixed tie-break alone.
 const SORT_NONE: i64 = 0;
 /// The code for a random order, whatever direction was asked.
 pub(super) const SORT_RANDOM: i64 = 99;
@@ -379,7 +379,7 @@ impl SmartRules {
         serde_json::to_string(self).expect("rule serialization cannot fail")
     }
 
-    /// The code [`EVALUATE`] orders by.
+    /// The code [`EVALUATE`](crate::services::smart_playlists::statement::EVALUATE) orders by.
     pub(super) fn sort_code(&self) -> i64 {
         match self.sort {
             None => SORT_NONE,
@@ -528,7 +528,7 @@ fn date_ms(value: &str) -> Option<i64> {
     Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp_millis())
 }
 
-/// One condition as [`EVALUATE`] binds it.
+/// One condition as [`EVALUATE`](crate::services::smart_playlists::statement::EVALUATE) binds it.
 ///
 /// `o` is the elementary comparison: `eq`, `ne`, `has`, `hasnt`, `sw`, `ew` for
 /// text; `eq`, `ne`, `gt`, `lt`, `bt` for numbers; `ge` and `lt` for dates.

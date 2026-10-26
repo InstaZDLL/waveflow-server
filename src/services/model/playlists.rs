@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::catalog::SongItem;
-use crate::playlist_file::TextEncoding;
+use crate::library::playlist_file::TextEncoding;
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlaylistItem {
@@ -82,7 +82,7 @@ pub enum UnresolvedReason {
     Duplicate,
 }
 
-/// Optional fields a playlist update may blank out. See [`ShareClear`].
+/// Optional fields a playlist update may blank out. See [`ShareClear`](crate::services::ShareClear).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PlaylistClear {
     pub comment: bool,

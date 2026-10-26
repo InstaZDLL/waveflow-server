@@ -195,7 +195,7 @@ async fn a_purge_is_explicit_and_waits_for_no_scan() {
             owner,
             library.id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await
@@ -339,7 +339,7 @@ async fn a_purge_can_be_taken_back_and_tells_every_journal_when_it_lands() {
             owner,
             library.id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await

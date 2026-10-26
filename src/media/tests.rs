@@ -82,8 +82,8 @@ async fn media_paths_reject_parent_components_and_symlinks() {
     let root = temp.path().join("library");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("safe.wav"), b"audio").unwrap();
-    let none = crate::link_roots::LinkRoots::default();
-    let policy = crate::link_roots::LinkPolicy::default();
+    let none = crate::library::link_roots::LinkRoots::default();
+    let policy = crate::library::link_roots::LinkPolicy::default();
     assert!(secure_track_path(&root, "safe.wav", &none, &policy)
         .await
         .is_ok());
@@ -139,8 +139,8 @@ async fn a_link_is_followed_into_an_allowed_folder_only() {
         eprintln!("skipped: this system will not let the test make a symbolic link");
         return;
     }
-    let allowed = crate::link_roots::LinkRoots::new(vec![farm.clone()]);
-    let following = crate::link_roots::LinkPolicy {
+    let allowed = crate::library::link_roots::LinkRoots::new(vec![farm.clone()]);
+    let following = crate::library::link_roots::LinkPolicy {
         follow_links: true,
         other_libraries: vec![neighbour.clone()],
     };
@@ -162,11 +162,11 @@ async fn a_link_is_followed_into_an_allowed_folder_only() {
             .is_err(),
         "a link inside the root is stored by its target, never by itself"
     );
-    let none = crate::link_roots::LinkRoots::default();
+    let none = crate::library::link_roots::LinkRoots::default();
     assert!(secure_track_path(&root, "farmed.wav", &none, &following)
         .await
         .is_err());
-    let not_following = crate::link_roots::LinkPolicy {
+    let not_following = crate::library::link_roots::LinkPolicy {
         follow_links: false,
         ..following
     };
@@ -203,8 +203,8 @@ async fn cache_pruning_removes_the_least_recently_used_file() {
         active_transcodes: std::sync::atomic::AtomicUsize::new(0),
         transcoding_available: true,
         ffmpeg_digest: String::new(),
-        link_roots: crate::link_roots::LinkRoots::default(),
-        subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
+        link_roots: crate::library::link_roots::LinkRoots::default(),
+        subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode::Off,
     };
     prune_cache(&inner).await;
     assert!(!old.exists());
@@ -352,8 +352,8 @@ fn a_media_service(dir: &std::path::Path) -> MediaService {
             active_transcodes: std::sync::atomic::AtomicUsize::new(0),
             transcoding_available: true,
             ffmpeg_digest: String::new(),
-            link_roots: crate::link_roots::LinkRoots::default(),
-            subsonic_replay_gain: crate::replay_gain::ReplayGainMode::Off,
+            link_roots: crate::library::link_roots::LinkRoots::default(),
+            subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode::Off,
         }),
     }
 }

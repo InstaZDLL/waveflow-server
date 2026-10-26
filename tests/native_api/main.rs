@@ -8,16 +8,16 @@ use axum::http::Request;
 use axum::http::StatusCode;
 use futures_util::future::BoxFuture;
 use tower::ServiceExt;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
 use waveflow_server::services::ServiceError;
 use waveflow_server::services::MAX_HISTORY_LIMIT;
 use waveflow_server::services::{
     ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleVerdict,
 };
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryVisibility;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.

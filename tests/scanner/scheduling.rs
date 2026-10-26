@@ -11,7 +11,7 @@ async fn a_watched_change_is_scanned_once_it_settles() {
     })
     .await;
     scan_once(&state, owner, library.clone()).await;
-    let watcher = waveflow_server::watcher::spawn(
+    let watcher = waveflow_server::library::watcher::spawn(
         state.scanner.clone(),
         state.db.clone(),
         std::time::Duration::from_millis(200),
@@ -88,11 +88,16 @@ async fn a_scan_the_watcher_cannot_queue_stays_pending() {
         },
     )]);
     let delay = std::time::Duration::from_millis(10);
-    let mut settle = waveflow_server::watcher::Settle::new(delay);
+    let mut settle = waveflow_server::library::watcher::Settle::new(delay);
     let start = tokio::time::Instant::now();
     settle.touch(ghost, start);
-    waveflow_server::watcher::dispatch_due(&mut settle, &watched, &state.scanner, start + delay)
-        .await;
+    waveflow_server::library::watcher::dispatch_due(
+        &mut settle,
+        &watched,
+        &state.scanner,
+        start + delay,
+    )
+    .await;
     assert!(
         settle.is_pending(ghost),
         "a change whose scan could not be queued was dropped"
@@ -319,7 +324,7 @@ async fn a_library_is_watched_only_when_it_asks_and_in_the_folder_that_changed()
         "a switch queues no scan"
     );
     assert!(state.db.watched_libraries().await.unwrap().is_empty());
-    let watcher = waveflow_server::watcher::spawn(
+    let watcher = waveflow_server::library::watcher::spawn(
         state.scanner.clone(),
         state.db.clone(),
         std::time::Duration::from_millis(200),

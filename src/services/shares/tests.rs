@@ -57,7 +57,7 @@ async fn a_share(state: &crate::AppState) -> (String, Uuid, Uuid) {
     )
     .bind(share.to_string())
     .bind(account.to_string())
-    .bind(crate::security::token_hash(&token).as_slice())
+    .bind(crate::auth::security::token_hash(&token).as_slice())
     .execute(pool)
     .await
     .expect("share");

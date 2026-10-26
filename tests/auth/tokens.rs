@@ -18,7 +18,7 @@ async fn long_lived_native_api_tokens_authenticate_and_honor_revocation() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 // The actor the audit entry records: here the account itself.
                 actor_id: user_id,
                 user_id,
@@ -103,7 +103,7 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
     let theirs = state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 // The actor the audit entry records.
                 actor_id: stranger,
                 user_id: stranger,
@@ -122,7 +122,7 @@ async fn an_account_manages_its_own_clients_and_cannot_widen_one() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 // The actor the audit entry records: here the account itself.
                 actor_id: owner,
                 user_id: owner,
@@ -305,7 +305,7 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 // The actor the audit entry records: here the account itself.
                 actor_id: boss,
                 user_id: boss,
@@ -405,7 +405,7 @@ async fn a_self_minted_credential_expires_and_the_admin_path_is_bounded_too() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 // The actor the audit entry records: here the account itself.
                 actor_id: owner_of_ttl_user,
                 user_id: owner_of_ttl_user,

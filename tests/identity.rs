@@ -3,11 +3,11 @@
 //! Split out of `v2_foundations.rs`.
 
 use tempfile::TempDir;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryVisibility;
 use waveflow_server::Config;
 
 // Not every target uses every fixture, and a shared module is not dead
@@ -301,10 +301,10 @@ async fn a_changed_track_spec_drops_every_relocation_hint_without_a_rescan() {
     // computed under another: two specs can evaluate to the same string, and
     // the hint would then hand a new file this track's identity — and this
     // track's favourite. So the stale values go.
-    let altered = waveflow_server::pid::PidSpecs {
+    let altered = waveflow_server::library::pid::PidSpecs {
         album: config.pid.album.clone(),
         artist: config.pid.artist.clone(),
-        track: waveflow_server::pid::PidSpec::parse("folder,title", true).unwrap(),
+        track: waveflow_server::library::pid::PidSpec::parse("folder,title", true).unwrap(),
     };
     let rescans = state.db.reconcile_catalog_identity(&altered).await.unwrap();
     assert_eq!(
@@ -398,10 +398,11 @@ async fn a_changed_artist_spec_carries_the_favourite_onto_the_new_identifier() {
         .await
         .unwrap();
 
-    let altered = waveflow_server::pid::PidSpecs {
+    let altered = waveflow_server::library::pid::PidSpecs {
         album: config.pid.album.clone(),
         track: config.pid.track.clone(),
-        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+        artist: waveflow_server::library::pid::PidSpec::parse("albumartistid,title", false)
+            .unwrap(),
     };
     let expected = altered.artist_id(library_id, "Nova Kern");
     assert_ne!(
@@ -434,10 +435,11 @@ async fn a_remap_whose_targets_chain_does_not_change_who_owns_what() {
     let (_temp, config, state) = test_app().await;
     let (owner, library_id) = remap_fixture(&state, &config, "chained").await;
 
-    let altered = waveflow_server::pid::PidSpecs {
+    let altered = waveflow_server::library::pid::PidSpecs {
         album: config.pid.album.clone(),
         track: config.pid.track.clone(),
-        artist: waveflow_server::pid::PidSpec::parse("albumartistid,title", false).unwrap(),
+        artist: waveflow_server::library::pid::PidSpec::parse("albumartistid,title", false)
+            .unwrap(),
     };
     // Built by hand: no spec this engine can parse makes one artist's new
     // identifier another's old one, because only `albumartistid` carries a
@@ -474,10 +476,10 @@ async fn two_artists_folding_onto_one_identifier_keep_a_single_favourite() {
     // `title` names nothing for an artist, so every artist evaluates to the
     // same empty string and the whole library folds onto one identifier. A
     // degenerate spec, and exactly the shape the collision handling is for.
-    let altered = waveflow_server::pid::PidSpecs {
+    let altered = waveflow_server::library::pid::PidSpecs {
         album: config.pid.album.clone(),
         track: config.pid.track.clone(),
-        artist: waveflow_server::pid::PidSpec::parse("title", false).unwrap(),
+        artist: waveflow_server::library::pid::PidSpec::parse("title", false).unwrap(),
     };
     let folded = altered.artist_id(library_id, "Fold One");
     assert_eq!(folded, altered.artist_id(library_id, "Fold Two"));

@@ -3,7 +3,7 @@
 //! Split out of `subsonic.rs`; the wire contract is frozen, so this moved nothing.
 
 use super::*;
-use crate::sign_in::{Refusal, Surface};
+use crate::auth::sign_in::{Refusal, Surface};
 
 pub(super) async fn authenticate(
     state: &AppState,
@@ -28,7 +28,8 @@ pub(super) async fn authenticate(
     }
 
     let username = params.first("u").ok_or_else(missing)?;
-    let Ok(reservation) = guard.reserve(address, &crate::sign_in::canonical_account(username))
+    let Ok(reservation) =
+        guard.reserve(address, &crate::auth::sign_in::canonical_account(username))
     else {
         guard.note(Surface::Subsonic, Refusal::Throttled);
         return Err(auth_error());

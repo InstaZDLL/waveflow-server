@@ -120,7 +120,7 @@ async fn subsonic_sign_in(router: &axum::Router, credentials: &str, peer: &str) 
 #[tokio::test]
 async fn failed_sign_ins_are_limited_per_address_and_account() {
     let (_temp, app) = guarded(&[]).await;
-    for _ in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
+    for _ in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW {
         let refused =
             native_sign_in(&app.router, "Guarded", &app.wrong, "198.51.100.7", None).await;
         assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
@@ -189,10 +189,10 @@ async fn concurrent_guesses_cannot_slip_past_the_limit() {
         .iter()
         .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
         .count();
-    assert_eq!(checked, waveflow_server::sign_in::FAILURES_PER_WINDOW);
+    assert_eq!(checked, waveflow_server::auth::sign_in::FAILURES_PER_WINDOW);
     assert_eq!(
         throttled,
-        40 - waveflow_server::sign_in::FAILURES_PER_WINDOW
+        40 - waveflow_server::auth::sign_in::FAILURES_PER_WINDOW
     );
 }
 
@@ -244,7 +244,7 @@ async fn an_unknown_account_costs_a_verification() {
 #[tokio::test]
 async fn subsonic_failures_are_limited_per_address_and_case_folded() {
     let (_temp, app) = guarded(&[]).await;
-    for index in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
+    for index in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW {
         let name = if index % 2 == 0 { "Guarded" } else { "GUARDED" };
         assert_eq!(
             subsonic_sign_in(&app.router, &format!("u={name}&p=wrong"), "198.51.100.7").await,
@@ -301,7 +301,7 @@ async fn a_trusted_proxy_names_the_client_and_a_stranger_cannot() {
                 .status()
         }
     };
-    for index in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
+    for index in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW {
         let forwarded = format!("192.0.2.{index}, 198.51.100.7");
         assert_eq!(
             sign_in(app.wrong.clone(), "10.0.0.2", forwarded).await,
@@ -322,7 +322,7 @@ async fn a_trusted_proxy_names_the_client_and_a_stranger_cannot() {
         StatusCode::OK
     );
 
-    for index in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW {
+    for index in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW {
         assert_eq!(
             sign_in(
                 app.wrong.clone(),
@@ -395,7 +395,7 @@ async fn an_unreadable_hash_is_not_a_line_per_attempt() {
     let router = waveflow_server::app(&config, state);
 
     let password = Uuid::new_v4().to_string();
-    for _ in 0..waveflow_server::sign_in::FAILURES_PER_WINDOW + 5 {
+    for _ in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW + 5 {
         let refused = native_sign_in(&router, "Damaged", &password, "198.51.100.40", None).await;
         assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
     }

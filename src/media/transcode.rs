@@ -29,7 +29,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 use super::{file_input, MediaError, MediaInner, MediaService, OutputFormat, MEDIA_CACHE_CONTROL};
-use crate::replay_gain::Gain;
+use crate::media::replay_gain::Gain;
 
 const STREAM_CHUNK_SIZE: usize = 64 * 1024;
 const TRANSCODE_PROFILE_VERSION: &str = "waveflow-ffmpeg-v1";

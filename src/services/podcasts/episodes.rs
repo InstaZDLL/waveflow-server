@@ -263,7 +263,7 @@ impl DomainServices {
     pub async fn podcast_stream_source(
         &self,
         episode_id: Uuid,
-    ) -> Result<Option<crate::catalog::StreamTrack>, ServiceError> {
+    ) -> Result<Option<crate::storage::catalog::StreamTrack>, ServiceError> {
         let row = sqlx::query(
             "SELECT file_name, content_hash, suffix, duration_ms FROM podcast_episode \
              WHERE id=? AND status='completed'",
@@ -274,7 +274,7 @@ impl DomainServices {
         let Some(row) = row else {
             return Ok(None);
         };
-        Ok(Some(crate::catalog::StreamTrack {
+        Ok(Some(crate::storage::catalog::StreamTrack {
             id: episode_id,
             library_id: Uuid::nil(),
             library_root: self.podcasts.settings.dir.clone(),
@@ -287,8 +287,8 @@ impl DomainServices {
             // The server's own folder, written by its downloads: no link in
             // it is ever followed (RFC-021), and an episode carries no
             // ReplayGain tags (RFC-022).
-            link_policy: crate::link_roots::LinkPolicy::default(),
-            replay_gain: crate::replay_gain::ReplayGainTags::default(),
+            link_policy: crate::library::link_roots::LinkPolicy::default(),
+            replay_gain: crate::media::replay_gain::ReplayGainTags::default(),
         }))
     }
 
@@ -298,7 +298,7 @@ impl DomainServices {
         &self,
         user_id: Uuid,
         id: Uuid,
-    ) -> Result<Option<crate::catalog::StreamTrack>, ServiceError> {
+    ) -> Result<Option<crate::storage::catalog::StreamTrack>, ServiceError> {
         if let Some(track) = self.db.stream_track_for_user(user_id, id).await? {
             return Ok(Some(track));
         }

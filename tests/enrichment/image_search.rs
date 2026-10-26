@@ -190,12 +190,12 @@ async fn send(
 #[tokio::test]
 async fn candidates_are_previewed_by_the_server_and_picked_from_a_live_search() {
     use axum::http::Method;
-    use waveflow_server::database::{AccountRole, LibraryRole};
+    use waveflow_server::storage::database::{AccountRole, LibraryRole};
 
     let (_temp, config, state, gallery, owner, bjork) = picker(false, true).await;
     let password = uuid::Uuid::new_v4().to_string();
-    let hash = waveflow_server::security::hash_password(&password).unwrap();
-    let now = waveflow_server::authentication::now_ms();
+    let hash = waveflow_server::auth::security::hash_password(&password).unwrap();
+    let now = waveflow_server::auth::authentication::now_ms();
     sqlx::query("UPDATE account SET username='gallery-owner', password_hash=? WHERE id=?")
         .bind(&hash)
         .bind(owner.to_string())
@@ -487,7 +487,7 @@ async fn a_search_stops_at_its_deadline() {
 #[tokio::test]
 async fn the_sweep_takes_spent_searches_and_their_previews_only() {
     let (_temp, _config, state, _gallery, owner, bjork) = picker(false, true).await;
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     let stale = uuid::Uuid::new_v4().to_string();
     let fetching = uuid::Uuid::new_v4().to_string();
     for (id, by, at) in [
@@ -569,7 +569,7 @@ async fn the_sweep_takes_spent_searches_and_their_previews_only() {
 #[tokio::test]
 async fn boot_deletes_the_searches_left_fetching() {
     let (_temp, config, state, _gallery, owner, bjork) = picker(false, true).await;
-    let now = waveflow_server::authentication::now_ms();
+    let now = waveflow_server::auth::authentication::now_ms();
     for (complete, expires_at) in [(0, None), (1, Some(now + 60 * 60 * 1000))] {
         sqlx::query(
             "INSERT INTO artist_image_search \
@@ -630,7 +630,7 @@ async fn previews_keep_deezer_s_pace() {
 async fn a_search_outlives_the_ordinary_request_timeout() {
     let (_temp, config, state, gallery, owner, bjork) = picker(false, false).await;
     let password = uuid::Uuid::new_v4().to_string();
-    let hash = waveflow_server::security::hash_password(&password).unwrap();
+    let hash = waveflow_server::auth::security::hash_password(&password).unwrap();
     sqlx::query("UPDATE account SET username='slow-owner', password_hash=? WHERE id=?")
         .bind(&hash)
         .bind(owner.to_string())

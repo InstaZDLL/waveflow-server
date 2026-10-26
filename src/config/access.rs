@@ -46,7 +46,7 @@ pub(super) fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpN
             entry
                 .parse::<ipnet::IpNet>()
                 .or_else(|_| entry.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
-                .map(crate::sign_in::trusted_network)
+                .map(crate::auth::sign_in::trusted_network)
                 .map_err(|_| anyhow::anyhow!("invalid WAVEFLOW_TRUSTED_PROXIES entry {entry:?}"))
         })
         .collect()

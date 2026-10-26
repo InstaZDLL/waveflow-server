@@ -18,8 +18,8 @@ use uuid::Uuid;
 use super::{
     attach_song_relations, song_from_row, BrowsePage, DomainServices, ServiceError, SongItem,
 };
-use crate::authentication::now_ms;
-use crate::database::LibraryRole;
+use crate::auth::authentication::now_ms;
+use crate::storage::database::LibraryRole;
 
 /// The deepest a folder may sit: the root is 0, a folder at the root is 1.
 pub const MAX_FOLDER_DEPTH: i64 = 16;

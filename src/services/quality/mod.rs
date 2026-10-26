@@ -374,7 +374,7 @@ struct Pending {
     full_hash: String,
     root_path: String,
     relative_path: String,
-    link_policy: crate::link_roots::LinkPolicy,
+    link_policy: crate::library::link_roots::LinkPolicy,
     duration_ms: i64,
     created_at: i64,
 }

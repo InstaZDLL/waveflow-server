@@ -36,14 +36,14 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use tower::ServiceExt as _;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::LibraryRecord;
+use waveflow_server::auth::authentication::now_ms;
 use waveflow_server::config::ScrobbleLimits;
-use waveflow_server::database::LibraryVisibility;
 use waveflow_server::services::{
     ScrobbleEnvelope, ScrobbleProvider, ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict,
     ServiceError,
 };
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::LibraryVisibility;
 use waveflow_server::AppState;
 
 // Not every target uses every fixture, and a shared module is not dead code
@@ -324,7 +324,7 @@ async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> D
 /// their own threads after the drop has returned, and the last of them
 /// checkpoints the WAL under an exclusive lock. The next `initialize` raced
 /// that close, and on a loaded Windows runner it outwaited `busy_timeout` and
-/// failed with `database is locked`. `cli.rs` closes before it restarts for
+/// failed with `database is locked`. `cli/key.rs` closes before it restarts for
 /// the same reason.
 async fn stop(state: AppState) {
     state.db.pool().close().await;
@@ -345,9 +345,9 @@ fn declaring(
     config.destinations = declared
         .iter()
         .map(|(provider, name, base)| {
-            let url = waveflow_server::scrobblers::validate_destination(base, true)
+            let url = waveflow_server::remote::scrobblers::validate_destination(base, true)
                 .expect("a destination the suite chose");
-            let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+            let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
             waveflow_server::config::ScrobbleDestination {
                 provider: *provider,
                 name: (*name).to_owned(),

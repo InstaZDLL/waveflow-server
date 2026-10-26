@@ -1,43 +1,25 @@
 //! WaveFlow Server v2 library surface.
 
+// The library exists so the integration suite drives the router `main`
+// serves, and its doc comments link private items freely: a constant, a
+// projection macro, the method a public one defers to. Those links resolve
+// in an editor and under `cargo doc --document-private-items`; what CI's
+// `cargo doc` gate catches is a link that resolves nowhere.
+#![allow(rustdoc::private_intra_doc_links)]
+
 pub mod api;
 mod app;
-pub mod authentication;
-pub mod catalog;
+pub mod auth;
 pub mod cli;
 pub mod config;
-pub mod credit_split;
-pub mod database;
-pub mod enrichment;
-pub mod link_roots;
-pub mod lrclib;
-pub mod lyrics;
+pub mod http;
+pub mod library;
 pub mod media;
-pub mod migration_backup;
-pub mod natural_order;
-pub mod oauth;
-pub mod outbound;
-pub mod pid;
-pub mod playlist_file;
-pub mod podcast;
-pub mod portrait;
-pub mod public_share;
 pub mod quality;
-pub mod reference;
-pub mod replay_gain;
-pub mod scanner;
-pub mod scrobblers;
-pub mod security;
-pub mod security_headers;
+pub mod remote;
 pub mod services;
-pub mod setup_token;
-pub mod sign_in;
-pub mod stream_ticket;
+pub mod storage;
 pub mod subsonic;
-pub mod sync;
-pub mod tags;
-pub mod watcher;
-pub mod webui;
 
 pub use app::{app, initialize, shutdown_signal, ApiDoc, AppState, OPENAPI_JSON_PATH, SCALAR_PATH};
 pub use config::Config;

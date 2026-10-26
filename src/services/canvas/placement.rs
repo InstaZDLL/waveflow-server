@@ -193,7 +193,7 @@ impl DomainServices {
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(ServiceError::NotFound)?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_upload() {
             return Err(ServiceError::Forbidden);
@@ -311,9 +311,9 @@ impl DomainServices {
         origin_device_id: Option<Uuid>,
         now: i64,
     ) -> Result<(), ServiceError> {
-        crate::catalog::record_library_event(
+        crate::storage::catalog::record_library_event(
             tx,
-            crate::catalog::LibraryChange {
+            crate::storage::catalog::LibraryChange {
                 library_id: parse_uuid(library_id.to_owned())?,
                 entity_type: "track",
                 entity_id: track_id,
@@ -350,8 +350,9 @@ impl DomainServices {
             .fetch_optional(&mut *tx)
             .await?
             .ok_or(ServiceError::NotFound)?;
-            let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
-                .map_err(|_| ServiceError::Invalid)?;
+            let role =
+                crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+                    .map_err(|_| ServiceError::Invalid)?;
             if !role.may_upload() {
                 return Err(ServiceError::Forbidden);
             }
@@ -507,7 +508,7 @@ impl DomainServices {
         .fetch_optional(self.db.pool())
         .await?
         .ok_or(ServiceError::NotFound)?;
-        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+        let role = crate::storage::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
             .map_err(|_| ServiceError::Invalid)?;
         if !role.may_upload() || row.try_get::<i64, _>("accepts_canvas")? == 0 {
             return Err(ServiceError::Forbidden);

@@ -3,12 +3,12 @@
 //! Split out of `v2_foundations.rs`.
 
 use sqlx::Row;
-use waveflow_server::authentication::now_ms;
-use waveflow_server::catalog::ApplyOutcome;
-use waveflow_server::catalog::LibraryRecord;
-use waveflow_server::database::AccountRole;
-use waveflow_server::database::LibraryVisibility;
-use waveflow_server::security;
+use waveflow_server::auth::authentication::now_ms;
+use waveflow_server::auth::security;
+use waveflow_server::storage::catalog::ApplyOutcome;
+use waveflow_server::storage::catalog::LibraryRecord;
+use waveflow_server::storage::database::AccountRole;
+use waveflow_server::storage::database::LibraryVisibility;
 
 // Not every target uses every fixture, and a shared module is not dead
 // code for being partly unused here.
@@ -72,7 +72,7 @@ async fn job(
     state: &waveflow_server::AppState,
     owner: uuid::Uuid,
     scan: uuid::Uuid,
-) -> waveflow_server::catalog::ScanJobRecord {
+) -> waveflow_server::storage::catalog::ScanJobRecord {
     state
         .db
         .scan_job_for_user(owner, scan)
@@ -129,7 +129,7 @@ async fn settled(
     state: &waveflow_server::AppState,
     owner: uuid::Uuid,
     scan: uuid::Uuid,
-) -> waveflow_server::catalog::ScanJobRecord {
+) -> waveflow_server::storage::catalog::ScanJobRecord {
     for _ in 0..500 {
         let record = job(state, owner, scan).await;
         if record.status == "completed" || record.status == "failed" {

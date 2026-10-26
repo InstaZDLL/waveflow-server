@@ -81,7 +81,7 @@ pub async fn list_history(
 ) -> Result<Json<Vec<crate::services::HistoryItem>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     let limit = query.limit.unwrap_or(200);
-    if !(1..=crate::sync::MAX_SYNC_LIMIT).contains(&limit) {
+    if !(1..=crate::storage::sync::MAX_SYNC_LIMIT).contains(&limit) {
         return Err(ApiError::Validation);
     }
     state

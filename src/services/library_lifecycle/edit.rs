@@ -209,7 +209,7 @@ impl DomainServices {
         // the job queued, and the next boot runs it (`ScanManager::boot`).
         self.scanner.spawn(
             scan_id,
-            crate::catalog::LibraryRecord {
+            crate::storage::catalog::LibraryRecord {
                 id: library_id,
                 name: name.unwrap_or(before.library.name),
                 root_path: root.unwrap_or(before.library.root_path),

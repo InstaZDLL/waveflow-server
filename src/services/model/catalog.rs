@@ -328,7 +328,7 @@ pub struct ArtistDetail {
     /// while the artist is not one of the album's own artists — "Appears on"
     /// (RFC-022 decision 3).
     ///
-    /// Filled by [`DomainServices::artist_page`] alone, like the enrichment:
+    /// Filled by [`DomainServices::artist_page`](crate::services::DomainServices::artist_page) alone, like the enrichment:
     /// the Subsonic `getArtist` path has nowhere to put it, and a client that
     /// syncs every artist would pay for a query it never reads.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -336,7 +336,7 @@ pub struct ArtistDetail {
     /// What metadata enrichment says about this artist — RFC-011 decision 11.
     ///
     /// Always present on `GET /api/v2/artists/{id}`, whose answer comes from
-    /// [`DomainServices::artist_page`]. Left out of the Subsonic `getArtist`
+    /// [`DomainServices::artist_page`](crate::services::DomainServices::artist_page). Left out of the Subsonic `getArtist`
     /// path, which renders its own nodes: clients that sync call it for every
     /// artist, and asking providers about the whole catalogue at sync time is
     /// the prefill decision 6 refuses.

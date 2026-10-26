@@ -15,7 +15,7 @@
 //! handed out with an id a client could not follow.
 
 use super::*;
-use crate::enrichment::{CachedArtist, Outcome, Provider};
+use crate::remote::enrichment::{CachedArtist, Outcome, Provider};
 
 /// How many neighbours the native artist page carries.
 pub const ARTIST_PAGE_SIMILAR: usize = 20;
@@ -93,7 +93,7 @@ impl DomainServices {
         // refresh scheduled, and an expired miss is not "nobody knows" but
         // "being asked again" — `pending`, as decision 11 defines it. Stale
         // content still shows, and `ready` wins over both.
-        let now = crate::authentication::now_ms();
+        let now = crate::auth::authentication::now_ms();
         let answered = rows.iter().filter(|row| row.expires_at > now).count();
         let state = state_of(
             bio.is_some() || image.is_some() || banner.is_some() || similar.is_some(),

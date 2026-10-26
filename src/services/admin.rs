@@ -397,7 +397,7 @@ impl DomainServices {
         let record = self
             .db
             .create_api_token(
-                crate::database::NewApiToken {
+                crate::storage::database::NewApiToken {
                     actor_id,
                     user_id: account_id,
                     name,

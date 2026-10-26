@@ -185,7 +185,7 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
     let router = waveflow_server::app(&config, state.clone());
     let token = login_token(&router, "cover-guard", &password).await;
 
-    use waveflow_server::portrait::Refusal;
+    use waveflow_server::remote::portrait::Refusal;
     let cases = [
         ("/huge.jpg", Refusal::TooLarge, "declared over the ceiling"),
         (
@@ -225,14 +225,14 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
     // And each for its own reason, asked of the fetcher itself: a refusal and
     // an unreachable host store the same nothing, and only the reason tells
     // a checked hop from one that was attempted and happened to fail.
-    let policy = waveflow_server::podcast::FetchPolicy {
-        addresses: waveflow_server::portrait::AddressPolicy::AllowLoopback,
+    let policy = waveflow_server::remote::podcast::FetchPolicy {
+        addresses: waveflow_server::remote::portrait::AddressPolicy::AllowLoopback,
         allow_http: false,
         timeout: std::time::Duration::from_secs(10),
     };
     for (cover, refusal, why) in cases {
         let url = url::Url::parse(&format!("{}{cover}", host.base)).unwrap();
-        let fetched = waveflow_server::portrait::fetch_followed(&url, policy).await;
+        let fetched = waveflow_server::remote::portrait::fetch_followed(&url, policy).await;
         assert_eq!(fetched.err(), Some(refusal), "{why}");
     }
     assert_eq!(artwork_rows(&state).await, 0);

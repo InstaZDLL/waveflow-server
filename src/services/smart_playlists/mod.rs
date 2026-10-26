@@ -10,7 +10,7 @@
 //!    nothing that was refused is stored. The service methods take the parsed
 //!    type, never the JSON, so there is no way to reach the database with rules
 //!    that skipped the parse.
-//! 2. **One static statement.** [`EVALUATE`] is a single literal, assembled by
+//! 2. **One static statement.** [`EVALUATE`](crate::services::smart_playlists::statement::EVALUATE) is a single literal, assembled by
 //!    `concat!` like every projection here. The rules reach it as *one bound
 //!    value* — a JSON document SQLite takes apart with `json_each` — and every
 //!    field name, operator and logical connective in it is compared against a

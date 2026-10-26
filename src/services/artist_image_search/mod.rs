@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 use super::artist_images::{chooser_library, record_artist_change, write_choice};
 use super::{ArtistImageKind, DomainServices, ServiceError};
-use crate::authentication::now_ms;
-use crate::enrichment::{DeezerCandidate, Enrichment};
+use crate::auth::authentication::now_ms;
+use crate::remote::enrichment::{DeezerCandidate, Enrichment};
 
 /// How many candidates one search offers: two rows of a picker, and twenty
 /// image fetches at most behind one request.

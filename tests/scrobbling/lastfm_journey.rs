@@ -680,7 +680,7 @@ async fn a_journey_without_a_browser_needs_no_public_address() {
 
 /// The web journey never asks for a token of its own.
 ///
-/// This is the mistake `src/scrobblers/lastfm.rs` warns about in as many
+/// This is the mistake `src/remote/scrobblers/lastfm/` warns about in as many
 /// words: the two halves of Last.fm's protocol resemble each other enough to
 /// be mixed up, and a server that minted a token and then received a different
 /// one would hold the wrong one. Until `auth.getToken` existed there was

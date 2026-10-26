@@ -30,18 +30,19 @@ pub(super) fn parse_pid_spec(
     name: &str,
     default: &str,
     kind: PidSpecKind,
-) -> anyhow::Result<crate::pid::PidSpec> {
+) -> anyhow::Result<crate::library::pid::PidSpec> {
     let raw = std::env::var(name).unwrap_or_else(|_| default.to_owned());
-    crate::pid::PidSpec::parse(&raw, kind.allows_album_id())
+    crate::library::pid::PidSpec::parse(&raw, kind.allows_album_id())
         .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))
 }
 
-fn default_pid_spec(default: &str, kind: PidSpecKind) -> crate::pid::PidSpec {
-    crate::pid::PidSpec::parse(default, kind.allows_album_id()).expect("built-in pid spec default")
+fn default_pid_spec(default: &str, kind: PidSpecKind) -> crate::library::pid::PidSpec {
+    crate::library::pid::PidSpec::parse(default, kind.allows_album_id())
+        .expect("built-in pid spec default")
 }
 
-pub(super) fn default_pid_specs() -> crate::pid::PidSpecs {
-    crate::pid::PidSpecs {
+pub(super) fn default_pid_specs() -> crate::library::pid::PidSpecs {
+    crate::library::pid::PidSpecs {
         album: default_pid_spec(DEFAULT_PID_ALBUM, PidSpecKind::MayNotReferenceAlbumId),
         track: default_pid_spec(DEFAULT_PID_TRACK, PidSpecKind::MayReferenceAlbumId),
         artist: default_pid_spec(DEFAULT_PID_ARTIST, PidSpecKind::MayNotReferenceAlbumId),

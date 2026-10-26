@@ -78,7 +78,7 @@ async fn the_lifecycle_follows_the_role_model() {
             owner,
             library.id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await

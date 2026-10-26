@@ -81,9 +81,9 @@ impl Config {
         let purge_grace = Duration::from_secs(purge_grace_hours.saturating_mul(60 * 60));
         let link_roots = parse_link_roots(std::env::var_os("WAVEFLOW_LINK_ROOTS"))?;
         let subsonic_replay_gain = match std::env::var("WAVEFLOW_SUBSONIC_REPLAYGAIN") {
-            Err(_) => crate::replay_gain::ReplayGainMode::Off,
-            Ok(raw) if raw.trim().is_empty() => crate::replay_gain::ReplayGainMode::Off,
-            Ok(raw) => crate::replay_gain::ReplayGainMode::parse(&raw).ok_or_else(|| {
+            Err(_) => crate::media::replay_gain::ReplayGainMode::Off,
+            Ok(raw) if raw.trim().is_empty() => crate::media::replay_gain::ReplayGainMode::Off,
+            Ok(raw) => crate::media::replay_gain::ReplayGainMode::parse(&raw).ok_or_else(|| {
                 anyhow::anyhow!(
                     "invalid WAVEFLOW_SUBSONIC_REPLAYGAIN: expected off, track or album, found {raw:?}"
                 )
@@ -243,7 +243,7 @@ impl Config {
         let remote_artwork = RemoteArtworkSettings {
             enabled: parse_bool_env("WAVEFLOW_REMOTE_ARTWORK", true)?,
             timeout: Duration::from_secs(20),
-            addresses: crate::portrait::AddressPolicy::Public,
+            addresses: crate::remote::portrait::AddressPolicy::Public,
         };
         // Absent is empty; a value that is not UTF-8 refuses to boot, rather
         // than starting with no trusted proxy and counting every client behind
@@ -279,7 +279,7 @@ impl Config {
         // Parsed here rather than at first use: a spec that cannot be parsed —
         // a recursive `albumid` above all — would otherwise re-identify the
         // whole catalogue silently at the next scan. Refusing to boot says so.
-        let pid = crate::pid::PidSpecs {
+        let pid = crate::library::pid::PidSpecs {
             album: parse_pid_spec(
                 "WAVEFLOW_PID_ALBUM",
                 DEFAULT_PID_ALBUM,

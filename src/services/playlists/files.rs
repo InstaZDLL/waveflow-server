@@ -5,7 +5,7 @@ use super::*;
 impl DomainServices {
     /// Imports an `.m3u` or `.m3u8` file as a playlist of this account's.
     ///
-    /// The file is read by [`crate::playlist_file`]; what is left here is the
+    /// The file is read by [`crate::library::playlist_file`]; what is left here is the
     /// part that needs the catalogue — turning what an entry *says* into a
     /// track this account can actually reach.
     ///

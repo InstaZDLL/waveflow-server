@@ -18,17 +18,17 @@ pub struct CreateApiTokenRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct CreateApiTokenResponse {
     #[serde(flatten)]
-    pub token: crate::database::ApiTokenRecord,
+    pub token: crate::storage::database::ApiTokenRecord,
     /// Shown once. Only its SHA-256 hash is stored, so it cannot be recovered.
     pub secret: String,
 }
 
-#[utoipa::path(get, path = "/api/v2/admin/users/{username}/tokens", tag = "administration", params(("username" = String, Path)), responses((status = 200, body = [crate::database::ApiTokenRecord]), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/admin/users/{username}/tokens", tag = "administration", params(("username" = String, Path)), responses((status = 200, body = [crate::storage::database::ApiTokenRecord]), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn list_api_tokens(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<Vec<crate::database::ApiTokenRecord>>, ApiError> {
+) -> Result<Json<Vec<crate::storage::database::ApiTokenRecord>>, ApiError> {
     let actor = authenticated(&state, &headers, Access::Admin).await?;
     state
         .services
@@ -104,11 +104,11 @@ pub async fn revoke_api_token(
 /// Until now it needed the instance's administrator. A listener could not find
 /// out which clients held a credential on their own library, let alone revoke
 /// one — the material was there and visible nowhere.
-#[utoipa::path(get, path = "/api/v2/api-tokens", tag = "account", responses((status = 200, body = [crate::database::ApiTokenRecord]), (status = 401, body = ErrorResponse)))]
+#[utoipa::path(get, path = "/api/v2/api-tokens", tag = "account", responses((status = 200, body = [crate::storage::database::ApiTokenRecord]), (status = 401, body = ErrorResponse)))]
 pub async fn list_own_api_tokens(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<crate::database::ApiTokenRecord>>, ApiError> {
+) -> Result<Json<Vec<crate::storage::database::ApiTokenRecord>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
     state
         .services

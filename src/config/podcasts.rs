@@ -45,7 +45,7 @@ pub struct PodcastSettings {
     /// Which addresses a fetch may reach. Public ones in production, always;
     /// not an environment variable. The test suite's feeds live on loopback,
     /// and its fixture admits loopback for them alone.
-    pub addresses: crate::portrait::AddressPolicy,
+    pub addresses: crate::remote::portrait::AddressPolicy,
 }
 
 /// Remote artwork: the cover a podcast feed names, and the image an account
@@ -65,7 +65,7 @@ pub struct RemoteArtworkSettings {
     pub timeout: Duration,
     /// Which addresses a fetch may reach, as for podcasts: public ones in
     /// production, always, and loopback as well for the test suite's hosts.
-    pub addresses: crate::portrait::AddressPolicy,
+    pub addresses: crate::remote::portrait::AddressPolicy,
 }
 
 /// The podcast switch and its bounds (RFC-025 decision 7).
@@ -106,6 +106,6 @@ pub(super) fn parse_podcast_settings(
             1_800u64,
         )?),
         dir: data_dir.join("podcasts"),
-        addresses: crate::portrait::AddressPolicy::Public,
+        addresses: crate::remote::portrait::AddressPolicy::Public,
     })
 }

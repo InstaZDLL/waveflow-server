@@ -223,7 +223,7 @@ async fn account_with_token(
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 actor_id: id,
                 user_id: id,
                 name: "lifecycle",
@@ -277,7 +277,7 @@ async fn the_library_lifecycle_routes_answer_by_standing() {
             owner,
             library_id,
             listener,
-            waveflow_server::database::LibraryRole::Listener,
+            waveflow_server::storage::database::LibraryRole::Listener,
             now_ms(),
         )
         .await
@@ -481,7 +481,7 @@ async fn a_narrowed_admin_token_has_no_say_over_a_foreign_library() {
     state
         .db
         .create_api_token(
-            waveflow_server::database::NewApiToken {
+            waveflow_server::storage::database::NewApiToken {
                 actor_id: admin,
                 user_id: admin,
                 name: "write only",

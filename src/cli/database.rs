@@ -2,7 +2,7 @@
 //! bundle.
 
 use super::{BackupArgs, RestoreArgs};
-use crate::{database::Database, security, AppState};
+use crate::{auth::security, storage::database::Database, AppState};
 
 pub(super) async fn backup(state: &AppState, args: BackupArgs) -> anyhow::Result<()> {
     if args.output.exists() {

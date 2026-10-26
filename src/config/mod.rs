@@ -116,7 +116,7 @@ pub struct Config {
     /// `WAVEFLOW_SUBSONIC_REPLAYGAIN`: `off`, the default, `track` or
     /// `album`. A request overrides it with `replayGain=`; the original file
     /// is never transcoded to apply it.
-    pub subsonic_replay_gain: crate::replay_gain::ReplayGainMode,
+    pub subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
@@ -265,7 +265,7 @@ pub struct Config {
     /// instance configured differently from the run that built its catalogue
     /// schedules a full rescan rather than serving a catalogue keyed under a
     /// rule it no longer follows.
-    pub pid: crate::pid::PidSpecs,
+    pub pid: crate::library::pid::PidSpecs,
 }
 
 impl std::fmt::Debug for Config {

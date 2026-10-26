@@ -10,9 +10,9 @@ use super::*;
 /// and leaves the other recipients alone, because more than one test needs a
 /// second destination in the same queue.
 fn reaching(config: &mut waveflow_server::Config, base: &str) {
-    let url = waveflow_server::scrobblers::validate_destination(base, true)
+    let url = waveflow_server::remote::scrobblers::validate_destination(base, true)
         .expect("a destination the suite chose");
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config
         .destinations
         .retain(|declared| declared.provider != ScrobbleProvider::ListenBrainz);

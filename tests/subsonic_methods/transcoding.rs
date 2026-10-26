@@ -58,7 +58,7 @@ async fn a_format_the_facade_cannot_produce_falls_back_and_aac_is_produced() {
     run_scan(
         &state,
         owner,
-        waveflow_server::catalog::LibraryRecord {
+        waveflow_server::storage::catalog::LibraryRecord {
             id: library,
             name: "Formats".into(),
             root_path: root,
@@ -148,7 +148,7 @@ async fn a_subsonic_transcode_carries_the_tracks_replay_gain_when_asked() {
 
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    config.subsonic_replay_gain = waveflow_server::replay_gain::ReplayGainMode::Track;
+    config.subsonic_replay_gain = waveflow_server::media::replay_gain::ReplayGainMode::Track;
     let state = waveflow_server::initialize(&config).await.unwrap();
     let (owner, api_key) = subsonic_account(&state, "levelled").await;
     let music = config.data_dir.join("levelled-music");
@@ -186,7 +186,7 @@ async fn a_subsonic_transcode_carries_the_tracks_replay_gain_when_asked() {
     run_scan(
         &state,
         owner,
-        waveflow_server::catalog::LibraryRecord {
+        waveflow_server::storage::catalog::LibraryRecord {
             id: library,
             name: "levelled".into(),
             root_path: root,

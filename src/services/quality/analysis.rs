@@ -128,7 +128,7 @@ impl DomainServices {
                     full_hash: row.try_get("full_hash")?,
                     root_path: row.try_get("root_path")?,
                     relative_path: row.try_get("relative_path")?,
-                    link_policy: crate::link_roots::LinkPolicy::from_columns(
+                    link_policy: crate::library::link_roots::LinkPolicy::from_columns(
                         row.try_get("follow_links")?,
                         row.try_get::<Option<String>, _>("other_roots")?.as_deref(),
                     ),

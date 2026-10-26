@@ -26,7 +26,7 @@
 use std::path::Path;
 
 use super::*;
-use crate::podcast::{self, FetchPolicy};
+use crate::remote::podcast::{self, FetchPolicy};
 
 /// How many episodes `getNewestPodcasts` answers when it is not told, as the
 /// specification has it, and the most it answers.
@@ -135,7 +135,7 @@ pub struct EpisodeBookmark {
 pub enum PodcastFailure {
     Service(ServiceError),
     /// The feed could not be fetched or read, as a word from the fixed list
-    /// `src/podcast.rs` defines. Nothing was stored.
+    /// `src/remote/podcast/` defines. Nothing was stored.
     Feed(String),
 }
 

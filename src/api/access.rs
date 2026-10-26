@@ -76,14 +76,15 @@ pub(crate) async fn authenticated(
     state: &AppState,
     headers: &HeaderMap,
     access: Access,
-) -> Result<crate::authentication::AuthUser, ApiError> {
+) -> Result<crate::auth::authentication::AuthUser, ApiError> {
     let token = bearer_token(headers).ok_or(ApiError::Unauthorized)?;
     let user = state
         .auth
         .authenticate(token)
         .await
         .map_err(ApiError::from)?;
-    let role_ok = access != Access::Admin || user.role == crate::database::AccountRole::Admin;
+    let role_ok =
+        access != Access::Admin || user.role == crate::storage::database::AccountRole::Admin;
     if role_ok && access.granted_by(&user.scopes) {
         Ok(user)
     } else {
@@ -97,11 +98,11 @@ pub(crate) async fn authenticated(
 /// [`Access::Admin`]. A route that admits a narrower credential must not let
 /// the account's role stand in for what the credential lacks.
 pub(crate) fn library_actor(
-    user: &crate::authentication::AuthUser,
+    user: &crate::auth::authentication::AuthUser,
 ) -> crate::services::LibraryActor {
     crate::services::LibraryActor {
         id: user.id,
-        admin_credential: user.role == crate::database::AccountRole::Admin
+        admin_credential: user.role == crate::storage::database::AccountRole::Admin
             && Access::Admin.granted_by(&user.scopes),
     }
 }
@@ -127,11 +128,11 @@ pub(super) async fn mutation_context(
     state: &AppState,
     headers: &HeaderMap,
     user_id: Uuid,
-) -> Result<crate::sync::MutationContext, ApiError> {
+) -> Result<crate::storage::sync::MutationContext, ApiError> {
     let operation_id =
         optional_uuid_header(headers, OPERATION_ID_HEADER)?.unwrap_or_else(Uuid::new_v4);
     let origin_device_id = origin_device(state, headers, user_id).await?;
-    Ok(crate::sync::MutationContext {
+    Ok(crate::storage::sync::MutationContext {
         operation_id,
         origin_device_id,
     })

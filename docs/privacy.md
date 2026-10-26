@@ -2,9 +2,10 @@
 
 Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
-the code is the authority if the two ever disagree: `src/outbound.rs`,
-`src/enrichment.rs`, `src/portrait.rs`, `src/lrclib.rs`, `src/podcast.rs`,
-`src/services/remote_artwork.rs` and `src/scrobblers/`.
+the code is the authority if the two ever disagree: `src/remote/outbound/`,
+`src/remote/enrichment/`, `src/remote/portrait/`, `src/remote/lrclib/`,
+`src/remote/podcast/`, `src/services/remote_artwork/` and
+`src/remote/scrobblers/`.
 
 **A server left at its defaults sends nothing on its own.** Booting makes no
 request, and no background task does unless an operator configured it *and*,
@@ -16,7 +17,7 @@ account sets it (below; `WAVEFLOW_REMOTE_ARTWORK=off` stops it).
 
 ## Rules every request follows
 
-All outbound clients are built by one function, `src/outbound.rs`:
+All outbound clients are built by one function, `src/remote/outbound/mod.rs`:
 
 - **No redirect is followed by the client.** A provider cannot bounce a
   request to another host. The one exception is the podcast fetcher, below,

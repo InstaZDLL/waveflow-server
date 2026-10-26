@@ -181,7 +181,7 @@ async fn a_banner_is_the_first_real_fanart_and_is_shown_on_every_artist() {
     assert_eq!(linked[1].as_deref(), Some(hash.as_str()));
     assert_eq!(
         hash,
-        waveflow_server::portrait::Portrait::from_bytes(fake.picture("second.jpg"))
+        waveflow_server::remote::portrait::Portrait::from_bytes(fake.picture("second.jpg"))
             .unwrap()
             .hash
     );

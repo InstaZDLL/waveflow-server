@@ -12,9 +12,9 @@ use sqlx::{Row, Sqlite, Transaction};
 use uuid::Uuid;
 
 use super::{DomainServices, ImageChoice, ImageChoices, ServiceError};
-use crate::authentication::now_ms;
-use crate::database::LibraryRole;
-use crate::portrait::Portrait;
+use crate::auth::authentication::now_ms;
+use crate::remote::portrait::Portrait;
+use crate::storage::database::LibraryRole;
 
 /// Which of the two images.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,9 +74,9 @@ pub(super) async fn record_artist_change(
     artist_id: Uuid,
     now: i64,
 ) -> Result<(), sqlx::Error> {
-    crate::catalog::record_library_event(
+    crate::storage::catalog::record_library_event(
         tx,
-        crate::catalog::LibraryChange {
+        crate::storage::catalog::LibraryChange {
             library_id,
             entity_type: "artist",
             entity_id: artist_id,
@@ -181,7 +181,7 @@ impl DomainServices {
             let mut read = self.db.pool().begin().await?;
             chooser_library(&mut read, user_id, artist_id).await?;
         }
-        crate::portrait::store(&self.artwork_dir, &image)
+        crate::remote::portrait::store(&self.artwork_dir, &image)
             .await
             .map_err(|_| ServiceError::Unavailable)?;
         let _writer = self.db.writer_guard().await;

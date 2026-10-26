@@ -5,9 +5,9 @@ use super::*;
 
 /// Points Maloja's declared instance at `base`, leaving the others alone.
 fn maloja_reaching(config: &mut waveflow_server::Config, base: &str) {
-    let url = waveflow_server::scrobblers::validate_destination(base, true)
+    let url = waveflow_server::remote::scrobblers::validate_destination(base, true)
         .expect("a destination the suite chose");
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config
         .destinations
         .retain(|declared| declared.provider != ScrobbleProvider::Maloja);
@@ -180,8 +180,8 @@ async fn a_last_fm_session_key_that_died_breaks_the_link_rather_than_looking_sen
     .await;
     let temp = tempfile::tempdir().unwrap();
     let mut config = lastfm_app(&temp);
-    let url = waveflow_server::scrobblers::validate_destination(&base, true).unwrap();
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let url = waveflow_server::remote::scrobblers::validate_destination(&base, true).unwrap();
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config.destinations = vec![waveflow_server::config::ScrobbleDestination {
         provider: ScrobbleProvider::LastFm,
         name: "default".to_owned(),
@@ -219,8 +219,8 @@ async fn lastfm_app_reaching(
     base: &str,
 ) -> (waveflow_server::Config, AppState) {
     let mut config = lastfm_app(temp);
-    let url = waveflow_server::scrobblers::validate_destination(base, true).unwrap();
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let url = waveflow_server::remote::scrobblers::validate_destination(base, true).unwrap();
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config.destinations = vec![waveflow_server::config::ScrobbleDestination {
         provider: ScrobbleProvider::LastFm,
         name: "default".to_owned(),
@@ -296,9 +296,9 @@ async fn the_adapter_asks_last_fm_for_a_token_and_names_it_in_the_address() {
     let base = spawn_answering("/2.0/", r#"{"token":"a-real-request-token"}"#).await;
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    let url = waveflow_server::scrobblers::validate_destination(&base, true)
+    let url = waveflow_server::remote::scrobblers::validate_destination(&base, true)
         .expect("a destination the suite chose");
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config
         .destinations
         .retain(|declared| declared.provider != ScrobbleProvider::LastFm);
@@ -350,9 +350,9 @@ async fn an_answer_carrying_no_token_is_refused_rather_than_passed_on() {
     let base = spawn_answering("/2.0/", r#"{"error":4,"message":"Invalid API key"}"#).await;
     let temp = tempfile::tempdir().unwrap();
     let mut config = waveflow_server::Config::for_data_dir(temp.path().join("data"));
-    let url = waveflow_server::scrobblers::validate_destination(&base, true)
+    let url = waveflow_server::remote::scrobblers::validate_destination(&base, true)
         .expect("a destination the suite chose");
-    let fingerprint = waveflow_server::scrobblers::destination_fingerprint(&url);
+    let fingerprint = waveflow_server::remote::scrobblers::destination_fingerprint(&url);
     config
         .destinations
         .retain(|declared| declared.provider != ScrobbleProvider::LastFm);

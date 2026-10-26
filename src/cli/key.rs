@@ -8,9 +8,9 @@ use sqlx::Connection;
 
 use super::{KeyArgs, KeyCommand};
 use crate::{
-    authentication::now_ms,
-    database::{Database, KeyMaterial, Rekey, SchemaState},
-    security,
+    auth::authentication::now_ms,
+    auth::security,
+    storage::database::{Database, KeyMaterial, Rekey, SchemaState},
 };
 
 pub async fn key(config: &crate::Config, command: KeyCommand) -> anyhow::Result<()> {

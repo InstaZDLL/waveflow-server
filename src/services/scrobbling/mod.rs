@@ -33,7 +33,7 @@ pub enum ScrobbleProvider {
     /// `LastFm` into `last_fm` — names the `CHECK` constraint refuses and
     /// `FromStr` cannot read, so the API would publish a destination no client
     /// could send back in. One rule per variant, and no interaction between
-    /// two. [`tests::the_four_spellings_of_a_destination_agree`] holds them
+    /// two. `tests::the_four_spellings_of_a_destination_agree` holds them
     /// together.
     #[serde(rename = "listenbrainz")]
     ListenBrainz,

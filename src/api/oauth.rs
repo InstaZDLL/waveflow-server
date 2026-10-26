@@ -68,24 +68,25 @@ pub async fn oauth_authorize(
     Ok(Json(AuthorizeResponse { redirect_to }))
 }
 
-#[utoipa::path(post, path = "/api/v2/oauth/token", tag = "authentication", request_body = TokenRequest, responses((status = 200, body = crate::authentication::AuthTokens), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/oauth/token", tag = "authentication", request_body = TokenRequest, responses((status = 200, body = crate::auth::authentication::AuthTokens), (status = 401, body = ErrorResponse), (status = 503, body = ErrorResponse)))]
 pub async fn oauth_token(
     State(state): State<AppState>,
     Json(request): Json<TokenRequest>,
-) -> Result<Json<crate::authentication::AuthTokens>, ApiError> {
+) -> Result<Json<crate::auth::authentication::AuthTokens>, ApiError> {
     // Mounted without authentication by design: the code plus the verifier are
     // the credential. Every rejection below is the same 401 so a caller cannot
     // learn whether a code existed, expired, or was already spent.
-    let now = crate::authentication::now_ms();
+    let now = crate::auth::authentication::now_ms();
     let grant = state
         .db
-        .redeem_authorization(&crate::security::token_hash(&request.code), now)
+        .redeem_authorization(&crate::auth::security::token_hash(&request.code), now)
         .await
         .map_err(db_error)?
         .ok_or(ApiError::Unauthorized)?;
     if grant.client_id != request.client_id.trim()
         || grant.redirect_uri != request.redirect_uri
-        || crate::oauth::verify_challenge(&grant.code_challenge, &request.code_verifier).is_err()
+        || crate::auth::oauth::verify_challenge(&grant.code_challenge, &request.code_verifier)
+            .is_err()
     {
         return Err(ApiError::Unauthorized);
     }
@@ -95,7 +96,7 @@ pub async fn oauth_token(
         .await
         .map(Json)
         .map_err(|error| match error {
-            crate::authentication::AuthError::Unavailable => ApiError::Unavailable,
+            crate::auth::authentication::AuthError::Unavailable => ApiError::Unavailable,
             _ => ApiError::Unauthorized,
         })
 }

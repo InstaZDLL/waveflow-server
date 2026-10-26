@@ -1,5 +1,5 @@
 use super::{merged_bio, state_of};
-use crate::enrichment::{CachedArtist, Outcome, Provider};
+use crate::remote::enrichment::{CachedArtist, Outcome, Provider};
 use crate::services::EnrichmentState;
 
 fn row(outcome: Outcome, bio: Option<&str>, fetched_at: i64) -> CachedArtist {

@@ -292,11 +292,11 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     input.is_compilation = false;
     input.roles = vec![
         (
-            waveflow_server::tags::Role::Producer,
+            waveflow_server::library::tags::Role::Producer,
             vec!["Rita Sound".into()],
         ),
         (
-            waveflow_server::tags::Role::Composer,
+            waveflow_server::library::tags::Role::Composer,
             vec!["Otto Pen".into()],
         ),
     ];

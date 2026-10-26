@@ -8,9 +8,10 @@ use super::{
     RevokeCredentialArgs, SetCredentialArgs,
 };
 use crate::{
-    authentication::now_ms,
-    database::{AccountRole, Database},
-    security, AppState,
+    auth::authentication::now_ms,
+    auth::security,
+    storage::database::{AccountRole, Database},
+    AppState,
 };
 
 pub(super) async fn create_account(

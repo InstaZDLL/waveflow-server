@@ -56,11 +56,11 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // output is not the place for it. Where to find the token, never the token
     // (RFC-019 decision 1).
     match state.setup.source() {
-        Some(waveflow_server::setup_token::TokenSource::File(path)) => tracing::warn!(
+        Some(waveflow_server::auth::setup_token::TokenSource::File(path)) => tracing::warn!(
             path = %path.display(),
             "no account exists yet: the first administrator is created with the setup token stored in this file"
         ),
-        Some(waveflow_server::setup_token::TokenSource::Operator) => tracing::warn!(
+        Some(waveflow_server::auth::setup_token::TokenSource::Operator) => tracing::warn!(
             "no account exists yet: the first administrator is created with the value of WAVEFLOW_SETUP_TOKEN"
         ),
         None => {}
@@ -68,7 +68,7 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     state.scanner.spawn_background(config.scan_interval);
     // A change scanned once it settles, on top of the interval (RFC-021).
     if config.watch {
-        waveflow_server::watcher::spawn(
+        waveflow_server::library::watcher::spawn(
             state.scanner.clone(),
             state.db.clone(),
             config.watch_delay,

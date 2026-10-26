@@ -375,7 +375,7 @@ async fn a_disabled_account_s_tokens_and_grants_all_stop_working() {
     let grant = serde_json::json!({
         "client_id": "com.waveflow.desktop",
         "redirect_uri": redirect_uri,
-        "code_challenge": waveflow_server::oauth::challenge_for(&verifier),
+        "code_challenge": waveflow_server::auth::oauth::challenge_for(&verifier),
         "code_challenge_method": "S256",
         "device_name": "Disabled Desktop"
     });

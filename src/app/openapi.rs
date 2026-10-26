@@ -5,7 +5,10 @@
 use axum::response::{IntoResponse, Response};
 use utoipa::OpenApi;
 
-use crate::{api, authentication, catalog, database, lyrics, media, services, sync};
+use crate::{
+    api, auth::authentication, library::lyrics, media, services, storage::catalog,
+    storage::database, storage::sync,
+};
 
 pub const OPENAPI_JSON_PATH: &str = "/openapi.json";
 pub const SCALAR_PATH: &str = "/reference";
@@ -339,7 +342,7 @@ pub const SCALAR_PATH: &str = "/reference";
         api::UpdateUserRequest,
         api::SetSubsonicCredentialRequest,
         api::SubsonicCredentialResponse,
-        crate::database::SubsonicCredentialStatus,
+        crate::storage::database::SubsonicCredentialStatus,
         api::BookmarkRequest,
         api::RadioStationRequest,
         api::CreateApiTokenRequest,

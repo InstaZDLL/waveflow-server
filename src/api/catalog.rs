@@ -12,7 +12,7 @@ pub struct BrowseQuery {
 }
 
 /// Album discovery parameters. `sort` accepts the same vocabulary as the
-/// Subsonic `type` parameter — both surfaces resolve to [`AlbumOrder`], so the
+/// Subsonic `type` parameter — both surfaces resolve to [`AlbumOrder`](crate::services::AlbumOrder), so the
 /// web client can build a home screen ("recently added", "most played") in one
 /// call instead of paging the whole catalogue and sorting locally.
 #[derive(Debug, Deserialize)]
