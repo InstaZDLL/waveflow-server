@@ -324,7 +324,7 @@ async fn spawn_delaying(status: u16, delay: Option<(&'static str, String)>) -> D
 /// their own threads after the drop has returned, and the last of them
 /// checkpoints the WAL under an exclusive lock. The next `initialize` raced
 /// that close, and on a loaded Windows runner it outwaited `busy_timeout` and
-/// failed with `database is locked`. `cli.rs` closes before it restarts for
+/// failed with `database is locked`. `cli/key.rs` closes before it restarts for
 /// the same reason.
 async fn stop(state: AppState) {
     state.db.pool().close().await;

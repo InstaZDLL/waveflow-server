@@ -5,7 +5,7 @@ use super::*;
 
 /// A key change reads without migrating, and copies before it does.
 ///
-/// Here rather than beside the other key tests in `cli.rs` for the reason this
+/// Here rather than beside the other key tests in `cli/key.rs` for the reason this
 /// whole target exists: `test_app()` builds a current schema, and on a current
 /// schema a reading that migrates and one that does not are the same reading.
 /// Only a database *behind* the binary can tell them apart, and building one
