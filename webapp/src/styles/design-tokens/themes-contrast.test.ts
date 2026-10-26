@@ -170,6 +170,69 @@ function evaluate(
   return parseColor(text);
 }
 
+/**
+ * The strongest share of `--fe-glow` and of `--fe-glow-deep` any background
+ * in `fluid.css` spends, as `color-mix(in srgb, var(--fe-glow) N%,
+ * transparent)`: the pools behind the page, the heads' light, the login
+ * story's, the player's top edge. Read from the sheet, so a background that
+ * spends the light harder is measured at once. Shadows are left out: a glow
+ * cast under a cover is not a ground any text sits on.
+ */
+function strongestSpend(name: "--fe-glow" | "--fe-glow-deep"): number {
+  const pattern = new RegExp(
+    `color-mix\\( ?in srgb, var\\(${name}\\) ([\\d.]+)%, transparent ?\\)`,
+    "g",
+  );
+  const spends: number[] = [];
+  postcss.parse(fluid).walkDecls(/^background/, (decl) => {
+    const value = decl.value.replace(/\s+/g, " ");
+    for (const match of value.matchAll(pattern)) spends.push(Number(match[1]));
+  });
+  if (spends.length === 0) throw new Error(`fluid.css never spends ${name}`);
+  return Math.max(...spends);
+}
+
+/**
+ * The page under the cover's light at its strongest: each pool's colour at
+ * the largest share any rule spends it, painted over the page. Text sits
+ * there — a head's kicker and count are drawn over its own pool of light.
+ *
+ * Which light: the theme's own stand-in, in both materials, and in the light
+ * material also the darkest light a cover can bring, taken as black. A
+ * record's light replaces the stand-in as soon as one plays, and a dark cover
+ * is what pulls a pale page towards the dark ink. (The dark material's worst
+ * cover is a bright one; that bound is not measured here.)
+ */
+function glowGrounds(
+  preset: ThemePreset,
+  tokens: Map<string, string>,
+  page: Rgba,
+): Record<string, Rgba> {
+  const lights: Array<[string, Map<string, string>]> = [
+    ["the theme's light", tokens],
+  ];
+  if (preset.mode === "light") {
+    const darkest = new Map(tokens);
+    darkest.set("--glow", "#000");
+    darkest.set("--glow-deep", "#000");
+    lights.push(["the darkest cover's light", darkest]);
+  }
+  const out: Record<string, Rgba> = {};
+  for (const [light, values] of lights) {
+    for (const name of ["--fe-glow", "--fe-glow-deep"] as const) {
+      const share = strongestSpend(name);
+      out[`${light} (${name} at ${share}%)`] = composite(
+        evaluate(
+          `color-mix(in srgb, var(${name}) ${share}%, transparent)`,
+          values,
+        ),
+        page,
+      );
+    }
+  }
+  return out;
+}
+
 /** WCAG 1.4.3: text at the sizes the interface sets it. */
 const TEXT = 4.5;
 /** WCAG 1.4.11: a mark that carries state — a focus ring, an edge, a border. */
@@ -183,12 +246,8 @@ type Measure = { pair: string; ratio: number; minimum: number };
  * The grounds are the ones text actually sits on in the Fluid Editorial
  * material (`fluid.css`, the last sheet, which redefines every colour token
  * the earlier ones set): the page, a panel, a raised panel, the deepest of
- * the translucent tones a hovered or open item lays over the page.
- *
- * Not the cover's light (`--glow`, the two pools `body::before` draws): a
- * record's own colours replace the theme's stand-in as soon as one plays, and
- * the pools fade out from centres that sit partly off screen, so a ratio at
- * their nominal peak would measure a colour nobody sees.
+ * the translucent tones a hovered or open item lays over the page — and the
+ * page under the cover's light at its strongest (see `glowGrounds`).
  *
  * Then the pairs. The three inks hold AA on every ground — `fluid.css`
  * promises it for the deepest tone in so many words. The accent is spent as
@@ -207,6 +266,7 @@ function measure(preset: ThemePreset): Measure[] {
     panel: composite(read("--fe-surface"), page),
     raised: composite(read("--fe-surface-2"), page),
     "deepest tone": composite(read("--fe-tone-3"), page),
+    ...glowGrounds(preset, tokens, page),
   };
   const out: Measure[] = [];
   const add = (pair: string, fg: Rgba, bg: Rgba, minimum: number) =>
@@ -220,6 +280,8 @@ function measure(preset: ThemePreset): Measure[] {
       add(`${ink} on ${ground}`, read(ink), colour, TEXT);
     }
   }
+  // The accent is not set over the glow: the heads' kickers and counts that
+  // sit there are `--fe-ink-3`, measured above.
   for (const ground of ["page", "panel", "raised"]) {
     add(
       `--accent as text on ${ground}`,
@@ -272,5 +334,14 @@ describe("contrast across every preset", () => {
       ),
     );
     expect(grounds.size).toBe(6);
+    // And each dark preset its own ground, panel and raised surface.
+    for (const token of ["--fe-bg", "--fe-surface", "--fe-surface-2"]) {
+      const dark = new Set(
+        THEME_PRESETS.filter((preset) => preset.mode === "dark").map((preset) =>
+          toHex(evaluate(`var(${token})`, tokensFor(preset))),
+        ),
+      );
+      expect(dark.size, token).toBe(8);
+    }
   });
 });

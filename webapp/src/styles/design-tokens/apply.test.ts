@@ -88,20 +88,65 @@ describe("themeSurfaces", () => {
     document.documentElement.removeAttribute("style");
   });
 
-  it("names the surfaces applyTheme writes for the preset's own mode", () => {
-    // The picker's miniatures draw from these; a card that disagreed with
-    // the theme it previews would show a colour the theme never paints.
+  it("is what applyTheme hands the dark material for a dark preset", () => {
+    // The picker's miniatures draw from these and the page's surfaces read
+    // them: a card that disagreed would show a colour the page never paints.
     const root = document.documentElement;
-    for (const preset of THEME_PRESETS) {
+    for (const preset of THEME_PRESETS.filter((t) => t.mode === "dark")) {
       applyTheme(preset);
-      const prefix = preset.mode === "dark" ? "dark" : "light";
+      const surfaces = themeSurfaces(preset);
+      expect(root.style.getPropertyValue("--theme-ground")).toBe(
+        surfaces.ground,
+      );
+      expect(root.style.getPropertyValue("--theme-surface")).toBe(
+        surfaces.surface,
+      );
+      expect(root.style.getPropertyValue("--theme-raised")).toBe(
+        surfaces.raised,
+      );
+    }
+  });
+
+  it("takes each dark preset's own surfaces, lifting the panel a step", () => {
+    const midnight = themeSurfaces(findTheme("midnight"));
+    expect(midnight.ground).toBe("#0b1020");
+    expect(midnight.surface).toBe("color-mix(in srgb, #0b1020 97%, white)");
+    expect(midnight.raised).toBe("#141a2e");
+    // OLED keeps its true black ground.
+    expect(themeSurfaces(findTheme("oled")).ground).toBe("#000000");
+  });
+
+  it("keeps the material's own near-black for a preset that names none", () => {
+    expect(themeSurfaces(findTheme("default-dark"))).toEqual({
+      ground: "#0b0b0e",
+      surface: "#121216",
+      raised: "#17171d",
+    });
+  });
+
+  it("clears the dark surfaces when a light preset follows a dark one", () => {
+    const root = document.documentElement;
+    applyTheme(findTheme("midnight"));
+    applyTheme(findTheme("midnight-light"));
+    for (const property of [
+      "--theme-ground",
+      "--theme-surface",
+      "--theme-raised",
+    ])
+      expect(root.style.getPropertyValue(property)).toBe("");
+  });
+
+  it("names a light preset's raw tokens, as applyTheme writes them", () => {
+    const root = document.documentElement;
+    for (const preset of THEME_PRESETS.filter((t) => t.mode === "light")) {
+      applyTheme(preset);
       const surfaces = themeSurfaces(preset);
       expect(surfaces.ground).toBe(root.style.getPropertyValue("--ambient-bg"));
       expect(surfaces.surface).toBe(
-        root.style.getPropertyValue(`--color-surface-${prefix}`),
+        root.style.getPropertyValue("--color-surface-light"),
       );
       expect(surfaces.raised).toBe(
-        root.style.getPropertyValue(`--color-surface-${prefix}-elevated`),
+        root.style.getPropertyValue("--color-surface-light-elevated"),
       );
     }
   });

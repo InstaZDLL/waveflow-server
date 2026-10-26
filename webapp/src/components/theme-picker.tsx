@@ -32,11 +32,17 @@ const ORDER: ReadonlyArray<ThemePreset> = MODES.flatMap(({ mode }) =>
 function previewStyle(preset: ThemePreset): CSSProperties {
   const surfaces = themeSurfaces(preset);
   const dark = preset.mode === "dark";
+  const ink = dark ? "#f3f1ec" : "#1b1a17";
   return {
     "--preview-ground": surfaces.ground,
-    "--preview-surface": surfaces.surface,
+    // A dark preset's panel is the page's own `--fe-surface`, already a step
+    // above the ground. A light preset's surface is often its ground itself,
+    // so the miniature shades it to keep the sidebar visible.
+    "--preview-sidebar": dark
+      ? surfaces.surface
+      : `color-mix(in srgb, ${surfaces.surface} 94%, ${ink})`,
     "--preview-raised": surfaces.raised,
-    "--preview-ink": dark ? "#f3f1ec" : "#1b1a17",
+    "--preview-ink": ink,
     "--preview-accent": dark ? preset.accent[400] : preset.accent[600],
     "--preview-accent-deep": dark ? preset.accent[600] : preset.accent[800],
   } as CSSProperties;

@@ -22,10 +22,12 @@
    last. A plain `:root button` would outrank `.player-controls button`
    and dress every bare icon button as a pill.
 
-   The theme still chooses the accent and the cover chooses the light
-   (`--glow`, written by `CoverLight`); the ground, the surfaces and the
-   inks are the material's and do not move with the theme, beyond the light
-   ground's tint. */
+   The theme chooses the accent and the cover chooses the light (`--glow`,
+   written by `CoverLight`). The inks are the material's. The surfaces are
+   the theme's where it names them: a dark preset's ground, panel and raised
+   surface arrive as `--theme-ground`, `--theme-surface` and `--theme-raised`
+   (written by `applyTheme`, from the same `themeSurfaces` the Settings
+   cards are drawn with), and the light ground takes the theme's tint. */
 
 /* Drawn only beside the rail, where the player bar has room for it. */
 .progress-wave {
@@ -106,14 +108,20 @@
   --sidebar-width: 16rem;
 }
 
-/* The guide's material: tone over a near-black, no blur, hairlines. */
+/* The guide's material: tone over a near-black, no blur, hairlines. The
+   near-black is the default; a dark preset brings its own three surfaces,
+   and everything below that is a translucent white — the hairlines, the
+   tones, the rules — tints with them. */
 :root.dark {
-  --fe-bg: #0b0b0e;
-  --fe-surface: #121216;
-  --fe-surface-2: #17171d;
+  --fe-bg: var(--theme-ground, #0b0b0e);
+  --fe-surface: var(--theme-surface, #121216);
+  --fe-surface-2: var(--theme-raised, #17171d);
   --fe-ink: #f3f1ec;
   --fe-ink-2: #b5b2aa;
-  --fe-ink-3: #8e8b83;
+  /* #8e8b83 until the presets brought their own grounds: on Lavender's and
+     Ocean's deepest tone it read 4.49 and 4.46:1. One step lighter holds
+     4.70 on the worst (`themes-contrast.test.ts`). */
+  --fe-ink-3: #928f87;
   --fe-hairline: rgb(255 255 255 / 7%);
   --fe-hairline-strong: rgb(255 255 255 / 12%);
   --fe-tone-1: rgb(255 255 255 / 4%);
@@ -123,14 +131,22 @@
   /* Rows parted inside a list or a table. */
   --fe-rule: rgb(255 255 255 / 5%);
 
-  /* The cover's light as the structure spends it: at full strength here. */
+  /* The cover's light as the structure spends it: at full strength here.
+     Until a cover is sampled the accent stands in, deepened into this
+     theme's own ground rather than the default near-black, so Midnight's
+     stand-in light is a blue night and not a grey one. 40 % of the accent,
+     not the 58 % both materials shared: under the login story's 60 % pool
+     Sunset's stand-in read 3.84:1 against the muted ink, and 40 % holds
+     4.65. */
+  --glow: color-mix(in srgb, var(--accent-700) 40%, var(--fe-bg));
+  --glow-deep: color-mix(in srgb, var(--accent-700) 30%, var(--fe-bg));
   --fe-glow: var(--glow);
   --fe-glow-deep: var(--glow-deep);
 
   /* What a head lays over a blurred cover so its text stays legible: the
      ground itself, at the strengths each head asks for. Then the text set
      over that wash, and the glass of the buttons that sit on it. */
-  --fe-wash: #0b0b0e;
+  --fe-wash: var(--fe-bg);
   --fe-on-wash: #fff;
   --fe-on-wash-2: rgb(255 255 255 / 76%);
   --fe-on-wash-tone: rgb(0 0 0 / 38%);
@@ -171,9 +187,14 @@
   --fe-rule: rgb(27 26 23 / 7%);
 
   /* The sampled colour is deepened for a dark page; at full strength it
-     would muddy this one, so it arrives washed into the ground. */
-  --fe-glow: color-mix(in srgb, var(--glow) 34%, var(--fe-bg));
-  --fe-glow-deep: color-mix(in srgb, var(--glow-deep) 26%, var(--fe-bg));
+     would muddy this one, so it arrives washed into the ground. Washed hard:
+     a dark cover pulls the paper towards the dark ink, and at the 34 % and
+     26 % this once took, the muted ink under the strongest pools (the login
+     story's 60 %, the lower pool's 70 %) fell to 3.42:1 on Midnight light.
+     13 % and 11 % keep it at 4.64 for a cover as dark as black, on every
+     light preset (`themes-contrast.test.ts`). */
+  --fe-glow: color-mix(in srgb, var(--glow) 13%, var(--fe-bg));
+  --fe-glow-deep: color-mix(in srgb, var(--glow-deep) 11%, var(--fe-bg));
 
   --fe-wash: var(--fe-bg);
   --fe-on-wash: var(--fe-ink);
@@ -189,13 +210,6 @@
   --accent: var(--accent-700);
   --accent-soft: color-mix(in srgb, var(--accent-700) 10%, transparent);
   --shadow: 0 1.5rem 3rem rgb(43 38 28 / 14%);
-}
-
-/* OLED asks for a ground that is off, and gets one. */
-:root.dark[data-theme="oled"] {
-  --fe-bg: #000;
-  --fe-surface: #0a0a0c;
-  --fe-surface-2: #121216;
 }
 
 /* Sunset's amber 700 is the lightest of the light accents and its ground the
@@ -1666,11 +1680,7 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-1);
-  background: color-mix(
-    in srgb,
-    var(--preview-surface) 94%,
-    var(--preview-ink)
-  );
+  background: var(--preview-sidebar);
 }
 
 .theme-card-content {
