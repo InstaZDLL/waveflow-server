@@ -94,11 +94,15 @@ export function PopupMenu({
   //
   // Installed once per menu, with the latest `onClose` read through a ref: the
   // parent hands a new one on every render, and re-installing on each would
-  // also reset `armed` below in the middle of a gesture.
+  // also reset `armed` below in the middle of a gesture. The refs are written
+  // after the commit, not during the render: a render React throws away must
+  // not leave its callback behind.
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
   const anchorRef = useRef(anchor);
-  anchorRef.current = anchor;
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+    anchorRef.current = anchor;
+  });
   useEffect(() => {
     const away = (event: Event) => {
       const target = event.target as Node;
