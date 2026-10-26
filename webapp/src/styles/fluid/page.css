@@ -1,0 +1,404 @@
+/* The page: gutters, heads, tiles, tables, surfaces, album and artist heads. */
+
+/* ── The page ────────────────────────────────────────────────── */
+
+:where(:root) main {
+  width: min(100%, 105rem);
+}
+
+/* The guide's gutters, from 1024 px. Below that the refresh's fluid gutter
+   and the phone's stay. One variable, because the heads that bleed to the
+   edge pull back by exactly the gutter, and a second spelling of it is how
+   the page grew a horizontal scroll. */
+@media (width >= 64rem) {
+  :root {
+    --fe-gutter: 2rem;
+  }
+
+  :where(:root) main {
+    padding-inline: var(--fe-gutter);
+  }
+
+  :where(:root) .album-hero {
+    margin-inline: calc(var(--fe-gutter) * -1);
+  }
+
+  :where(:root) .album-hero-inner {
+    padding-inline: var(--fe-gutter);
+  }
+
+  :where(:root) :is(.detail-header, .artist-hero) {
+    margin-inline: calc(var(--fe-gutter) * -1);
+    padding-inline: var(--fe-gutter);
+  }
+}
+
+@media (width >= 80rem) {
+  :root {
+    --fe-gutter: 3rem;
+  }
+}
+
+@media (width >= 96rem) {
+  :root {
+    --fe-gutter: 3.5rem;
+  }
+}
+
+/* Kicker, display title, one meta line; the primary action as a pill. No
+   rule under it: blocks are told apart by spacing. */
+:where(:root) .page-header {
+  margin-bottom: var(--fe-section-gap);
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+:where(:root) .page-header h2 {
+  max-width: 22ch;
+  font-size: var(--fe-display);
+  font-weight: 580;
+  letter-spacing: -0.038em;
+  line-height: 0.96;
+  text-wrap: balance;
+}
+
+:where(:root) .page-header p {
+  color: var(--fe-ink-2);
+  font-size: var(--fe-body);
+}
+
+:where(:root) .page-heading {
+  gap: var(--space-3);
+}
+
+/* ── Tiles ───────────────────────────────────────────────────── */
+
+:where(:root) .grid {
+  gap: var(--space-8) var(--space-6);
+}
+
+:where(:root) .cover {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface);
+  transition:
+    transform 320ms var(--fe-ease),
+    box-shadow 320ms var(--fe-ease);
+}
+
+:where(:root) .cover-fallback {
+  background: var(--fe-surface-2);
+}
+
+:where(:root) .cover-fallback::before {
+  border-color: var(--fe-hairline-strong);
+  background: repeating-radial-gradient(
+    circle,
+    var(--fe-tone-2) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+:where(:root) .cover-fallback::after {
+  border-color: var(--fe-hairline-strong);
+  background: var(--fe-surface);
+}
+
+:where(:root) .cover-fallback span {
+  font-family: var(--fe-font);
+}
+
+:where(:root) .album-related-grid .cover {
+  border-radius: var(--fe-radius-tile);
+}
+
+/* A tile rises three pixels with the cover's light as its shadow. */
+:where(:root) .grid li:hover .cover {
+  transform: translateY(-3px);
+  box-shadow: 0 1rem 2.25rem color-mix(in srgb, var(--fe-glow) 70%, transparent);
+}
+
+:where(:root) .grid strong {
+  color: var(--fe-ink);
+  font-weight: 540;
+  letter-spacing: -0.01em;
+}
+
+:where(:root) .grid span {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .card-action {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--fe-bg) 70%, transparent);
+  color: var(--fe-ink);
+}
+
+:where(:root) .card-action:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--fe-accent-ink);
+}
+
+/* ── Tables ──────────────────────────────────────────────────── */
+
+:where(:root) .songs th {
+  border-bottom: 1px solid var(--fe-hairline);
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  font-weight: 540;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+:where(:root) .songs td {
+  border-bottom-color: var(--fe-rule);
+}
+
+:where(:root) .songs tr:hover {
+  background: var(--fe-tone-1);
+}
+
+/* The playing row: a tone and the accent's edge. The text stays ink; the
+   accent is the edge, not the words. */
+:where(:root) .songs tr.active {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+:where(:root) .songs tr.active .song-title,
+:where(:root) .album-songs tr.active .song-title {
+  color: var(--fe-ink);
+}
+
+:where(:root) .songs .song-title small {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .song-cover {
+  border-radius: 0.375rem;
+}
+
+/* ── Surfaces: panels, cards, lists ─────────────────────────── */
+
+:where(:root)
+  :is(
+    .collection,
+    .admin-panel,
+    .user-row,
+    .empty-state,
+    .error-state,
+    .settings-panel,
+    .import-panel
+  ) {
+  border: 0;
+  border-radius: var(--fe-radius-card);
+  background: var(--fe-surface);
+}
+
+:where(:root)
+  .admin-page
+  :is(.admin-grid > .admin-panel, .user-row, .now-playing-panel) {
+  background: var(--fe-surface);
+}
+
+:where(:root) .settings-page .settings-panel {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 1px 0 var(--fe-hairline);
+}
+
+:where(:root) .admin-page .credential-form > button[type="submit"] {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root)
+  :is(.list li, .resource-list li, .queue-list li, .bookmark-list li) {
+  border-bottom-color: var(--fe-rule);
+}
+
+/* Rows with room inside them: the open one is a tone with the accent's edge,
+   and a cover pressed against that edge read as cut off. */
+:where(:root) :is(.queue-list li, .bookmark-list li) {
+  padding-inline: var(--space-3);
+}
+
+:where(:root) .queue-list li.active {
+  background: var(--fe-tone-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+:where(:root) :is(.queue-cover, .bookmark-cover) {
+  border-radius: var(--fe-radius-tile);
+}
+
+/* The row's own button is the row, not a ghost pill inside it: hovered, it
+   took the pill's tone and full radius and drew a second card in the first. */
+:where(:root) :is(.queue-track, .bookmark-track),
+:where(:root) :is(.queue-track, .bookmark-track):hover {
+  border-radius: 0;
+  background: transparent;
+}
+
+:where(:root) .view-switcher {
+  border: 0;
+  border-radius: 999px;
+  background: var(--fe-tone-1);
+}
+
+:where(:root) .view-switcher a[aria-current="page"] {
+  background: var(--fe-tone-3);
+}
+
+:where(:root) .section-menu {
+  border: 0;
+  border-radius: 999px;
+  background: var(--fe-tone-1);
+}
+
+:where(:root) .section-menu-link {
+  border-radius: 999px;
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .section-menu-link:hover {
+  color: var(--fe-ink);
+}
+
+:where(:root) .section-menu-link[aria-current="page"] {
+  background: var(--fe-tone-3);
+  color: var(--fe-ink);
+}
+
+@media (max-width: 820px) {
+  :where(:root) .section-menu {
+    border-radius: var(--fe-radius-card);
+  }
+
+  :where(:root) .section-menu-link {
+    border-radius: var(--fe-radius-tile);
+  }
+}
+
+/* ── Album and artist heads ─────────────────────────────────── */
+
+/* The cover lights its own page: the blurred copy behind, darkened so a
+   pale sleeve never pales the ground, and the record on its own light. */
+:where(:root) .album-hero {
+  background: var(--fe-bg);
+  color: var(--fe-ink);
+}
+
+:where(:root) .album-hero-ambient.cover {
+  filter: blur(5rem) saturate(1.3);
+  opacity: 0.55;
+}
+
+:where(:root) .album-hero::before {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--fe-wash) 35%, transparent) 0%,
+    color-mix(in srgb, var(--fe-wash) 70%, transparent) 70%,
+    var(--fe-bg) 100%
+  );
+}
+
+:where(:root) .album-hero-cover.cover {
+  border: 0;
+  border-radius: var(--fe-radius-hero);
+  box-shadow: 0 1.5rem 3.5rem var(--fe-shadow);
+}
+
+:where(:root) .album-type {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .album-hero h2 {
+  font-size: var(--fe-banner);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+}
+
+:where(:root) .album-meta {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .album-meta > * + *::before {
+  color: var(--fe-ink-3);
+}
+
+:where(:root) .album-artist-link,
+:where(:root) .album-artist-link:hover {
+  color: var(--fe-ink);
+  font-weight: 560;
+}
+
+:where(:root) .album-actions .album-play {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--fe-accent-ink);
+}
+
+:where(:root) .album-actions .album-play:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--accent);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+:where(:root) .album-actions .album-enqueue {
+  border-color: transparent;
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root) .album-actions .album-enqueue:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--fe-tone-3);
+  color: var(--fe-ink);
+}
+
+:where(:root) .album-songs th {
+  border-bottom-color: var(--fe-hairline);
+}
+
+:where(:root) .album-songs .song-title:hover {
+  color: var(--accent);
+}
+
+:where(:root) .album-related h3 {
+  font-size: var(--fe-title);
+}
+
+:where(:root) .album-related-grid span {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) :is(.detail-header, .artist-hero) {
+  border-bottom: 0;
+  background: radial-gradient(
+    ellipse 60% 90% at 20% 0%,
+    color-mix(in srgb, var(--fe-glow) 55%, transparent),
+    transparent 70%
+  );
+}
+
+/* The head's own title, not the title of a dialog the head opened: the
+   Deezer picker lives inside the artist hero in the tree, and its heading
+   was set at banner size. */
+:where(:root) :is(.detail-header, .artist-hero) h2:not(:where(dialog *)) {
+  font-size: var(--fe-banner);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+}
+
+:where(:root) :is(.cover.large, .artist-portrait) {
+  box-shadow: 0 1.5rem 3.5rem var(--fe-shadow);
+}
+
+:where(:root) .cover.large {
+  border-radius: var(--fe-radius-hero);
+}

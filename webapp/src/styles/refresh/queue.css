@@ -1,0 +1,203 @@
+/* Saved playback positions and the queue's rows. */
+
+/* Saved playback positions read as a compact track list. The fixed time
+   column keeps every timestamp aligned regardless of title length. */
+.playing-bookmarks {
+  margin-top: var(--space-8);
+  padding-top: var(--space-6);
+  border-top: 1px solid var(--line-strong);
+}
+
+.playing-bookmarks-header {
+  margin-bottom: var(--space-4);
+}
+
+.playing-bookmarks-title,
+.playing-bookmarks-detail {
+  margin: 0;
+}
+
+.playing-bookmarks-detail {
+  margin-top: var(--space-1);
+}
+
+.bookmark-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.bookmark-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem 5rem;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 4.75rem;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.bookmark-track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.bookmark-cover {
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 3rem;
+  border-radius: 0.4rem;
+}
+
+.bookmark-cover.cover-fallback span {
+  font-size: var(--text-xl);
+}
+
+.bookmark-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.bookmark-title,
+.bookmark-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-artist {
+  font-size: var(--text-xs);
+}
+
+.bookmark-track:hover .bookmark-title {
+  color: var(--accent);
+}
+
+.bookmark-position {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bookmark-forget {
+  min-height: 2.5rem;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.bookmark-forget:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+/* Queue rows use the same compact artwork rhythm as saved positions. Artist
+   lives with the title so the duration and action stay in stable columns. */
+.queue-list li {
+  grid-template-columns: minmax(0, 1fr) 4.5rem 5rem;
+  gap: var(--space-4);
+  min-height: 4.75rem;
+  padding: var(--space-2) 0;
+}
+
+.queue-track {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.queue-cover {
+  width: 3rem;
+  height: 3rem;
+  flex: 0 0 3rem;
+  border-radius: 0.4rem;
+}
+
+.queue-cover.cover-fallback span {
+  font-size: var(--text-xl);
+}
+
+.queue-copy {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.queue-song-title,
+.queue-artist {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-artist {
+  font-size: var(--text-xs);
+}
+
+.queue-track:hover .queue-song-title,
+.queue-list li.active .queue-song-title {
+  color: var(--accent);
+}
+
+.queue-duration {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-remove {
+  min-height: 2.5rem;
+  padding: 0 var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  text-align: right;
+}
+
+.queue-remove:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 0.2rem;
+}
+
+@media (width <= 35rem) {
+  .bookmark-list li,
+  .queue-list li {
+    grid-template-columns: minmax(0, 1fr) 3.25rem auto;
+    gap: var(--space-2);
+  }
+
+  .bookmark-cover,
+  .queue-cover {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex-basis: 2.5rem;
+  }
+}
+
+.songs tr.active .muted,
+.songs tr.active small {
+  color: var(--text);
+}
+
+.detail-header,
+.artist-hero {
+  background: var(--panel-soft);
+}

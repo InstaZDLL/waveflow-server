@@ -1,0 +1,225 @@
+/* Maintenance: the quality page, missing files, a library's danger zone. */
+
+/* The quality page (RFC-016). The verdicts read as the lists of "Needs
+   attention" do, one card per verdict in a wrapping grid, an empty one
+   greyed; the verdict itself is a pill whose colour says how much it accuses
+   the file of, and the words say the rest. */
+.quality-help {
+  max-width: 62ch;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.quality-verdicts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+/* Where the analysis stands. The dot pulses while it works, and is still for
+   whoever asked the system for less motion: the words say the same thing. */
+.quality-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.quality-status.idle,
+.quality-status.off {
+  color: var(--muted);
+}
+
+.quality-status-dot {
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: quality-pulse 1.4s ease-in-out infinite;
+}
+
+.quality-status.waiting_for_scan .quality-status-dot,
+.quality-status.queued .quality-status-dot {
+  background: var(--muted);
+}
+
+@keyframes quality-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quality-status-dot {
+    animation: none;
+  }
+}
+
+.quality-format {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.quality-verdict {
+  display: inline-block;
+  padding: 0.1rem var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.quality-verdict.finding {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.quality-verdict.mild {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.quality-verdict.neutral {
+  color: var(--muted);
+}
+
+.quality-highs {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.quality-analyse {
+  display: grid;
+  justify-items: end;
+  gap: var(--space-1);
+}
+
+.quality-analyse-notice {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.quality-explain {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+/* Editorial pages: the caution under the measured bit depth, set as the
+   explanation above the figures is. */
+.quality-note {
+  max-width: 62ch;
+  margin: var(--space-2) 0 var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.quality-spectrum {
+  margin: var(--space-3) 0;
+}
+
+.quality-spectrum svg {
+  display: block;
+  width: 100%;
+  height: 9rem;
+  overflow: visible;
+}
+
+.quality-spectrum figcaption {
+  margin-top: var(--space-1);
+  font-size: var(--text-xs);
+}
+
+.quality-curve {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-wall {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-gridline line {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.quality-gridline text {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.quality-spectrogram {
+  margin: var(--space-3) 0 0;
+}
+
+.quality-spectrogram img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+}
+
+.quality-spectrogram-action {
+  margin-top: var(--space-3);
+}
+
+/* "Missing files" (RFC-021): a row is a checkbox and what it names, then when
+   it went and what a purge would take. */
+.missing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.missing-list li {
+  grid-template-columns: minmax(12rem, 1fr) auto;
+}
+
+.missing-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.missing-text,
+.missing-facts {
+  display: grid;
+  min-width: 0;
+}
+
+.missing-facts {
+  justify-items: end;
+  text-align: end;
+}
+
+.missing-path {
+  overflow-wrap: anywhere;
+}
+
+/* The deletion of a library sits apart from the form that edits it, so the
+   button that saves a name is never the one beside the one that deletes. */
+.danger-zone {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.danger-note {
+  margin: 0;
+  font-size: var(--text-sm);
+}

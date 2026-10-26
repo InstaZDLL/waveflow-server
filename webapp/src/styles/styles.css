@@ -1,0 +1,16 @@
+/* The base sheet, in parts. The cascade is their order: keep it. */
+
+@import "./styles/base.css";
+@import "./styles/shell.css";
+@import "./styles/catalog.css";
+@import "./styles/panels.css";
+@import "./styles/player.css";
+@import "./styles/phone.css";
+@import "./styles/playing.css";
+@import "./styles/admin.css";
+@import "./styles/menus.css";
+@import "./styles/folders.css";
+@import "./styles/artist-hero.css";
+@import "./styles/maintenance.css";
+@import "./styles/mixes-and-stats.css";
+@import "./styles/workspace.css";

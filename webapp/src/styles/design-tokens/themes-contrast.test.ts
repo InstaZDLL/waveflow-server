@@ -1,9 +1,7 @@
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
 
-import fluid from "../fluid.css?raw";
-import refresh from "../refresh.css?raw";
-import styles from "../styles.css?raw";
+import { fluid, refresh, styles } from "../sheets";
 import { applyTheme } from "./apply";
 import {
   composite,

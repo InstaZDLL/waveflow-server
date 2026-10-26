@@ -1,0 +1,38 @@
+/* ============================================================
+   Fluid Editorial — the structure, and its two materials
+   ============================================================
+   WaveFlow's design language since 2.0, written down in the desktop
+   repository's `docs/design/fluid-editorial.md`; this sheet carries it to
+   the web client. Cinematic, music first: the cover lights the page, the
+   type carries the editorial voice, the wave is the mark.
+
+   **One structure, two materials.** The guide separates the structure (the
+   rail, the heads, the bar, the type, the mark, the rhythm, the ease) from
+   the material a skin lays over it, and lets a material be light. Every
+   rule below is the structure and reads only tokens; the tokens are the
+   material, declared twice: the guide's own dark one under `:root.dark`,
+   and a light one under `:root:not(.dark)`. The light material keeps the
+   guide's rule not to borrow the dark inks: its ground takes the theme's
+   ambient tint, its tones are dark ink at a low alpha, its accent is the
+   theme's 700 stop under white ink, and the cover's light reaches it
+   washed out to a pastel.
+
+   **Wrapped in `:where()`.** The prefix adds no specificity, so a rule
+   here weighs exactly what the rule it replaces weighs and wins by coming
+   last. A plain `:root button` would outrank `.player-controls button`
+   and dress every bare icon button as a pill.
+
+   The theme chooses the accent and the cover chooses the light (`--glow`,
+   written by `CoverLight`). The inks are the material's. The surfaces are
+   the theme's where it names them: a dark preset's ground, panel and raised
+   surface arrive as `--theme-ground`, `--theme-surface` and `--theme-raised`
+   (written by `applyTheme`, from the same `themeSurfaces` the Settings
+   cards are drawn with), and the light ground takes the theme's tint. */
+
+@import "./fluid/tokens.css";
+@import "./fluid/base.css";
+@import "./fluid/rail.css";
+@import "./fluid/page.css";
+@import "./fluid/player-bar.css";
+@import "./fluid/menus-sign-in-motion.css";
+@import "./fluid/theme-picker.css";

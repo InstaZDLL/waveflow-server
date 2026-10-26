@@ -1,0 +1,249 @@
+/* Ground and atmosphere, type, and the controls. */
+
+/* ── Ground and atmosphere ───────────────────────────────────── */
+
+:where(:root) body {
+  background: var(--fe-bg);
+  color: var(--fe-ink);
+  font-family: var(--fe-font);
+  font-size: var(--fe-body);
+  font-optical-sizing: auto;
+  font-weight: 480;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Two soft pools of the cover's colour behind the page. Fixed, so nothing
+   repaints on scroll; the fade comes from the registered `--glow`. */
+:where(:root) body::before {
+  display: block;
+  position: fixed;
+  z-index: 0;
+  inset: -20%;
+  opacity: 1;
+  background:
+    radial-gradient(
+      ellipse 42% 38% at 72% 8%,
+      color-mix(in srgb, var(--fe-glow) 40%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 36% 30% at 18% 92%,
+      color-mix(in srgb, var(--fe-glow-deep) 70%, transparent),
+      transparent 72%
+    );
+  content: "";
+  pointer-events: none;
+}
+
+:where(:root) #root {
+  position: relative;
+  z-index: 1;
+}
+
+:where(:root) ::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--fe-ink);
+}
+
+/* ── Type ────────────────────────────────────────────────────── */
+
+:where(:root) :is(h1, h2, h3) {
+  font-family: var(--fe-font);
+  font-weight: 560;
+  letter-spacing: -0.022em;
+}
+
+:where(:root) h3 {
+  font-size: var(--fe-title);
+  font-weight: 540;
+}
+
+:where(:root) .muted {
+  color: var(--fe-ink-3);
+}
+
+:where(:root) .eyebrow,
+:where(:root) .page-kicker,
+:where(:root) .nav-label,
+:where(:root) .album-type {
+  display: block;
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  font-weight: 540;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* The mark under a section title: the one ornament the language allows,
+   and it marks rather than fills. */
+:where(:root)
+  :is(
+    .page-heading h2,
+    .album-related h3,
+    .artist-played h3,
+    .artist-discography h3,
+    .artist-similar h3
+  )::after {
+  display: block;
+  width: 2.5rem;
+  height: 0.625rem;
+  margin-top: 0.75rem;
+  background: var(--accent);
+  content: "";
+  mask: var(--fe-mark) no-repeat left center / contain;
+}
+
+/* ── Controls ────────────────────────────────────────────────── */
+
+:where(:root) :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* A secondary action is a ghost pill: a tone of white, no line. */
+:where(:root) button {
+  border-color: transparent;
+  border-radius: 999px;
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+  font-weight: 540;
+  transition:
+    background-color 180ms var(--fe-ease),
+    color 180ms var(--fe-ease),
+    filter 180ms var(--fe-ease),
+    transform 320ms var(--fe-ease);
+}
+
+:where(:root) button:hover {
+  border-color: transparent;
+  background: var(--fe-tone-3);
+}
+
+:where(:root) button:active {
+  transform: translateY(1px);
+}
+
+/* The primary action is the accent, spent once, with dark ink on it. */
+:where(:root) :is(button[type="submit"], button.action-primary) {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--fe-accent-ink);
+}
+
+:where(:root) :is(button[type="submit"], button.action-primary):hover {
+  border-color: transparent;
+  background: var(--accent);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+:where(:root) button.action-secondary {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root) button.action-secondary:hover {
+  background: var(--fe-tone-3);
+  color: var(--fe-ink);
+}
+
+:where(:root) button.danger {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+/* A field is a tone with a hairline ring drawn inside it, so the ring never
+   changes the box; focus brings the accent ring and the cover's halo. */
+:where(:root)
+  :is(
+    input:not([type="range"], [type="checkbox"], [type="radio"]),
+    select,
+    textarea
+  ) {
+  border: 0;
+  border-radius: var(--fe-radius-input);
+  background: var(--fe-tone-1);
+  box-shadow: inset 0 0 0 1px var(--fe-hairline-strong);
+  color: var(--fe-ink);
+  transition:
+    box-shadow 180ms var(--fe-ease),
+    background-color 180ms var(--fe-ease);
+}
+
+:where(:root)
+  :is(
+    input:not([type="range"], [type="checkbox"], [type="radio"]),
+    select,
+    textarea
+  ):hover {
+  background: var(--fe-tone-2);
+}
+
+:where(:root)
+  :is(
+    input:not([type="range"], [type="checkbox"], [type="radio"]),
+    select,
+    textarea
+  ):focus-visible {
+  outline: none;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 4px color-mix(in srgb, var(--fe-glow) 55%, transparent);
+}
+
+:where(:root) input::placeholder {
+  color: var(--fe-ink-3);
+}
+
+:where(:root)
+  :is(input[type="range"], input[type="checkbox"], input[type="radio"]) {
+  accent-color: var(--accent);
+}
+
+/* The native popup follows the ground, not a white Windows sheet. */
+:where(:root.dark) select {
+  color-scheme: dark;
+}
+
+:where(:root) select option {
+  background-color: var(--fe-surface-2);
+  color: var(--fe-ink);
+}
+
+/* The header's filters keep the underline the refresh gave them, in the
+   guide's hairline. */
+:where(:root) .page-header .control :is(input, select) {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--fe-hairline-strong);
+}
+
+:where(:root) .page-header .control :is(input, select):hover,
+:where(:root) .page-header .control :is(input, select):focus-visible {
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+:where(:root)
+  :is(
+    .control > span,
+    .theme-picker span,
+    .language-picker span,
+    .library-picker > span
+  ) {
+  color: var(--fe-ink-3);
+  font-size: var(--fe-label);
+  font-weight: 540;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Links that are rows in a pill or a sheet. Ahead of the rail, whose tiles
+   are links too and weigh more. */
+:where(:root) .view-switcher a {
+  border-radius: 999px;
+}
+
+:where(:root) .more-sheet nav a {
+  border-radius: 0.5rem;
+}

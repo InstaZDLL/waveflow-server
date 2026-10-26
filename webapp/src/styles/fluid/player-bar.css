@@ -1,0 +1,259 @@
+/* The player bar, lit from its top edge by the cover. */
+
+/* ── The player bar ─────────────────────────────────────────── */
+
+/* One surface, lit from its top edge by the cover. */
+:where(:root) .player {
+  border: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--fe-glow) 32%, transparent),
+      transparent 70%
+    ),
+    color-mix(in srgb, var(--fe-surface) 92%, transparent);
+  box-shadow: inset 0 0 0 1px var(--fe-hairline);
+  backdrop-filter: blur(1.5rem) saturate(120%);
+}
+
+:where(:root) .player-cover {
+  border: 0;
+  border-radius: var(--fe-radius-tile);
+  box-shadow: 0 0.5rem 1.25rem var(--fe-shadow-soft);
+}
+
+/* A station's or a channel's image in its list, and a channel's above its
+   episodes: tiles, as the bar's cover is. */
+:where(:root) :is(.resource-cover, .podcast-cover) {
+  border-radius: var(--fe-radius-tile);
+}
+
+:where(:root) .player-track strong {
+  color: var(--fe-ink);
+  font-weight: 560;
+}
+
+:where(:root) .player-track span {
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .player-controls button {
+  background: transparent;
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .player-controls button:hover {
+  background: var(--fe-tone-2);
+  color: var(--fe-ink);
+}
+
+:where(:root) .player-controls button.mode.on {
+  color: var(--accent);
+}
+
+:where(:root) .player-controls button.primary {
+  background: var(--fe-ink);
+  color: var(--fe-bg);
+}
+
+:where(:root) .player-controls button.primary:hover {
+  background: var(--fe-ink);
+  color: var(--fe-bg);
+}
+
+:where(:root) .player-progress {
+  color: var(--fe-ink-3);
+}
+
+:where(:root) .player-aside button {
+  background: transparent;
+}
+
+:where(:root) .player-aside .nav-action {
+  border: 0;
+  border-radius: 999px;
+  background: var(--fe-tone-2);
+  color: var(--fe-ink-2);
+}
+
+:where(:root) .player-aside .nav-action:hover {
+  background: var(--fe-tone-3);
+  color: var(--fe-ink);
+}
+
+/* Beside the rail: one bar across the window, with the transport centred on
+   the window rather than on what is left of it, and the line under it. */
+@media (width > 820px) {
+  :where(:root) .player {
+    right: 0;
+    bottom: 0;
+    left: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 38rem) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    column-gap: var(--space-6);
+    row-gap: var(--space-1);
+    min-height: 5.25rem;
+    padding: var(--space-3) var(--space-6);
+    border-radius: 0;
+    box-shadow: inset 0 1px 0 var(--fe-hairline);
+  }
+
+  /* The record and its names share the first column, so the middle one
+     stays the middle of the window. */
+  :where(:root) .player > a {
+    grid-area: 1 / 1 / 3 / 2;
+    align-self: center;
+    justify-self: start;
+    width: 3.75rem;
+  }
+
+  :where(:root) .player-cover {
+    width: 3.75rem;
+  }
+
+  /* A cover with no album to open is the bar's own child rather than a
+     link's, and needs the same place: every cell is claimed, so left to the
+     auto-placement it opened a third row under the bar. A station or an
+     episode is drawn this way, and so is a track without an album. */
+  :where(:root) .player > .player-cover {
+    grid-area: 1 / 1 / 3 / 2;
+    align-self: center;
+    justify-self: start;
+  }
+
+  /* Set beside the cover by a margin, not a padding: a padded box still
+     covers the cover it sits over, and took every click aimed at the middle
+     of it — only the strip above the names reached the album link. */
+  :where(:root) .player-track {
+    grid-area: 1 / 1 / 3 / 2;
+    align-self: center;
+    margin-left: calc(3.75rem + var(--space-3));
+  }
+
+  :where(:root) .player-track strong {
+    font-size: var(--fe-body);
+  }
+
+  :where(:root) .player-controls {
+    grid-area: 1 / 2;
+  }
+
+  :where(:root) .player-controls button.primary {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  :where(:root) .player-controls button.primary:hover {
+    transform: scale(1.04);
+  }
+
+  /* Where the heard part ends: the thumb's centre, which travels half its
+     width in from each end of the track rather than from edge to edge.
+     Declared here, where the player writes `--played`, so the share is read
+     from it; the `100%` resolves where it is used, against the wave's box
+     and against the track's. */
+  :where(:root) .player-progress {
+    --fe-played-at: calc(
+      var(--fe-thumb) /
+      2 +
+      var(--played, 0) *
+      (100% - var(--fe-thumb))
+    );
+
+    position: relative;
+    grid-area: 2 / 2;
+  }
+
+  :where(:root) .player-aside {
+    grid-area: 1 / 3 / 3 / 4;
+    justify-self: end;
+  }
+
+  /* The line: straight where it is still to come, the mark's wave where it
+     has been heard. The range on top keeps the seeking. */
+  :where(:root) .progress-wave {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 0;
+    /* Both lines named: an absolutely placed grid item with an `auto` end
+       runs to the container's padding edge, so `grid-column: 2` alone took
+       in the gap and the duration's column, and the wave outran the thumb
+       further the later the track — a ninth too long at the end. */
+    grid-column: 2 / 3;
+    grid-row: 1;
+    width: var(--fe-played-at);
+    height: 0.5rem;
+    background: var(--accent);
+    mask: var(--fe-wave) repeat-x left center / 1rem 0.5rem;
+    pointer-events: none;
+    translate: 0 -50%;
+  }
+
+  :where(:root) .player-progress input {
+    position: relative;
+    z-index: 1;
+    height: 1rem;
+    margin: 0;
+    background: transparent;
+    appearance: none;
+  }
+
+  :where(:root) .player-progress input::-webkit-slider-runnable-track {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent var(--fe-played-at),
+      var(--fe-hairline-strong) 0
+    );
+  }
+
+  :where(:root) .player-progress input::-moz-range-track {
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent var(--fe-played-at),
+      var(--fe-hairline-strong) 0
+    );
+  }
+
+  :where(:root) .player-progress input::-webkit-slider-thumb {
+    width: var(--fe-thumb);
+    height: var(--fe-thumb);
+    margin-top: calc(var(--fe-thumb) / -2 + 0.5px);
+    border: 0;
+    border-radius: 50%;
+    background: var(--fe-ink);
+    opacity: 0;
+    transition: opacity 180ms var(--fe-ease);
+    appearance: none;
+  }
+
+  :where(:root) .player-progress input::-moz-range-thumb {
+    width: var(--fe-thumb);
+    height: var(--fe-thumb);
+    border: 0;
+    border-radius: 50%;
+    background: var(--fe-ink);
+    opacity: 0;
+    transition: opacity 180ms var(--fe-ease);
+  }
+
+  :where(:root) .player-progress:hover input::-webkit-slider-thumb,
+  :where(:root) .player-progress input:focus-visible::-webkit-slider-thumb {
+    opacity: 1;
+  }
+
+  :where(:root) .player-progress:hover input::-moz-range-thumb,
+  :where(:root) .player-progress input:focus-visible::-moz-range-thumb {
+    opacity: 1;
+  }
+}
+
+/* The aside leaves below 62rem; the transport keeps the middle column and
+   the record takes the rest. */
+@media (width > 820px) and (width <= 62rem) {
+  :where(:root) .player {
+    grid-template-columns: minmax(0, 1fr) minmax(16rem, 1.4fr);
+  }
+}

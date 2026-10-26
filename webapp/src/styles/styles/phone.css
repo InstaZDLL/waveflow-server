@@ -1,0 +1,258 @@
+/* The narrow layouts, from 820 px down, and reduced motion. */
+
+@media (max-width: 820px) {
+  .shell {
+    display: block;
+    padding: var(--space-20) 0 11.5rem;
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .mobile-header {
+    position: fixed;
+    z-index: 8;
+    inset: 0 0 auto;
+    display: flex;
+    min-height: 4.2rem;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel-soft) 88%, transparent);
+    backdrop-filter: blur(1.4rem);
+  }
+
+  /* What a phone hides: every label whose control is already legible
+     without it, and the two the layout has no room for. One rule rather
+     than three spread through the blocks below, with its selectors running
+     from the least specific to the most: the same declaration for each, so
+     the order cannot change what any element gets, and none of them sits
+     behind a selector that already outranks it. */
+  .player-progress span,
+  .mobile-navigation a span,
+  .mobile-navigation .more-button span,
+  .mobile-header .library-picker span,
+  .mobile-header .theme-picker span,
+  .mobile-header .language-picker span,
+  .mobile-header .brand small {
+    display: none;
+  }
+
+  /* The sidebar is out of reach here, so the scope moves into the header
+     rather than becoming unreachable on a phone. */
+  .mobile-header .library-picker {
+    margin: 0;
+    padding: 0;
+  }
+
+  .mobile-header .library-picker select {
+    width: 7rem;
+  }
+  .mobile-header .theme-picker select {
+    width: 6.5rem;
+  }
+  .mobile-header .language-picker select {
+    width: 5.7rem;
+  }
+
+  main {
+    width: 100%;
+    padding: var(--space-6) var(--space-4) var(--space-12);
+  }
+
+  .mobile-navigation {
+    position: fixed;
+    z-index: 9;
+    right: 0.6rem;
+    bottom: 0.6rem;
+    left: 0.6rem;
+    display: grid;
+    /* As many equal columns as there are slots, counted by the browser.
+       This said `repeat(5, 1fr)` from the first design, and a sixth primary
+       entry was added later without touching it — so the bar had been
+       wrapping onto a second row ever since, which the suite could not see
+       because it measures horizontal overflow and a second row overflows
+       downwards. A number kept in a second place goes stale; this one cannot. */
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    padding: var(--space-2);
+    border: 1px solid var(--line-strong);
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--panel) 91%, transparent);
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(1.5rem);
+  }
+
+  .mobile-navigation a,
+  .mobile-navigation .more-button {
+    display: grid;
+    min-height: 3rem;
+    place-items: center;
+    border-radius: 0.7rem;
+    color: var(--muted);
+  }
+
+  /* The seventh slot is a button and not a link, so it has to be undressed
+     back to what the six beside it look like. */
+  .mobile-navigation .more-button {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .mobile-navigation a[data-status="active"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .player {
+    right: 0.8rem;
+    bottom: 4.85rem;
+    left: 0.8rem;
+    grid-template-columns: 3.2rem minmax(0, 1fr) auto;
+    min-height: 4.35rem;
+    padding: var(--space-2);
+  }
+
+  .player-cover {
+    width: 3.2rem;
+  }
+
+  .player-progress {
+    position: absolute;
+    right: 0.85rem;
+    bottom: 0.15rem;
+    left: 0.85rem;
+    display: block;
+  }
+
+  /* Narrow: the modes and the skip buttons give way to the transport. */
+  .player-controls button.mode {
+    display: none;
+  }
+
+  .player-controls button.primary {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .page-header {
+    display: block;
+  }
+  .page-header h2 {
+    margin-bottom: var(--space-2);
+  }
+  .page-header p {
+    text-align: left;
+  }
+
+  .detail-header,
+  .artist-hero {
+    align-items: flex-end;
+    margin: calc(var(--space-6) * -1) calc(var(--space-4) * -1) var(--space-6);
+    padding: var(--space-16) var(--space-4) var(--space-6);
+  }
+
+  .detail-header h2,
+  .artist-hero h2 {
+    font-size: clamp(var(--text-2xl), 9vw, var(--text-5xl));
+  }
+
+  .cover.large,
+  .artist-portrait {
+    width: min(35vw, 9rem);
+  }
+
+  .artist-list,
+  .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .songs td:nth-child(3) {
+    display: none;
+  }
+  .songs td {
+    padding-inline: var(--space-1);
+  }
+
+  .collection-header,
+  .user-row > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .resource-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .resource-list li > div {
+    grid-column: 1 / -1;
+  }
+
+  .credential-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 680px) {
+  .centered {
+    padding: 0;
+  }
+
+  .login-shell {
+    min-height: 100dvh;
+    grid-template-columns: 1fr;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .login-story {
+    min-height: 38dvh;
+    padding: var(--space-8);
+  }
+
+  .login-story::after {
+    inset: 0.7rem;
+  }
+  .login-story h1 {
+    font-size: clamp(var(--text-3xl), 13vw, var(--text-5xl));
+  }
+
+  .signal,
+  .login-story p {
+    display: none;
+  }
+
+  .card {
+    min-width: 0;
+    padding: var(--space-8) var(--space-6) var(--space-12);
+  }
+
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .song-cover {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .skeleton-card span,
+  .skeleton-card i {
+    animation: none;
+  }
+
+  button,
+  .cover,
+  .songs tr {
+    transition-duration: 0.01ms;
+  }
+}
