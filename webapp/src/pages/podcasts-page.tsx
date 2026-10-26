@@ -23,6 +23,7 @@ import {
   useReload,
 } from "../components/page-shell";
 import { resumeSeconds } from "../lib/aside";
+import { onMediaChange } from "../lib/media-query";
 import { usePlayer } from "../player/player";
 import { type TranslationKey, useI18n } from "../state/i18n";
 
@@ -50,8 +51,7 @@ function useTwoPanels(): boolean {
     if (!query) return;
     const onChange = () => setWide(query.matches);
     onChange();
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
+    return onMediaChange(query, onChange);
   }, []);
   return wide;
 }
