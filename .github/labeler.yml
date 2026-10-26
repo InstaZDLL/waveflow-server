@@ -35,40 +35,39 @@
 'scope: api':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/http.rs'
-          - 'src/services.rs'
+          - 'src/api/**'
+          - 'src/app/**'
+          - 'src/http/**'
+          - 'src/services/**'
           - 'src/lib.rs'
 
 'scope: db':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/database.rs'
-          - 'src/catalog.rs'
+          - 'src/storage/**'
           - 'migrations-v2/**'
 
 'scope: auth':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/authentication.rs'
-          - 'src/oauth.rs'
-          - 'src/security.rs'
+          - 'src/auth/**'
 
 'scope: subsonic':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/subsonic.rs'
+          - 'src/subsonic/**'
           - 'docs/subsonic-compatibility.md'
 
 'scope: streaming':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/media.rs'
-          - 'src/stream_ticket.rs'
+          - 'src/media/**'
+          - 'src/auth/stream_ticket/**'
 
 'scope: scanner':
   - changed-files:
       - any-glob-to-any-file:
-          - 'src/scanner.rs'
+          - 'src/library/**'
 
 # ─────────────────────────────────────────────────────────────
 # Web fine scopes (inside webapp/src/).
