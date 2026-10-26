@@ -268,7 +268,7 @@ async fn facade_controls_scans_and_answers_its_remaining_methods() {
     // The two similar-songs methods used to answer the empty container for
     // any id at all. Since #267 the id is resolved first and for its refusal
     // (RFC-011 decision 7), so one naming nothing is error 70; what they
-    // answer for a real one, enrichment off and on, is in `tests/enrichment.rs`.
+    // answer for a real one, enrichment off and on, is in `tests/enrichment/similar_songs.rs`.
     // `getInternetRadioStations` left the empty-container list with #217.
     for method in ["getSimilarSongs", "getSimilarSongs2"] {
         let response = subsonic_json(

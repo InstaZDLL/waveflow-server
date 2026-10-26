@@ -2,7 +2,7 @@
 //! (RFC-015).
 //!
 //! The accounts here are rows written by hand and reach the routes through an
-//! API token, as in `tests/catalog.rs`: nothing in this target authenticates
+//! API token, as in `tests/catalog/listings.rs`: nothing in this target authenticates
 //! with a password, so nothing in it hands a literal to a hash.
 
 #[allow(dead_code)]

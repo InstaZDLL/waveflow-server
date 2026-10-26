@@ -6,7 +6,7 @@
 //! is what most of the lyrics assertions are about.
 //!
 //! Accounts are inserted as rows rather than through `create_account`, as in
-//! `tests/enrichment.rs`: these tests need user ids, not a login, and the API
+//! `tests/enrichment/main.rs`: these tests need user ids, not a login, and the API
 //! is reached through tokens and Subsonic keys drawn at run time.
 
 #[allow(dead_code)]

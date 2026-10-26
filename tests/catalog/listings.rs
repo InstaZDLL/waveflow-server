@@ -450,7 +450,7 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
 /// statements that each had to be changed.
 ///
 /// The account is inserted rather than created, and reaches HTTP through an
-/// API token rather than a password. `tests/scrobbling.rs` explains why the
+/// API token rather than a password. `tests/scrobbling/main.rs` explains why the
 /// row is written by hand; what this adds is that the trick is not confined to
 /// targets without a surface — `wfapi_` authenticates on the same header a
 /// session does, so a test needing routes needs no fixture password either.

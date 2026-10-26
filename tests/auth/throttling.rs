@@ -363,7 +363,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Captured {
 }
 
 /// The log of this whole test binary, at every level: global for the reason
-/// `tests/enrichment.rs` gives, and read back only for lines no other test
+/// `tests/enrichment/lastfm.rs` gives, and read back only for lines no other test
 /// here writes.
 fn captured_log() -> &'static Captured {
     static LOG: std::sync::OnceLock<Captured> = std::sync::OnceLock::new();

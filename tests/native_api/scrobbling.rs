@@ -5,7 +5,7 @@ use super::*;
 /// A destination that never says whether it recorded anything.
 ///
 /// The whole of decision 5 in three lines: the queue cannot know, so a person
-/// has to. Local to this target because the doubles in `tests/scrobbling.rs`
+/// has to. Local to this target because the doubles in `tests/scrobbling/main.rs`
 /// belong to a file whose accounts are inserted with a placeholder hash and
 /// never log in — which is precisely what a route test needs them to do.
 struct AlwaysAmbiguous;
@@ -203,7 +203,7 @@ async fn an_account_poses_and_withdraws_its_own_scrobble_link() {
 
 /// The two gestures decision 13 grants, over HTTP.
 ///
-/// The domain half is pinned in `tests/scrobbling.rs`. What only this can show
+/// The domain half is pinned in `tests/scrobbling/uncertain.rs`. What only this can show
 /// is that the routes exist, name an entry the way the outside names it, and
 /// answer a stranger's id with a 404 rather than a decision.
 #[tokio::test]
