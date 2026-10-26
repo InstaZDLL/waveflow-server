@@ -489,4 +489,29 @@ impl DomainServices {
             }
         }
     }
+
+    /// The library a track belongs to, if this account may place a canvas on it.
+    async fn canvas_library_for_track(
+        &self,
+        user_id: Uuid,
+        track_id: Uuid,
+    ) -> Result<Uuid, ServiceError> {
+        let row = sqlx::query(
+            "SELECT t.library_id, l.accepts_canvas, m.role FROM track t \
+             JOIN library l ON l.id=t.library_id \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE t.id=? AND m.user_id=?",
+        )
+        .bind(track_id.to_string())
+        .bind(user_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?
+        .ok_or(ServiceError::NotFound)?;
+        let role = crate::database::LibraryRole::from_str(row.try_get::<&str, _>("role")?)
+            .map_err(|_| ServiceError::Invalid)?;
+        if !role.may_upload() || row.try_get::<i64, _>("accepts_canvas")? == 0 {
+            return Err(ServiceError::Forbidden);
+        }
+        parse_uuid(row.try_get::<String, _>("library_id")?).map_err(Into::into)
+    }
 }
