@@ -16,6 +16,12 @@
 //!
 //! **Network I/O never holds the writer gate.** A fetch runs first; the gate is
 //! taken for the rows it produced, after.
+//!
+//! **A channel's cover is fetched by the server** (RFC-025, amended), when the
+//! channel is subscribed and on a refresh that finds the feed naming a cover
+//! it does not hold — a new address, a failed last attempt, a file gone from
+//! the store, or one older than [`COVER_TTL_MS`]. It is stored in the artwork
+//! store and handed out by hash; the address is shown to managers only.
 
 use std::path::Path;
 
@@ -48,8 +54,15 @@ pub struct PodcastChannelItem {
     pub title: String,
     pub description: Option<String>,
     pub site_url: Option<String>,
-    /// The cover the feed names. Never fetched by the server.
+    /// The cover address the feed names, to an account that may manage
+    /// podcasts, and `None` to everyone else: a private feed's cover can carry
+    /// its subscriber's token as readily as the feed. Readers are given
+    /// `artwork_hash` instead.
     pub image_url: Option<String>,
+    /// The cover, fetched by the server into the artwork store
+    /// (`/api/v2/artwork/{hash}`, Subsonic `coverArt`). `None` until a fetch
+    /// succeeds, or when the feed names none.
+    pub artwork_hash: Option<String>,
     /// `completed` when the last fetch succeeded, `error` when it did not.
     pub status: String,
     /// Why the last fetch failed, as a word from a fixed list.
@@ -67,6 +80,9 @@ pub struct PodcastEpisodeItem {
     pub id: Uuid,
     pub channel_id: Uuid,
     pub channel_title: String,
+    /// The channel's cover: an episode shows its channel's, and an episode's
+    /// own `itunes:image` is not fetched.
+    pub artwork_hash: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub published_at: Option<i64>,
@@ -149,7 +165,8 @@ impl PodcastRuntime {
 
 macro_rules! episode_columns {
     () => {
-        "SELECT e.id, e.channel_id, c.title AS channel_title, e.title, e.description, \
+        "SELECT e.id, e.channel_id, c.title AS channel_title, c.artwork_hash, e.title, \
+                e.description, \
                 e.published_at, e.duration_ms, e.status, e.error_code, e.file_size, e.suffix, \
                 e.created_at, b.position_ms \
          FROM podcast_episode e JOIN podcast_channel c ON c.id=e.channel_id \
@@ -159,8 +176,8 @@ macro_rules! episode_columns {
 
 macro_rules! channel_columns {
     () => {
-        "SELECT c.id, c.feed_url, c.title, c.description, c.site_url, c.image_url, c.status, \
-                c.error_code, c.created_at, c.refreshed_at, \
+        "SELECT c.id, c.feed_url, c.title, c.description, c.site_url, c.image_url, \
+                c.artwork_hash, c.status, c.error_code, c.created_at, c.refreshed_at, \
                 (SELECT COUNT(*) FROM podcast_episode e WHERE e.channel_id=c.id \
                    AND e.status<>'deleted') AS episode_count \
          FROM podcast_channel c "
@@ -328,6 +345,11 @@ impl DomainServices {
             return Err(ServiceError::Conflict.into());
         }
         let feed = self.fetch_feed(&url).await.map_err(PodcastFailure::Feed)?;
+        // Before the gate, like the feed: a cover that cannot be fetched
+        // subscribes the channel without one, and the next refresh tries again.
+        let cover = self
+            .channel_cover(feed.image_url.as_deref(), &KnownCover::default())
+            .await;
         let id = Uuid::new_v4();
         let now = now_ms();
         {
@@ -364,6 +386,7 @@ impl DomainServices {
                 return Err(ServiceError::Conflict.into());
             }
             upsert_episodes(&mut tx, id, &feed.episodes, now).await?;
+            write_cover(&mut tx, &id.to_string(), &cover, now).await?;
             tx.commit().await?;
         }
         Ok(self.podcast_channel(user_id, id).await?)
@@ -422,20 +445,28 @@ impl DomainServices {
         let Ok(_pass) = self.podcasts.refreshing.try_lock() else {
             return;
         };
-        let channels: Vec<(String, String)> =
-            match sqlx::query_as("SELECT id, feed_url FROM podcast_channel ORDER BY id")
-                .fetch_all(self.db.pool())
-                .await
-            {
-                Ok(channels) => channels,
-                Err(error) => {
-                    tracing::error!(error = %error, "podcast refresh could not list channels");
-                    return;
-                }
-            };
+        type ChannelRow = (String, String, Option<String>, Option<String>, Option<i64>);
+        let channels: Vec<ChannelRow> = match sqlx::query_as(
+            "SELECT id, feed_url, artwork_hash, artwork_url, artwork_fetched_at \
+             FROM podcast_channel ORDER BY id",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        {
+            Ok(channels) => channels,
+            Err(error) => {
+                tracing::error!(error = %error, "podcast refresh could not list channels");
+                return;
+            }
+        };
         let mut failed = 0usize;
-        for (id, feed_url) in &channels {
-            if let Err(error) = self.refresh_channel(id, feed_url).await {
+        for (id, feed_url, hash, url, fetched_at) in &channels {
+            let known = KnownCover {
+                hash: hash.clone(),
+                url: url.clone(),
+                fetched_at: *fetched_at,
+            };
+            if let Err(error) = self.refresh_channel(id, feed_url, &known).await {
                 failed += 1;
                 tracing::warn!(error = %error, "a podcast channel could not be refreshed");
             }
@@ -448,10 +479,21 @@ impl DomainServices {
         );
     }
 
-    async fn refresh_channel(&self, id: &str, feed_url: &str) -> Result<(), ServiceError> {
+    async fn refresh_channel(
+        &self,
+        id: &str,
+        feed_url: &str,
+        known: &KnownCover,
+    ) -> Result<(), ServiceError> {
         let fetched = match url::Url::parse(feed_url) {
             Ok(url) => self.fetch_feed(&url).await,
             Err(_) => Err("destination_refused".to_owned()),
+        };
+        // A feed that could not be read says nothing about its cover, which
+        // stays as it was.
+        let cover = match &fetched {
+            Ok(feed) => self.channel_cover(feed.image_url.as_deref(), known).await,
+            Err(_) => CoverWrite::Keep,
         };
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
@@ -476,6 +518,7 @@ impl DomainServices {
                 if updated.rows_affected() > 0 {
                     upsert_episodes(&mut tx, parse_uuid(id.to_owned())?, &feed.episodes, now)
                         .await?;
+                    write_cover(&mut tx, id, &cover, now).await?;
                 }
             }
             Err(code) => {
@@ -508,6 +551,34 @@ impl DomainServices {
             .await
             .map_err(|_| "invalid_feed".to_owned())?
             .map_err(podcast::FeedError::code)
+    }
+
+    /// What a refresh should do about the cover the feed names: keep the one
+    /// held, forget it, or the one it has just fetched.
+    ///
+    /// A fetch that fails keeps what is held — the old cover, when the feed
+    /// moved to a new one that cannot be reached — and stores nothing; the
+    /// next refresh tries again, because the address fetched from still
+    /// differs from the one named, or because no cover is held at all.
+    async fn channel_cover(&self, named: Option<&str>, known: &KnownCover) -> CoverWrite {
+        let file_present = match &known.hash {
+            Some(hash) => self.artwork_file_present(hash).await,
+            None => false,
+        };
+        match cover_plan(named, known, file_present, now_ms()) {
+            CoverPlan::Keep => CoverWrite::Keep,
+            CoverPlan::Clear => CoverWrite::Clear,
+            CoverPlan::Fetch(url) => match self
+                .fetch_remote_artwork(url, self.podcasts.settings.allow_http, "podcast cover")
+                .await
+            {
+                Some(artwork) => CoverWrite::Stored {
+                    artwork,
+                    url: url.to_owned(),
+                },
+                None => CoverWrite::Keep,
+            },
+        }
     }
 
     /// Queues an episode's download and answers at once.
@@ -932,6 +1003,107 @@ struct StoredEpisode {
     suffix: &'static str,
 }
 
+/// How long a cover fetched from an unchanged address is trusted before it is
+/// fetched again: a feed can replace the image behind the same address. A
+/// week, against the default refresh every six hours, is one cover fetch per
+/// channel per week rather than four a day.
+const COVER_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
+/// What a channel holds of its cover.
+#[derive(Debug, Default)]
+struct KnownCover {
+    hash: Option<String>,
+    /// The address `hash` was fetched from.
+    url: Option<String>,
+    fetched_at: Option<i64>,
+}
+
+/// What [`cover_plan`] decides, before anything is fetched.
+#[derive(Debug, PartialEq, Eq)]
+enum CoverPlan<'a> {
+    Keep,
+    Clear,
+    Fetch(&'a str),
+}
+
+/// What a refresh writes about the cover.
+enum CoverWrite {
+    Keep,
+    Clear,
+    Stored {
+        artwork: super::remote_artwork::FetchedArtwork,
+        url: String,
+    },
+}
+
+/// Whether the cover a feed names has to be fetched.
+///
+/// Only when the feed names one and the channel does not already hold it:
+/// fetched from that very address, its file still in the store, and fetched
+/// less than [`COVER_TTL_MS`] ago. A feed that names none any more has its
+/// cover forgotten, which releases it to the sweep.
+fn cover_plan<'a>(
+    named: Option<&'a str>,
+    known: &KnownCover,
+    file_present: bool,
+    now: i64,
+) -> CoverPlan<'a> {
+    let Some(named) = named else {
+        return if known.hash.is_some() || known.url.is_some() {
+            CoverPlan::Clear
+        } else {
+            CoverPlan::Keep
+        };
+    };
+    let held = known.hash.is_some()
+        && file_present
+        && known.url.as_deref() == Some(named)
+        && known
+            .fetched_at
+            .is_some_and(|at| now.saturating_sub(at) < COVER_TTL_MS);
+    if held {
+        CoverPlan::Keep
+    } else {
+        CoverPlan::Fetch(named)
+    }
+}
+
+/// Writes a cover decision onto a channel, in the transaction that writes the
+/// rest of its refresh.
+async fn write_cover(
+    tx: &mut sqlx::Transaction<'static, sqlx::Sqlite>,
+    channel_id: &str,
+    cover: &CoverWrite,
+    now: i64,
+) -> Result<(), sqlx::Error> {
+    match cover {
+        CoverWrite::Keep => {}
+        CoverWrite::Clear => {
+            sqlx::query(
+                "UPDATE podcast_channel SET artwork_hash=NULL, artwork_url=NULL, \
+                   artwork_fetched_at=NULL WHERE id=?",
+            )
+            .bind(channel_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+        CoverWrite::Stored { artwork, url } => {
+            super::remote_artwork::record_artwork(tx, artwork, "podcast", now).await?;
+            sqlx::query(
+                "UPDATE podcast_channel SET artwork_hash=?, artwork_url=?, artwork_fetched_at=? \
+                 WHERE id=?",
+            )
+            .bind(&artwork.hash)
+            .bind(url)
+            .bind(now)
+            .bind(channel_id)
+            .execute(&mut **tx)
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 /// Streams the answer at `url` into `staging`, at most `ceiling` bytes,
 /// answering its size, its BLAKE3 and its first bytes.
 async fn write_bounded(
@@ -1049,7 +1221,10 @@ fn channel_from_row(
         title: row.try_get("title")?,
         description: row.try_get("description")?,
         site_url: row.try_get("site_url")?,
-        image_url: row.try_get("image_url")?,
+        image_url: row
+            .try_get::<Option<String>, _>("image_url")?
+            .filter(|_| can_manage),
+        artwork_hash: row.try_get("artwork_hash")?,
         status: row.try_get("status")?,
         error: row.try_get("error_code")?,
         created_at: row.try_get("created_at")?,
@@ -1065,6 +1240,7 @@ fn episode_from_row(row: sqlx::sqlite::SqliteRow) -> Result<PodcastEpisodeItem, 
         id: parse_uuid(row.try_get("id")?)?,
         channel_id: parse_uuid(row.try_get("channel_id")?)?,
         channel_title: row.try_get("channel_title")?,
+        artwork_hash: row.try_get("artwork_hash")?,
         title: row.try_get("title")?,
         description: row.try_get("description")?,
         published_at: row.try_get("published_at")?,
@@ -1109,5 +1285,50 @@ mod tests {
             "http://127.0.0.1:8080/"
         );
         assert_eq!(feed_origin("not a url"), "");
+    }
+
+    #[test]
+    fn a_cover_is_fetched_when_it_is_new_changed_missing_or_stale() {
+        let url = "https://cdn.example.org/cover.jpg";
+        let now = 10 * COVER_TTL_MS;
+        let held = KnownCover {
+            hash: Some("a".repeat(64)),
+            url: Some(url.to_owned()),
+            fetched_at: Some(now - 1_000),
+        };
+        // Held, from this address, recently, with its file: nothing to do.
+        assert_eq!(cover_plan(Some(url), &held, true, now), CoverPlan::Keep);
+        // Nothing held yet, or a fetch that failed last time.
+        assert_eq!(
+            cover_plan(Some(url), &KnownCover::default(), false, now),
+            CoverPlan::Fetch(url)
+        );
+        // The feed moved to another cover.
+        let moved = "https://cdn.example.org/cover-2.jpg";
+        assert_eq!(
+            cover_plan(Some(moved), &held, true, now),
+            CoverPlan::Fetch(moved)
+        );
+        // The file is gone from the store.
+        assert_eq!(
+            cover_plan(Some(url), &held, false, now),
+            CoverPlan::Fetch(url)
+        );
+        // Older than the TTL.
+        let stale = KnownCover {
+            fetched_at: Some(now - COVER_TTL_MS),
+            ..held
+        };
+        assert_eq!(
+            cover_plan(Some(url), &stale, true, now),
+            CoverPlan::Fetch(url)
+        );
+        // The feed names none any more: forgotten, and nothing to forget when
+        // nothing was held.
+        assert_eq!(cover_plan(None, &stale, true, now), CoverPlan::Clear);
+        assert_eq!(
+            cover_plan(None, &KnownCover::default(), false, now),
+            CoverPlan::Keep
+        );
     }
 }

@@ -546,7 +546,7 @@ pub struct TrackMetadataPatch {
 /// supplies the outer `None` when it is absent — so wrapping whatever the field
 /// holds in `Some` is exactly the distinction: `Some(None)` for `null`,
 /// `Some(Some(value))` for a value.
-fn present<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+pub(crate) fn present<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
 where
     T: Deserialize<'de>,
     D: serde::Deserializer<'de>,
@@ -1293,7 +1293,8 @@ pub struct BookmarkItem {
 /// Not a catalogue entity: no library, no tags, nothing scanned. The server
 /// stores the address and hands it to the client, and never fetches it — see
 /// `src/services/radio.rs` for why that single decision is the feature's security
-/// answer.
+/// answer. The station's image is the one address it fetches, once, when it
+/// is set.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RadioStationItem {
     pub id: Uuid,
@@ -1303,6 +1304,13 @@ pub struct RadioStationItem {
     /// The station's own page, when it gave one. Omitting it on a write clears
     /// it, because a station is replaced rather than patched.
     pub homepage_url: Option<String>,
+    /// The image address the account gave, kept whether or not it could be
+    /// fetched. Shown to the station's own account only, as the station is.
+    pub image_url: Option<String>,
+    /// The image, fetched once into the artwork store
+    /// (`/api/v2/artwork/{hash}`). `None` when there is no image address or
+    /// its fetch failed; a client then shows its default symbol.
+    pub artwork_hash: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -1494,6 +1502,9 @@ pub struct DomainServices {
     /// Podcasts (RFC-025): the settings, and the one download permit and one
     /// refresh lock the background work shares.
     podcasts: podcasts::PodcastRuntime,
+    /// Podcast covers and station images (RFC-025, amended): whether they are
+    /// fetched, how long one may take, and which addresses it may reach.
+    remote_artwork: crate::config::RemoteArtworkSettings,
     /// Smart playlists (RFC-025): what each reader was last shown, the
     /// evaluation counter and the evaluation budget.
     smart: smart_playlists::SmartRuntime,
@@ -1563,6 +1574,7 @@ mod playlists;
 mod podcasts;
 mod quality;
 mod radio;
+mod remote_artwork;
 mod remote_lyrics;
 // RFC-024: what the listening history and the catalogue suggest.
 mod local_similar;
@@ -1619,6 +1631,7 @@ pub use quality::{
     AnalysisState, QualityAnalysis, QualitySummary, QualityTrack, QualityVerdict,
     QualityVerdictCount, Spectrogram, TrackQuality, TrackQualityDetail,
 };
+pub use radio::StationImage;
 pub use scrobbling::{
     ScrobbleDestinationName, ScrobbleDrain, ScrobbleEnvelope, ScrobbleLinkState, ScrobbleProvider,
     ScrobbleTarget, ScrobbleUnavailable, ScrobbleVerdict, UncertainScrobble,
@@ -1693,6 +1706,7 @@ impl DomainServices {
                 crate::lrclib::LyricsLookup::disabled(),
             )),
             podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
+            remote_artwork: config.remote_artwork,
             smart: smart_playlists::SmartRuntime::new(config.db_max_connections),
         }
     }

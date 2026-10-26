@@ -5,10 +5,17 @@
 //! length is not declared, one declaring entities, redirects to a private
 //! address for a feed and for an enclosure, a redirect loop, and an enclosure
 //! that is a page of HTML.
+//!
+//! So are the images fetched from another host (RFC-025, amended): a feed's
+//! cover and a radio station's image go through one fetcher, so they are
+//! proved against the same host — an image over the ceiling, a page of HTML
+//! labelled as an image, a redirect to a private address, an unchanged address
+//! not fetched twice, and the sweep keeping what a channel or a station names
+//! until it is deleted.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use axum::{
@@ -43,6 +50,10 @@ struct Host {
     hits: Arc<dashmap::DashMap<String, usize>>,
     /// The feed answers 500 while this is set.
     failing: Arc<AtomicBool>,
+    /// `/cover.jpg` answers 500 while this is set.
+    cover_failing: Arc<AtomicBool>,
+    /// The cover `/feed.xml` names, as a path on this host.
+    cover: Arc<Mutex<String>>,
 }
 
 impl Host {
@@ -51,13 +62,32 @@ impl Host {
     }
 }
 
-/// The feed, its enclosures carrying `tail` — a private feed's enclosures
-/// carry its subscriber's token too.
-fn feed(base: &str) -> String {
-    private_feed(base, "")
+/// A JPEG by its first bytes, which is all the server checks: the start of
+/// image and an APP0 marker, `seed` to tell two covers apart, padding.
+fn jpeg(seed: u8) -> Vec<u8> {
+    let mut bytes = vec![0xff, 0xd8, 0xff, 0xe0, seed];
+    bytes.extend((0..4096).map(|index| (index % 251) as u8));
+    bytes
 }
 
-fn private_feed(base: &str, tail: &str) -> String {
+/// A PNG by its signature.
+fn png() -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    bytes.extend((0..4096).map(|index| (index % 241) as u8));
+    bytes
+}
+
+/// The feed, its enclosures carrying `tail` — a private feed's enclosures
+/// carry its subscriber's token too.
+fn feed(base: &str, cover: &str) -> String {
+    private_feed(base, "", cover)
+}
+
+/// A feed naming `cover` as its image: a path on the host, with the private
+/// feed's token on it as `cover=` rather than `auth=`, so a test can tell the
+/// cover's address from an enclosure's.
+fn private_feed(base: &str, tail: &str, cover: &str) -> String {
+    let cover_tail = tail.replacen("?auth=", "?cover=", 1);
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
@@ -65,7 +95,7 @@ fn private_feed(base: &str, tail: &str) -> String {
     <title>Night Shift</title>
     <description>Talk after dark</description>
     <link>{base}/</link>
-    <itunes:image href="{base}/cover.jpg"/>
+    <itunes:image href="{base}{cover}{cover_tail}"/>
     <item><title>Through a redirect</title><guid>ep-1</guid>
       <pubDate>Fri, 05 Jan 2024 10:00:00 +0000</pubDate><itunes:duration>12:00</itunes:duration>
       <enclosure url="{base}/redirect-audio{tail}" type="audio/mpeg"/></item>
@@ -96,19 +126,72 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
     {
         return (
             [(header::CONTENT_TYPE, "application/rss+xml")],
-            private_feed(&host.base, &format!("?auth={token}")),
+            private_feed(&host.base, &format!("?auth={token}"), "/cover.jpg"),
         )
             .into_response();
     }
+    // A feed naming whatever follows the prefix as its cover, for the
+    // hostile covers below.
+    if let Some(cover) = path.strip_prefix("/covered") {
+        return (
+            [(header::CONTENT_TYPE, "application/rss+xml")],
+            feed(&host.base, cover),
+        )
+            .into_response();
+    }
+    let image = |mime: &'static str, bytes: Vec<u8>| {
+        ([(header::CONTENT_TYPE, mime)], bytes).into_response()
+    };
     match path.as_str() {
         "/feed.xml" if host.failing.load(Ordering::SeqCst) => {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
-        "/feed.xml" => (
-            [(header::CONTENT_TYPE, "application/rss+xml")],
-            feed(&host.base),
-        )
-            .into_response(),
+        "/feed.xml" => {
+            let cover = host.cover.lock().unwrap().clone();
+            (
+                [(header::CONTENT_TYPE, "application/rss+xml")],
+                feed(&host.base, &cover),
+            )
+                .into_response()
+        }
+        "/cover.jpg" if host.cover_failing.load(Ordering::SeqCst) => {
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        "/cover.jpg" => image("image/jpeg", jpeg(1)),
+        "/cover-2.jpg" => image("image/jpeg", jpeg(2)),
+        // Object storage labels everything so; the bytes decide.
+        "/unlabelled.jpg" => image("application/octet-stream", jpeg(3)),
+        "/station.png" => image("image/png", png()),
+        "/redirect-cover" => redirect("/cover-2.jpg"),
+        // Over the 10 MiB ceiling, declared.
+        "/huge.jpg" => {
+            let mut bytes = jpeg(4);
+            bytes.resize(11 * 1024 * 1024, 0);
+            image("image/jpeg", bytes)
+        }
+        // Over the ceiling and never saying so: met while reading.
+        "/endless.jpg" => {
+            let head = futures_util::stream::once(async { Ok::<_, std::io::Error>(jpeg(5)) });
+            let tail = futures_util::stream::iter(
+                (0..200).map(|_| Ok::<_, std::io::Error>(vec![0u8; 64 * 1024])),
+            );
+            (
+                [(header::CONTENT_TYPE, "image/jpeg")],
+                Body::from_stream(futures_util::StreamExt::chain(head, tail)),
+            )
+                .into_response()
+        }
+        // A page of HTML, labelled as an image and as what it is.
+        "/page-as-image.jpg" => image(
+            "image/jpeg",
+            b"<html><body>not a cover</body></html>".to_vec(),
+        ),
+        "/page.htm" => image(
+            "text/html",
+            b"<html><body>not a cover</body></html>".to_vec(),
+        ),
+        "/cover-to-private" => redirect("http://10.255.255.1/cover.jpg"),
+        "/cover-to-mapped-private" => redirect("http://[::ffff:192.168.1.1]/cover.jpg"),
         // Streamed, so no length is declared and the ceiling has to be met
         // while reading.
         "/big.xml" => {
@@ -148,6 +231,8 @@ async fn fake_host() -> Host {
         base: Arc::new(format!("http://127.0.0.1:{port}")),
         hits: Arc::default(),
         failing: Arc::default(),
+        cover_failing: Arc::default(),
+        cover: Arc::new(Mutex::new("/cover.jpg".to_owned())),
     };
     let router = Router::new().fallback(serve).with_state(host.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -874,4 +959,447 @@ async fn body_bytes(response: Response) -> Vec<u8> {
 
 async fn json_or_xml_code(response: Response) -> String {
     String::from_utf8(body_bytes(response).await).unwrap()
+}
+
+/// The hash the store files an image under.
+fn hash_of(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
+
+/// The bytes `/api/v2/artwork/{hash}` answers, or its status when it does not.
+async fn artwork(router: &Router, token: &str, hash: &str) -> Result<Vec<u8>, StatusCode> {
+    let response = send_json(
+        router,
+        "GET",
+        &format!("/api/v2/artwork/{hash}"),
+        token,
+        None,
+    )
+    .await;
+    if response.status() == StatusCode::OK {
+        Ok(body_bytes(response).await)
+    } else {
+        Err(response.status())
+    }
+}
+
+async fn artwork_rows(state: &waveflow_server::AppState) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap()
+}
+
+async fn station(
+    router: &Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (StatusCode, serde_json::Value) {
+    let response = send_json(router, method, uri, token, Some(body)).await;
+    let status = response.status();
+    (status, json_body(response).await)
+}
+
+/// RFC-025, amended: a feed's cover is fetched into the artwork store and
+/// handed out by its hash — natively, and as Subsonic `coverArt` on channels
+/// and episodes — to every account, while the address it came from is shown
+/// to a manager only. An unchanged address is not fetched again; a new one
+/// is, once, through a redirect, and the cover it replaces is released.
+#[tokio::test]
+async fn a_feeds_cover_is_fetched_once_and_served_by_its_hash() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (_, admin_password, admin_key) = account(&state, "cover-admin", AccountRole::Admin).await;
+    let (reader, reader_password, reader_key) =
+        account(&state, "cover-reader", AccountRole::User).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let admin_token = login_token(&router, "cover-admin", &admin_password).await;
+    let reader_token = login_token(&router, "cover-reader", &reader_password).await;
+
+    let (status, channel) =
+        subscribe(&router, &admin_token, &format!("{}/feed.xml", host.base)).await;
+    assert_eq!(status, StatusCode::CREATED, "{channel}");
+    let hash = hash_of(&jpeg(1));
+    assert_eq!(channel["artwork_hash"], hash.as_str(), "{channel}");
+    assert_eq!(host.count("/cover.jpg"), 1);
+    assert_eq!(
+        channel["image_url"],
+        format!("{}/cover.jpg", host.base).as_str(),
+        "a manager is shown the address the feed names"
+    );
+    let channel_id = uuid_of(&channel);
+
+    // A reader is given the hash, never the address.
+    let read = json_body(
+        send_json(
+            &router,
+            "GET",
+            &format!("/api/v2/podcasts/{channel_id}"),
+            &reader_token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert!(read["image_url"].is_null(), "{read}");
+    assert_eq!(read["artwork_hash"], hash.as_str());
+    assert_eq!(
+        episode(&read, "Through a redirect")["artwork_hash"],
+        hash.as_str(),
+        "an episode shows its channel's cover"
+    );
+    assert_eq!(artwork(&router, &reader_token, &hash).await, Ok(jpeg(1)));
+
+    // Subsonic: `coverArt` on the channel and its episodes, and served by
+    // `getCoverArt`; `originalImageUrl` to a manager only.
+    let listed = subsonic_json(&router, "getPodcasts", &reader_key, "").await;
+    let listed = &listed["subsonic-response"]["podcasts"]["channel"][0];
+    assert_eq!(listed["coverArt"], hash.as_str(), "{listed}");
+    assert!(omits(listed, "originalImageUrl"), "{listed}");
+    assert_eq!(listed["episode"][0]["coverArt"], hash.as_str());
+    let newest = subsonic_json(&router, "getNewestPodcasts", &reader_key, "").await;
+    assert_eq!(
+        newest["subsonic-response"]["newestPodcasts"]["episode"][0]["coverArt"],
+        hash.as_str()
+    );
+    let managed = subsonic_json(&router, "getPodcasts", &admin_key, "").await;
+    assert_eq!(
+        managed["subsonic-response"]["podcasts"]["channel"][0]["originalImageUrl"],
+        format!("{}/cover.jpg", host.base).as_str()
+    );
+    let cover = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/getCoverArt.view?apiKey={reader_key}&v=1.16.1&c=golden&id={hash}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cover.status(), StatusCode::OK);
+    assert_eq!(body_bytes(cover).await, jpeg(1));
+
+    // Refreshed with the same address: the feed is read, the cover is not.
+    state.services.refresh_all_podcasts().await;
+    assert_eq!(host.count("/feed.xml"), 2);
+    assert_eq!(
+        host.count("/cover.jpg"),
+        1,
+        "an unchanged cover is not fetched again"
+    );
+
+    // The feed names another cover, behind a redirect: fetched once.
+    *host.cover.lock().unwrap() = "/redirect-cover".to_owned();
+    state.services.refresh_all_podcasts().await;
+    state.services.refresh_all_podcasts().await;
+    assert_eq!(host.count("/cover-2.jpg"), 1);
+    let moved = state
+        .services
+        .podcast_channel(reader, channel_id)
+        .await
+        .unwrap();
+    assert_eq!(moved.artwork_hash, Some(hash_of(&jpeg(2))));
+    // The first cover is named by nothing now, and the sweep forgets it.
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.rows_removed, 1);
+    assert_eq!(
+        artwork(&router, &reader_token, &hash).await,
+        Err(StatusCode::NOT_FOUND)
+    );
+}
+
+/// What a cover fetch refuses, it refuses before anything is kept: an image
+/// over the 10 MiB ceiling, declared or not; a page of HTML, labelled as an
+/// image or as what it is; a redirect to a private address. The channel is
+/// subscribed all the same, without a cover. A fetch that fails is tried again
+/// on the next refresh, and an image labelled as nothing in particular is
+/// recognised by its bytes.
+#[tokio::test]
+async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (admin, password, _) = account(&state, "cover-guard", AccountRole::Admin).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "cover-guard", &password).await;
+
+    for (cover, why) in [
+        ("/huge.jpg", "declared over the ceiling"),
+        ("/endless.jpg", "over the ceiling, undeclared"),
+        ("/page-as-image.jpg", "HTML labelled as an image"),
+        ("/page.htm", "HTML labelled as HTML"),
+        ("/cover-to-private", "a redirect to a private address"),
+        (
+            "/cover-to-mapped-private",
+            "a redirect to a mapped private address",
+        ),
+    ] {
+        let (status, channel) =
+            subscribe(&router, &token, &format!("{}/covered{cover}", host.base)).await;
+        assert_eq!(status, StatusCode::CREATED, "{why}: {channel}");
+        assert!(channel["artwork_hash"].is_null(), "{why}: {channel}");
+        assert_eq!(host.count(cover), 1, "{why}");
+    }
+    assert_eq!(artwork_rows(&state).await, 0);
+    let written = std::fs::read_dir(&config.artwork_dir)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(written, 0, "a refused cover leaves nothing in the store");
+
+    // Labelled as nothing in particular, and a JPEG by its bytes.
+    let (_, channel) = subscribe(
+        &router,
+        &token,
+        &format!("{}/covered/unlabelled.jpg", host.base),
+    )
+    .await;
+    assert_eq!(channel["artwork_hash"], hash_of(&jpeg(3)).as_str());
+
+    // A host that fails stores nothing, and the next refresh tries again.
+    host.cover_failing.store(true, Ordering::SeqCst);
+    let (_, channel) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    assert!(channel["artwork_hash"].is_null(), "{channel}");
+    host.cover_failing.store(false, Ordering::SeqCst);
+    state.services.refresh_all_podcasts().await;
+    let retried = state
+        .services
+        .podcast_channel(admin, uuid_of(&channel))
+        .await
+        .unwrap();
+    assert_eq!(retried.artwork_hash, Some(hash_of(&jpeg(1))));
+    assert_eq!(host.count("/cover.jpg"), 2);
+}
+
+/// A station's image (RFC-025, amended): fetched when an account sets it,
+/// served to that account alone, kept by a write that does not mention it —
+/// a Subsonic edit above all — and fetched again only when the address
+/// changes or the last fetch failed.
+#[tokio::test]
+async fn a_station_image_is_fetched_when_set_and_served_to_its_account_only() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (_, owner_password, owner_key) = account(&state, "station-owner", AccountRole::User).await;
+    let (_, other_password, _) = account(&state, "station-other", AccountRole::User).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let owner = login_token(&router, "station-owner", &owner_password).await;
+    let other = login_token(&router, "station-other", &other_password).await;
+    let image_url = format!("{}/station.png", host.base);
+    let stream_url = "https://radio.example.org/stream";
+
+    let (status, created) = station(
+        &router,
+        "POST",
+        "/api/v2/radio-stations",
+        &owner,
+        json!({ "name": "Night Radio", "stream_url": stream_url, "image_url": image_url }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let hash = hash_of(&png());
+    assert_eq!(created["artwork_hash"], hash.as_str(), "{created}");
+    assert_eq!(created["image_url"], image_url.as_str());
+    assert_eq!(host.count("/station.png"), 1);
+    let station_id = uuid_of(&created);
+    let uri = format!("/api/v2/radio-stations/{station_id}");
+
+    assert_eq!(artwork(&router, &owner, &hash).await, Ok(png()));
+    assert_eq!(
+        artwork(&router, &other, &hash).await,
+        Err(StatusCode::NOT_FOUND),
+        "another account's station image is 404, like the station"
+    );
+
+    // Saved with the same address: not fetched again.
+    let (status, saved) = station(
+        &router,
+        "PUT",
+        &uri,
+        &owner,
+        json!({ "name": "Night Radio 2", "stream_url": stream_url, "image_url": image_url }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["artwork_hash"], hash.as_str());
+    assert_eq!(
+        host.count("/station.png"),
+        1,
+        "an unchanged image is not fetched again"
+    );
+
+    // A write that does not mention the image keeps it, natively and through
+    // Subsonic, which has no image parameter at all.
+    let (_, kept) = station(
+        &router,
+        "PUT",
+        &uri,
+        &owner,
+        json!({ "name": "Night Radio 3", "stream_url": stream_url }),
+    )
+    .await;
+    assert_eq!(kept["artwork_hash"], hash.as_str(), "{kept}");
+    subsonic_json(
+        &router,
+        "updateInternetRadioStation",
+        &owner_key,
+        &format!("&id={station_id}&name=Renamed&streamUrl={stream_url}"),
+    )
+    .await;
+    let renamed = json_body(send_json(&router, "GET", &uri, &owner, None).await).await;
+    assert_eq!(renamed["name"], "Renamed");
+    assert_eq!(renamed["artwork_hash"], hash.as_str(), "{renamed}");
+    assert_eq!(renamed["image_url"], image_url.as_str());
+    // The protocol's station shape is unchanged.
+    let listed = subsonic_json(&router, "getInternetRadioStations", &owner_key, "").await;
+    let listed = &listed["subsonic-response"]["internetRadioStations"]["internetRadioStation"][0];
+    assert!(omits(listed, "coverArt"), "{listed}");
+
+    // An image that cannot be fetched keeps its address and shows none; the
+    // next save that carries the address tries again.
+    host.cover_failing.store(true, Ordering::SeqCst);
+    let cover_url = format!("{}/cover.jpg", host.base);
+    let (status, failed) = station(
+        &router,
+        "PUT",
+        &uri,
+        &owner,
+        json!({ "name": "Renamed", "stream_url": stream_url, "image_url": cover_url }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{failed}");
+    assert_eq!(failed["image_url"], cover_url.as_str());
+    assert!(failed["artwork_hash"].is_null(), "{failed}");
+    host.cover_failing.store(false, Ordering::SeqCst);
+    let (_, retried) = station(
+        &router,
+        "PUT",
+        &uri,
+        &owner,
+        json!({ "name": "Renamed", "stream_url": stream_url, "image_url": cover_url }),
+    )
+    .await;
+    assert_eq!(
+        retried["artwork_hash"],
+        hash_of(&jpeg(1)).as_str(),
+        "{retried}"
+    );
+    assert_eq!(host.count("/cover.jpg"), 2);
+
+    // Cleared by `null`, or by a blank value.
+    for cleared in [json!(null), json!("  ")] {
+        let (_, saved) = station(
+            &router,
+            "PUT",
+            &uri,
+            &owner,
+            json!({ "name": "Renamed", "stream_url": stream_url, "image_url": cleared }),
+        )
+        .await;
+        assert!(saved["image_url"].is_null(), "{saved}");
+        assert!(saved["artwork_hash"].is_null(), "{saved}");
+    }
+
+    // Validated as the homepage is, and refused before anything is fetched.
+    let (status, _) = station(
+        &router,
+        "POST",
+        "/api/v2/radio-stations",
+        &owner,
+        json!({ "name": "Bad", "stream_url": stream_url, "image_url": "file:///etc/passwd" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    // A redirect to a private address is refused at the hop; the station is
+    // kept, without an image.
+    let (status, guarded) = station(
+        &router,
+        "POST",
+        "/api/v2/radio-stations",
+        &owner,
+        json!({
+            "name": "Guarded",
+            "stream_url": stream_url,
+            "image_url": format!("{}/cover-to-private", host.base),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(guarded["artwork_hash"].is_null(), "{guarded}");
+    // Another account cannot make this account's station fetch anything.
+    let (status, _) = station(
+        &router,
+        "PUT",
+        &uri,
+        &other,
+        json!({
+            "name": "Taken",
+            "stream_url": stream_url,
+            "image_url": format!("{}/cover-2.jpg", host.base),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(host.count("/cover-2.jpg"), 0);
+}
+
+/// The sweep counts a channel's cover and a station's image as referenced, so
+/// neither is collected while it is named, however old its file; deleting the
+/// channel and the station releases both.
+#[tokio::test]
+async fn covers_named_by_a_channel_or_a_station_survive_the_sweep_until_deleted() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (_, password, _) = account(&state, "sweep-admin", AccountRole::Admin).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "sweep-admin", &password).await;
+
+    let (_, channel) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    let (_, created) = station(
+        &router,
+        "POST",
+        "/api/v2/radio-stations",
+        &token,
+        json!({
+            "name": "Kept",
+            "stream_url": "https://radio.example.org/stream",
+            "image_url": format!("{}/station.png", host.base),
+        }),
+    )
+    .await;
+    let files = [
+        config
+            .artwork_dir
+            .join(format!("{}.jpg", hash_of(&jpeg(1)))),
+        config.artwork_dir.join(format!("{}.png", hash_of(&png()))),
+    ];
+    // Older than the sweep's grace, so only a reference can keep them.
+    for file in &files {
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.rows_removed, 0, "{swept:?}");
+    assert_eq!(swept.covers_removed, 0, "{swept:?}");
+    assert!(files.iter().all(|file| file.exists()));
+    assert_eq!(artwork_rows(&state).await, 2);
+
+    for uri in [
+        format!("/api/v2/podcasts/{}", uuid_of(&channel)),
+        format!("/api/v2/radio-stations/{}", uuid_of(&created)),
+    ] {
+        let deleted = send_json(&router, "DELETE", &uri, &token, None).await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT, "{uri}");
+    }
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.rows_removed, 2, "{swept:?}");
+    assert_eq!(swept.covers_removed, 2, "{swept:?}");
+    assert!(files.iter().all(|file| !file.exists()));
 }

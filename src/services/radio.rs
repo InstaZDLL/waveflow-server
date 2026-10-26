@@ -11,8 +11,48 @@
 //! anything the server fetched on its own behalf would be a request forger
 //! reaching whatever the server can reach — the private network it runs in
 //! included. Deciding not to proxy is also what makes the feature small.
+//!
+//! **The image is the one address it does fetch, once.** A station may carry an
+//! `image_url`, and the web client cannot load it from its host (RFC-019's
+//! `img-src`, and the listener's address that would leak with it). So the
+//! server fetches it when an account sets or changes it — never on a timer, and
+//! never while anybody listens — through the rules a podcast cover is fetched
+//! under ([`crate::portrait::fetch_followed`]): public addresses only, checked
+//! and pinned, redirects followed by hand and each hop checked, 10 MiB, and the
+//! bytes sniffed as JPEG, PNG or WebP. Only the image comes back, and only into
+//! the artwork store; a failure keeps the address and shows no image, and the
+//! next save that carries the address tries again.
 
+use super::remote_artwork::{record_artwork, FetchedArtwork};
 use super::*;
+
+/// What a write does to a station's image.
+#[derive(Debug, Clone, Copy)]
+pub enum StationImage<'a> {
+    /// Leaves it as it is: what the Subsonic writes do, since the protocol has
+    /// no image parameter, and what a native write that does not mention the
+    /// field does.
+    Keep,
+    /// Sets it, or clears it with `None` or a blank value.
+    Set(Option<&'a str>),
+}
+
+/// What a write stores of the image, decided before the writer gate.
+enum ImageWrite {
+    Keep,
+    Store {
+        image_url: Option<String>,
+        artwork_hash: Option<String>,
+        fetched: Option<FetchedArtwork>,
+    },
+}
+
+macro_rules! station_select {
+    () => {
+        "SELECT id, name, stream_url, homepage_url, image_url, artwork_hash, created_at, \
+                updated_at FROM radio_station "
+    };
+}
 
 /// How many stations one account may keep.
 ///
@@ -42,10 +82,10 @@ impl DomainServices {
         user_id: Uuid,
     ) -> Result<Vec<RadioStationItem>, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        let rows = sqlx::query(
-            "SELECT id, name, stream_url, homepage_url, created_at, updated_at \
-             FROM radio_station WHERE user_id=? ORDER BY name COLLATE NOCASE, id",
-        )
+        let rows = sqlx::query(concat!(
+            station_select!(),
+            "WHERE user_id=? ORDER BY name COLLATE NOCASE, id"
+        ))
         .bind(user_id.to_string())
         .fetch_all(&mut *connection)
         .await?;
@@ -60,15 +100,12 @@ impl DomainServices {
         station_id: Uuid,
     ) -> Result<RadioStationItem, ServiceError> {
         let mut connection = self.db.pool().acquire().await?;
-        let row = sqlx::query(
-            "SELECT id, name, stream_url, homepage_url, created_at, updated_at \
-             FROM radio_station WHERE user_id=? AND id=?",
-        )
-        .bind(user_id.to_string())
-        .bind(station_id.to_string())
-        .fetch_optional(&mut *connection)
-        .await?
-        .ok_or(ServiceError::NotFound)?;
+        let row = sqlx::query(concat!(station_select!(), "WHERE user_id=? AND id=?"))
+            .bind(user_id.to_string())
+            .bind(station_id.to_string())
+            .fetch_optional(&mut *connection)
+            .await?
+            .ok_or(ServiceError::NotFound)?;
         radio_station_from_row(row)
     }
 
@@ -77,16 +114,26 @@ impl DomainServices {
     /// Nothing is deduplicated. Two rows may carry the same address under two
     /// names, because `updateInternetRadioStation` has no conflict code to
     /// report with and a client told "failed" would have nothing to act on.
+    ///
+    /// An `image_url` is fetched here, before the writer gate, and a station
+    /// whose image cannot be fetched is created all the same, with the address
+    /// and without the image.
     pub async fn create_radio_station(
         &self,
         user_id: Uuid,
         name: &str,
         stream_url: &str,
         homepage_url: Option<&str>,
+        image_url: Option<&str>,
     ) -> Result<RadioStationItem, ServiceError> {
         let name = validated_name(name)?;
         let stream_url = validated_url(stream_url)?;
         let homepage_url = validated_homepage(homepage_url)?;
+        let image_url = validated_homepage(image_url)?;
+        let fetched = match &image_url {
+            Some(url) => self.fetch_station_image(url).await,
+            None => None,
+        };
         let id = Uuid::new_v4();
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
@@ -106,16 +153,23 @@ impl DomainServices {
             tx.rollback().await?;
             return Err(ServiceError::Conflict);
         }
+        if let Some(fetched) = &fetched {
+            record_artwork(&mut tx, fetched, "station", now).await?;
+        }
+        let artwork_hash = fetched.map(|fetched| fetched.hash);
         sqlx::query(
             "INSERT INTO radio_station \
-               (id, user_id, name, stream_url, homepage_url, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+               (id, user_id, name, stream_url, homepage_url, image_url, artwork_hash, \
+                created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(id.to_string())
         .bind(user_id.to_string())
         .bind(&name)
         .bind(&stream_url)
         .bind(homepage_url.as_deref())
+        .bind(image_url.as_deref())
+        .bind(artwork_hash.as_deref())
         .bind(now)
         .bind(now)
         .execute(&mut *tx)
@@ -126,18 +180,28 @@ impl DomainServices {
             name,
             stream_url,
             homepage_url,
+            image_url,
+            artwork_hash,
             created_at: now,
             updated_at: now,
         })
     }
 
-    /// Replaces a station's three fields.
+    /// Replaces a station's three fields, and its image when told to.
     ///
     /// A replacement and not a patch, on both surfaces: the protocol's
     /// `updateInternetRadioStation` requires the name and the address every
     /// time, so omitting the homepage there clears it. A native `PATCH` that
     /// kept the old value instead would make the same call mean two different
     /// things depending on which door it came through.
+    ///
+    /// The image is the exception, and for the same reason turned around: the
+    /// protocol has no image parameter, so a Subsonic edit says nothing about
+    /// it and [`StationImage::Keep`] leaves it alone — otherwise renaming a
+    /// station in any Subsonic client would take its image away. An address
+    /// that is the one already stored, with its image in the store, is not
+    /// fetched again; any other is, and a failure stores the address with no
+    /// image, so saving the station again is how a fetch is retried.
     pub async fn update_radio_station(
         &self,
         user_id: Uuid,
@@ -145,44 +209,73 @@ impl DomainServices {
         name: &str,
         stream_url: &str,
         homepage_url: Option<&str>,
+        image: StationImage<'_>,
     ) -> Result<RadioStationItem, ServiceError> {
         let name = validated_name(name)?;
         let stream_url = validated_url(stream_url)?;
         let homepage_url = validated_homepage(homepage_url)?;
+        let image = match image {
+            StationImage::Keep => ImageWrite::Keep,
+            StationImage::Set(value) => {
+                let image_url = validated_homepage(value)?;
+                self.station_image_write(user_id, station_id, image_url)
+                    .await?
+            }
+        };
         let now = now_ms();
         let _writer = self.db.writer_guard().await;
-        let mut connection = self.db.pool().acquire().await?;
-        let updated = sqlx::query(
-            "UPDATE radio_station SET name=?, stream_url=?, homepage_url=?, updated_at=? \
-             WHERE user_id=? AND id=?",
-        )
-        .bind(&name)
-        .bind(&stream_url)
-        .bind(homepage_url.as_deref())
-        .bind(now)
-        .bind(user_id.to_string())
-        .bind(station_id.to_string())
-        .execute(&mut *connection)
-        .await?;
-        if updated.rows_affected() == 0 {
-            return Err(ServiceError::NotFound);
-        }
-        // `created_at` is the only field the caller did not supply, so it is the
-        // only reason to read the row back.
-        let created_at: i64 =
-            sqlx::query_scalar("SELECT created_at FROM radio_station WHERE user_id=? AND id=?")
+        let mut tx = self.db.begin_write(&_writer).await?;
+        let updated = match &image {
+            ImageWrite::Keep => sqlx::query(
+                "UPDATE radio_station SET name=?, stream_url=?, homepage_url=?, updated_at=? \
+                 WHERE user_id=? AND id=?",
+            )
+            .bind(&name)
+            .bind(&stream_url)
+            .bind(homepage_url.as_deref())
+            .bind(now)
+            .bind(user_id.to_string())
+            .bind(station_id.to_string())
+            .execute(&mut *tx)
+            .await?
+            .rows_affected(),
+            ImageWrite::Store {
+                image_url,
+                artwork_hash,
+                fetched,
+            } => {
+                if let Some(fetched) = fetched {
+                    record_artwork(&mut tx, fetched, "station", now).await?;
+                }
+                sqlx::query(
+                    "UPDATE radio_station SET name=?, stream_url=?, homepage_url=?, image_url=?, \
+                       artwork_hash=?, updated_at=? \
+                     WHERE user_id=? AND id=?",
+                )
+                .bind(&name)
+                .bind(&stream_url)
+                .bind(homepage_url.as_deref())
+                .bind(image_url.as_deref())
+                .bind(artwork_hash.as_deref())
+                .bind(now)
                 .bind(user_id.to_string())
                 .bind(station_id.to_string())
-                .fetch_one(&mut *connection)
-                .await?;
-        Ok(RadioStationItem {
-            id: station_id,
-            name,
-            stream_url,
-            homepage_url,
-            created_at,
-            updated_at: now,
-        })
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+            }
+        };
+        if updated == 0 {
+            tx.rollback().await?;
+            return Err(ServiceError::NotFound);
+        }
+        let row = sqlx::query(concat!(station_select!(), "WHERE user_id=? AND id=?"))
+            .bind(user_id.to_string())
+            .bind(station_id.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        radio_station_from_row(row)
     }
 
     /// Removes a station.
@@ -191,6 +284,9 @@ impl DomainServices {
     /// the track it sits on, so removing one that is not there is not the same
     /// request answered twice — it names something that does not exist, and the
     /// account cannot tell that from one belonging to somebody else.
+    ///
+    /// Its image goes with it: nothing names the hash any more, and the
+    /// artwork sweep collects it.
     pub async fn delete_radio_station(
         &self,
         user_id: Uuid,
@@ -208,6 +304,62 @@ impl DomainServices {
         }
         Ok(())
     }
+
+    /// What an edit that sets the image stores, decided before the gate: the
+    /// image already held when the address has not changed and its file is in
+    /// the store, a fresh fetch otherwise, and no image when that fails.
+    ///
+    /// Reads the station without the gate, so another edit can land in
+    /// between; the worst that does is one fetch more or less, and the
+    /// `UPDATE` still names the account, so a station that is not this
+    /// account's is 404 whatever was read here.
+    async fn station_image_write(
+        &self,
+        user_id: Uuid,
+        station_id: Uuid,
+        image_url: Option<String>,
+    ) -> Result<ImageWrite, ServiceError> {
+        let Some(url) = image_url else {
+            return Ok(ImageWrite::Store {
+                image_url: None,
+                artwork_hash: None,
+                fetched: None,
+            });
+        };
+        let held: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT image_url, artwork_hash FROM radio_station WHERE user_id=? AND id=?",
+        )
+        .bind(user_id.to_string())
+        .bind(station_id.to_string())
+        .fetch_optional(self.db.pool())
+        .await?;
+        let Some((held_url, held_hash)) = held else {
+            // Nothing is fetched for a station this account cannot see.
+            return Err(ServiceError::NotFound);
+        };
+        if let Some(hash) = held_hash.filter(|_| held_url.as_deref() == Some(url.as_str())) {
+            if self.artwork_file_present(&hash).await {
+                return Ok(ImageWrite::Store {
+                    image_url: Some(url),
+                    artwork_hash: Some(hash),
+                    fetched: None,
+                });
+            }
+        }
+        let fetched = self.fetch_station_image(&url).await;
+        Ok(ImageWrite::Store {
+            image_url: Some(url),
+            artwork_hash: fetched.as_ref().map(|fetched| fetched.hash.clone()),
+            fetched,
+        })
+    }
+
+    /// A station image, fetched into the store. Plain http is allowed: a
+    /// station's own logo is as often served that way as its stream is, and
+    /// the address rules apply either way.
+    async fn fetch_station_image(&self, url: &str) -> Option<FetchedArtwork> {
+        self.fetch_remote_artwork(url, true, "station image").await
+    }
 }
 
 fn radio_station_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RadioStationItem, ServiceError> {
@@ -216,6 +368,8 @@ fn radio_station_from_row(row: sqlx::sqlite::SqliteRow) -> Result<RadioStationIt
         name: row.try_get("name")?,
         stream_url: row.try_get("stream_url")?,
         homepage_url: row.try_get("homepage_url")?,
+        image_url: row.try_get("image_url")?,
+        artwork_hash: row.try_get("artwork_hash")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
