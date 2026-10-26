@@ -623,9 +623,14 @@ test("scrolls a long feed inside its panel, leaving the shows in reach", async (
   await panel.evaluate((node) => {
     node.scrollTop = node.scrollHeight;
   });
-  await expect(
-    page.getByRole("list", { name: "Shows" }).getByRole("button", { name: "Episodes" }).last(),
-  ).toBeInViewport();
+  // The feed read to its end, the other show is still a click away.
+  const day = page
+    .getByRole("list", { name: "Shows" })
+    .getByRole("listitem")
+    .filter({ hasText: "Day Shift" })
+    .getByRole("button", { name: "Episodes" });
+  await day.click();
+  await expect(panel.getByRole("heading", { name: "Day Shift" })).toBeVisible();
 });
 
 /** On a phone the episodes stay under the list, opened and closed on request. */

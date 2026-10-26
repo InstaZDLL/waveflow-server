@@ -4409,7 +4409,9 @@ main > section > dialog {
 @media (width >= 64rem) {
   .podcast-workspace {
     display: grid;
-    grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+    /* A third of the room for the shows, never more than 22rem: at 1024 px
+       the episodes, which carry the buttons, keep the larger share. */
+    grid-template-columns: minmax(14rem, min(22rem, 34%)) minmax(0, 1fr);
     align-items: start;
     gap: var(--space-6);
   }
