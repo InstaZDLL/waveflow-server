@@ -90,9 +90,7 @@ impl DomainServices {
             let declared_hash: String = row.try_get("declared_hash")?;
             let extension: String = row.try_get("extension")?;
             let root: String = row.try_get("root_path")?;
-            let path = std::path::Path::new(&root)
-                .join(MANAGED_DIR)
-                .join(format!("{session_id}.part"));
+            let path = staging_path(std::path::Path::new(&root), session_id);
 
             let lock = self.session_lock(session_id);
             let held = lock.lock().await;
@@ -155,7 +153,7 @@ impl DomainServices {
         root: &str,
         session_id: Uuid,
     ) -> Result<bool, ServiceError> {
-        let relative = format!("{MANAGED_DIR}/{declared_hash}.{extension}");
+        let relative = relative_final(declared_hash, extension);
         let path = std::path::Path::new(root).join(&relative);
         match tokio::fs::try_exists(&path).await {
             Ok(false) => return Ok(true),
@@ -173,23 +171,24 @@ impl DomainServices {
                 return Ok(false);
             }
         }
-        let claimed: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM track WHERE library_id=? AND relative_path=?)",
+        // Both guards in one statement, so they read one state of the
+        // database. Asked one after the other, a commit landing between them —
+        // its track inserted and its session deleted in a single transaction —
+        // answered "no track yet" to the first and "no session any more" to the
+        // second, and the sweep deleted the file of the track just committed.
+        let others: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM track WHERE library_id=? AND relative_path=?) \
+                 OR EXISTS(SELECT 1 FROM upload_session \
+                           WHERE library_id=? AND declared_hash=? AND id<>?)",
         )
         .bind(library_id)
         .bind(&relative)
-        .fetch_one(self.db.pool())
-        .await?;
-        let contested: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM upload_session \
-             WHERE library_id=? AND declared_hash=? AND id<>?)",
-        )
         .bind(library_id)
         .bind(declared_hash)
         .bind(session_id.to_string())
         .fetch_one(self.db.pool())
         .await?;
-        if claimed != 0 || contested != 0 {
+        if others != 0 {
             // Somebody else's, either already or possibly. The row goes anyway:
             // keeping it would hold a reservation against a file this session
             // no longer owns.

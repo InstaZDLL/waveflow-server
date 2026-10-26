@@ -134,13 +134,33 @@ fn the_sort_codes_match_the_statement() {
         "s.duration_ms",
         "s.bitrate",
     ];
+    // The direction too: the term after `END`, up to the next comma, says
+    // `ASC` for an odd code and `DESC` for the even one after it. Two terms
+    // swapped would keep every column in place and reverse every sort.
+    let direction = |code: usize, column: &str| {
+        let head = format!("p.sort_key = {code} THEN {column} END");
+        let at = EVALUATE
+            .find(&head)
+            .unwrap_or_else(|| panic!("code {code} does not sort by {column}"));
+        let tail = &EVALUATE[at + head.len()..];
+        let term = &tail[..tail.find(',').unwrap_or(tail.len())];
+        if term.contains(" DESC ") {
+            "DESC"
+        } else if term.contains(" ASC ") {
+            "ASC"
+        } else {
+            panic!("code {code} names no direction: {term:?}")
+        }
+    };
     for (index, column) in columns.iter().enumerate() {
         let ascending = index * 2 + 1;
-        assert!(
-            EVALUATE.contains(&format!("p.sort_key = {ascending} THEN {column} END")),
-            "code {ascending} does not sort by {column}"
+        assert_eq!(direction(ascending, column), "ASC", "code {ascending}");
+        assert_eq!(
+            direction(ascending + 1, column),
+            "DESC",
+            "code {}",
+            ascending + 1
         );
-        assert!(EVALUATE.contains(&format!("p.sort_key = {} THEN {column} END", ascending + 1)));
     }
     let random = parse(json!({"sort": "random", "order": "desc"})).unwrap();
     assert_eq!(random.sort_code(), SORT_RANDOM);

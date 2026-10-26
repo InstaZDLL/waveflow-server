@@ -448,9 +448,12 @@ impl Database {
             .bind(track_id.to_string())
             .execute(&mut **tx)
             .await?;
+        // A file may name one genre twice, or in two spellings canonicalisation
+        // folds together; the pair is the key, so the repeat is not an error.
         for genre_id in &genre_ids {
             sqlx::query(
-                "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?)",
+                "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?) \
+                 ON CONFLICT (track_id, genre_id) DO NOTHING",
             )
             .bind(track_id.to_string())
             .bind(genre_id.to_string())

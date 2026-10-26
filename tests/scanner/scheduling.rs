@@ -403,3 +403,53 @@ async fn a_pending_full_scan_is_not_spent_by_a_scoped_one() {
         "the request was answered by a full walk"
     );
 }
+
+/// A scan's event stream ends once the scan has. The channel behind it used to
+/// outlive the job — one per scan, never dropped — so a watcher that came after
+/// the last progress got the snapshot and then nothing, kept open by
+/// keep-alives until it hung up, and the server held every finished scan's
+/// channel for good.
+#[tokio::test]
+async fn a_finished_scan_s_event_stream_ends() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, token) = admin_with_api_token(&state, "stream-owner").await;
+    let music = config.data_dir.join("stream-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("One.wav"));
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "Stream", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let library = LibraryRecord {
+        id: library_id,
+        name: "Stream".into(),
+        root_path: root,
+    };
+    let scan = scan_once(&state, owner, library).await;
+    let router = waveflow_server::app(&config, state.clone());
+
+    let response = tower::ServiceExt::oneshot(
+        router,
+        axum::http::Request::get(format!("/api/v2/scans/{scan}/events"))
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    // The whole body, which only exists if the stream ends: a stream that
+    // stays open never yields it, and the deadline says so.
+    let body = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        axum::body::to_bytes(response.into_body(), usize::MAX),
+    )
+    .await
+    .expect("the event stream of a finished scan must end")
+    .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("event: snapshot"), "{text}");
+    assert!(text.contains("\"completed\""), "{text}");
+}

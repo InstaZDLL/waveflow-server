@@ -17,32 +17,14 @@ struct SessionTarget {
 }
 
 impl SessionTarget {
-    /// Where the fragments accumulate: the destination directory itself, under
-    /// a name carrying no audio extension.
-    ///
-    /// Both halves matter. Same directory means same filesystem, so the rename
-    /// at commit is atomic rather than a copy with a window during which a
-    /// truncated file exists. And the walk skips it not because it is hidden —
-    /// nothing about the walk skips hidden directories — but because it filters
-    /// on extension, which is a rule that already exists and cannot be broken
-    /// by someone rewriting the traversal.
+    /// Where this session's fragments accumulate: see [`staging_path`].
     fn staging_path(&self, session_id: Uuid) -> std::path::PathBuf {
-        self.root
-            .join(MANAGED_DIR)
-            .join(format!("{session_id}.part"))
+        staging_path(&self.root, session_id)
     }
 
-    /// The name the file keeps, once the bytes are known to be what was
-    /// promised.
-    ///
-    /// By hash rather than by tags: tags move — a correction, a retag, a later
-    /// re-identification — and a path built from them would leave the server
-    /// choosing between moving the file and keeping a name that lies. The
-    /// project already answered that question in the other direction, where a
-    /// correction never rewrites the file. It keeps its extension because the
-    /// walk recognises a file by nothing else.
+    /// The name this session's file keeps: see [`relative_final`].
     fn relative_final(&self, hash: &str) -> String {
-        format!("{MANAGED_DIR}/{hash}.{}", self.extension)
+        relative_final(hash, &self.extension)
     }
 }
 

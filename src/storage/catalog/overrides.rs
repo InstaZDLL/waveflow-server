@@ -108,8 +108,10 @@ pub(crate) async fn apply_track_override_lists(
             .await?;
         for name in names {
             let genre_id = upsert_genre(tx, library_id, name, now).await?;
+            // A correction may repeat a genre as the tags may: one row.
             sqlx::query(
-                "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?)",
+                "INSERT INTO track_genre (track_id, genre_id, library_id) VALUES (?, ?, ?) \
+                 ON CONFLICT (track_id, genre_id) DO NOTHING",
             )
             .bind(track_id.to_string())
             .bind(genre_id.to_string())

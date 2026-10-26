@@ -480,6 +480,20 @@ async fn a_corrected_artist_agrees_with_itself_everywhere() {
     );
     assert_eq!(other_dropped[0].genres, vec!["Ambient".to_owned()]);
 
+    // A genre named twice, in any case, is one genre. `track_genre` keys on the
+    // pair, and the correction used to insert the second spelling and fail on
+    // that key, refusing the whole edit.
+    patch_body(serde_json::json!({ "genres": ["Jazz", "Jazz", "jazz"] })).await;
+    let repeated = state
+        .services
+        .songs_by_ids(owner, &[track_id])
+        .await
+        .unwrap();
+    // One genre; which of its spellings it is shown under is the genre's own
+    // business, not this correction's.
+    assert_eq!(repeated[0].genres.len(), 1);
+    assert!(repeated[0].genres[0].eq_ignore_ascii_case("jazz"));
+
     // Removing the correction hands the track back to its file. The rows the
     // correction wrote replaced what the tags said, so this can only be right
     // by re-reading them — and it must not wait for a scan. Removed by an

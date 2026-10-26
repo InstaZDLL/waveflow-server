@@ -234,7 +234,13 @@ impl DomainServices {
                 &serde_json::json!({
                     "id": id,
                     "name": name.map(str::trim).unwrap_or(&current.name),
-                    "comment": comment.or(current.comment.as_deref()),
+                    // What the statement above stored: a clear wins over any
+                    // comment sent beside it.
+                    "comment": if clear.comment {
+                        None
+                    } else {
+                        comment.or(current.comment.as_deref())
+                    },
                     "public": public.unwrap_or(current.public),
                     "track_ids": ids,
                 }),

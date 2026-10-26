@@ -19,6 +19,35 @@ mod transfer;
 /// problems that are never posed rather than problems that are solved.
 pub(crate) const MANAGED_DIR: &str = ".waveflow-managed";
 
+/// Where a session's fragments accumulate: the destination directory itself,
+/// under a name carrying no audio extension.
+///
+/// Both halves matter. Same directory means same filesystem, so the rename
+/// at commit is atomic rather than a copy with a window during which a
+/// truncated file exists. And the walk skips it not because it is hidden —
+/// nothing about the walk skips hidden directories — but because it filters
+/// on extension, which is a rule that already exists and cannot be broken
+/// by someone rewriting the traversal.
+///
+/// One function for the transfer that writes there and the sweep that cleans
+/// up after it: two spellings of the name could drift, and a sweep looking
+/// under the wrong one drops the session and leaves the file.
+fn staging_path(root: &std::path::Path, session_id: Uuid) -> std::path::PathBuf {
+    root.join(MANAGED_DIR).join(format!("{session_id}.part"))
+}
+
+/// The name a file keeps, once the bytes are known to be what was promised.
+///
+/// By hash rather than by tags: tags move — a correction, a retag, a later
+/// re-identification — and a path built from them would leave the server
+/// choosing between moving the file and keeping a name that lies. The
+/// project already answered that question in the other direction, where a
+/// correction never rewrites the file. It keeps its extension because the
+/// walk recognises a file by nothing else.
+fn relative_final(hash: &str, extension: &str) -> String {
+    format!("{MANAGED_DIR}/{hash}.{extension}")
+}
+
 impl DomainServices {
     /// How many sessions this process is currently coordinating.
     ///
