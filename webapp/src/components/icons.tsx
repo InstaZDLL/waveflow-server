@@ -22,6 +22,7 @@ export type IconName =
   | "previous"
   | "play"
   | "pause"
+  | "stop"
   | "next"
   | "edit"
   | "scrobbling"
@@ -280,6 +281,8 @@ const paths: Record<IconName, ReactNode> = {
     </>
   ),
   play: <path d="m8 5 11 7-11 7Z" />,
+  // A square: what a live station does instead of pausing.
+  stop: <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />,
   pause: (
     <>
       <path d="M8 5v14M16 5v14" />

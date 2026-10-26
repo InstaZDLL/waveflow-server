@@ -1565,6 +1565,15 @@ button.danger {
   font-size: var(--text-xs);
 }
 
+/* A station has no artist to name. Where the artist would be, a badge says
+   that it is live — the one thing about it a transport with no line and no
+   next button has to explain. */
+.player-track .live-badge {
+  margin-top: var(--space-1);
+  color: var(--accent);
+  line-height: 1.4;
+}
+
 .player-controls {
   display: flex;
   align-items: center;

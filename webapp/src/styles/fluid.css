@@ -1094,6 +1094,16 @@
     width: 3.75rem;
   }
 
+  /* A cover with no album to open is the bar's own child rather than a
+     link's, and needs the same place: every cell is claimed, so left to the
+     auto-placement it opened a third row under the bar. A station or an
+     episode is drawn this way, and so is a track without an album. */
+  :where(:root) .player > .player-cover {
+    grid-area: 1 / 1 / 3 / 2;
+    align-self: center;
+    justify-self: start;
+  }
+
   /* Set beside the cover by a margin, not a padding: a padded box still
      covers the cover it sits over, and took every click aimed at the middle
      of it — only the strip above the names reached the album link. */
