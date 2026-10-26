@@ -1505,6 +1505,8 @@ pub struct DomainServices {
     /// Podcast covers and station images (RFC-025, amended): whether they are
     /// fetched, how long one may take, and which addresses it may reach.
     remote_artwork: crate::config::RemoteArtworkSettings,
+    /// How many station images each account has had fetched this hour.
+    station_images: remote_artwork::FetchBudget,
     /// Smart playlists (RFC-025): what each reader was last shown, the
     /// evaluation counter and the evaluation budget.
     smart: smart_playlists::SmartRuntime,
@@ -1707,6 +1709,7 @@ impl DomainServices {
             )),
             podcasts: podcasts::PodcastRuntime::new(config.podcasts.clone()),
             remote_artwork: config.remote_artwork,
+            station_images: remote_artwork::FetchBudget::default(),
             smart: smart_playlists::SmartRuntime::new(config.db_max_connections),
         }
     }

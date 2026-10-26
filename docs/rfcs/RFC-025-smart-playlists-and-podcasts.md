@@ -555,6 +555,23 @@ station in a Subsonic client cannot take its image away, and a native client
 written before the field existed cannot either. `internetRadioStation` is
 unchanged and carries no `coverArt`: the frozen contract defines none.
 
+**A5b — nothing is fetched for a write that is refused, and a station image
+has a budget.** Every check that can refuse a write runs, and the row is
+committed, before any image is fetched: the address rules, the per-account
+station ceiling, the station being the account's own (404 otherwise), and for
+a channel the instance ceiling and the duplicate check — the ceiling is now
+also asked before the *feed* is fetched. The image is then fetched, written to
+the store, and attached by a second write that names the row (and, for a
+station, its account and the address it was fetched for), so an image that
+arrives after the row was deleted or its address changed attaches to nothing
+and is swept. An account at its ceiling, or naming a station that is not its
+own, makes the server contact nobody and write nothing. Station images are the
+one fetch any account can ask for, so they are also bounded per account: at
+most ten an hour (in memory, refilled by a restart), past which a station is
+saved without an image and a later save retries. With an unchanged address
+never fetched again, that caps the worst case at 100 MiB an hour per account,
+which the sweep collects.
+
 **A6 — one switch, on by default.** `WAVEFLOW_REMOTE_ARTWORK` (on) stops both
 when it is off: the addresses are still stored, nothing is fetched, and images
 already stored stay shown. On by default because nothing here happens on its
@@ -580,8 +597,12 @@ declared and streamed; HTML labelled as an image and as HTML; redirects to a
 private and to a mapped private address; an unlabelled JPEG accepted; a failed
 fetch retried on the next refresh; a station image fetched, served to its
 account only, kept by a native write without the field and by a Subsonic edit,
-retried on the next save, cleared by `null`; and the sweep keeping both images
-until the channel and the station are deleted. The private-feed test's cover
+retried on the next save, cleared by `null`, and a foreign station's
+replacement answered 404 with no request made; an account at its station
+ceiling and an instance at its channel ceiling refused with no request to the
+feed's or the image's host and nothing stored; and the sweep keeping both
+images until the channel and the station are deleted.
+`src/services/remote_artwork.rs` tests the hourly budget. The private-feed test's cover
 now carries the subscriber's token, so it proves the address reaches no
 reader. `src/services/podcasts.rs` tests when a cover is due.
 

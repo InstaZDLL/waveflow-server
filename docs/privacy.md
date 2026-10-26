@@ -258,7 +258,9 @@ finds the feed naming a cover the server does not hold — a new address, one
 whose last fetch failed, a file gone from the store, or a copy older than a
 week; an unchanged address is otherwise not fetched again. A station image
 once, when an account sets or changes it, and again only when the account
-saves the station after a fetch that failed. Never at boot, never on a timer of
+saves the station after a fetch that failed — at most ten an hour per account.
+In both cases only after the write was accepted: a station or a channel
+refused (a full list, a station that is not the account's) contacts nobody. Never at boot, never on a timer of
 its own, and **never while anybody listens**: the image is served from the
 server's artwork store, so the image's host sees the server, once, and no
 listener — which is why the browser does not load it itself.

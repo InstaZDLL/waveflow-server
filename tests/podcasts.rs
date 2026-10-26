@@ -1372,6 +1372,78 @@ async fn a_station_image_is_fetched_when_set_and_served_to_its_account_only() {
     assert_eq!(host.count("/cover-2.jpg"), 0);
 }
 
+/// Nothing is fetched for a write that is refused. An account at its station
+/// ceiling that names an image is answered 409 with no request to the image's
+/// host and nothing in the store; an instance at its channel ceiling refuses a
+/// subscription before the feed, and so the cover, is fetched.
+#[tokio::test]
+async fn a_write_refused_for_its_ceiling_fetches_no_image() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (owner, password, _) = account(&state, "ceiling-admin", AccountRole::Admin).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "ceiling-admin", &password).await;
+
+    // Filled in SQL: five hundred requests would prove nothing more.
+    let mut tx = state.db.pool().begin().await.unwrap();
+    for index in 0..500 {
+        sqlx::query(
+            "INSERT INTO radio_station (id, user_id, name, stream_url, created_at, updated_at) \
+             VALUES (?, ?, ?, 'https://radio.example.org/s', 1, 1)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(owner.to_string())
+        .bind(format!("Station {index}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO podcast_channel (id, feed_url, title, status, created_at, updated_at) \
+             VALUES (?, ?, 'Filler', 'completed', 1, 1)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(format!("https://feeds.example.org/{index}.xml"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let (status, body) = station(
+        &router,
+        "POST",
+        "/api/v2/radio-stations",
+        &token,
+        json!({
+            "name": "One too many",
+            "stream_url": "https://radio.example.org/stream",
+            "image_url": format!("{}/station.png", host.base),
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        host.count("/station.png"),
+        0,
+        "the image's host was contacted"
+    );
+
+    let (status, body) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(host.count("/feed.xml"), 0, "the feed's host was contacted");
+    assert_eq!(
+        host.count("/cover.jpg"),
+        0,
+        "the cover's host was contacted"
+    );
+
+    assert_eq!(artwork_rows(&state).await, 0);
+    let written = std::fs::read_dir(&config.artwork_dir)
+        .map(|entries| entries.count())
+        .unwrap_or(0);
+    assert_eq!(written, 0, "a refused write leaves nothing in the store");
+}
+
 /// The sweep counts a channel's cover and a station's image as referenced, so
 /// neither is collected while it is named, however old its file; deleting the
 /// channel and the station releases both.

@@ -344,12 +344,16 @@ impl DomainServices {
         if exists.is_some() {
             return Err(ServiceError::Conflict.into());
         }
+        // Asked before the feed is fetched as well as under the gate below, so
+        // a full instance contacts nobody; the answer that counts is the one
+        // the insert is made under.
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM podcast_channel")
+            .fetch_one(self.db.pool())
+            .await?;
+        if count >= MAX_PODCAST_CHANNELS {
+            return Err(ServiceError::Conflict.into());
+        }
         let feed = self.fetch_feed(&url).await.map_err(PodcastFailure::Feed)?;
-        // Before the gate, like the feed: a cover that cannot be fetched
-        // subscribes the channel without one, and the next refresh tries again.
-        let cover = self
-            .channel_cover(feed.image_url.as_deref(), &KnownCover::default())
-            .await;
         let id = Uuid::new_v4();
         let now = now_ms();
         {
@@ -386,7 +390,21 @@ impl DomainServices {
                 return Err(ServiceError::Conflict.into());
             }
             upsert_episodes(&mut tx, id, &feed.episodes, now).await?;
-            write_cover(&mut tx, &id.to_string(), &cover, now).await?;
+            tx.commit().await?;
+        }
+        // Only once the channel is stored: a subscription refused for the
+        // ceiling or as a duplicate has fetched no cover and written nothing
+        // to the store. A cover that cannot be fetched leaves the channel
+        // without one, and the next refresh tries again.
+        let cover = self
+            .channel_cover(feed.image_url.as_deref(), &KnownCover::default())
+            .await;
+        if !matches!(cover, CoverWrite::Keep) {
+            let _writer = self.db.writer_guard().await;
+            let mut tx = self.db.begin_write(&_writer).await?;
+            // Unsubscribed meanwhile: the update names no row, and the file
+            // is left to the sweep.
+            write_cover(&mut tx, &id.to_string(), &cover, now_ms()).await?;
             tx.commit().await?;
         }
         Ok(self.podcast_channel(user_id, id).await?)

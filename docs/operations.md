@@ -428,7 +428,9 @@ carries the decisions; [privacy](privacy.md) says what is fetched and when.
 is subscribed, and on a refresh that finds the feed naming a cover it does not
 hold — a new address, a failed last attempt, a file gone from the store, or a
 copy older than a week. A station image once, when an account sets or changes
-it; saving the station again retries one that failed. Never on a timer of its
+it, and only once the station is saved; saving the station again retries one
+that failed. An account may have at most ten station images fetched an hour;
+past that, a station is saved without its image until a later save. Never on a timer of its
 own, never at boot, and never while anybody listens.
 
 **Under which rules.** Those of the podcast fetcher: public addresses only,

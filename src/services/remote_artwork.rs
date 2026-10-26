@@ -18,6 +18,40 @@
 
 use super::*;
 
+/// How many station images one account may have fetched in an hour.
+///
+/// A station image is the one fetch any account can ask for, so it is the one
+/// that needs a bound beyond "fetched once per address": without one, an
+/// account editing a station in a loop with a new address each time would
+/// have the server download up to 10 MiB per request. Ten an hour is far
+/// above what a person setting up their stations does, and caps the worst
+/// case at 100 MiB an hour per account, which the sweep then collects.
+pub const STATION_IMAGE_FETCHES_PER_HOUR: u32 = 10;
+
+const BUDGET_WINDOW_MS: i64 = 60 * 60 * 1000;
+
+/// The hourly fetch budget, per account. In memory: a restart refills it,
+/// which costs at most one more hour's worth.
+#[derive(Clone, Default)]
+pub(super) struct FetchBudget {
+    spent: Arc<dashmap::DashMap<Uuid, (i64, u32)>>,
+}
+
+impl FetchBudget {
+    /// Whether `account` may start one more fetch at `now`, counting it if so.
+    pub(super) fn take(&self, account: Uuid, now: i64) -> bool {
+        let mut entry = self.spent.entry(account).or_insert((now, 0));
+        if now.saturating_sub(entry.0) >= BUDGET_WINDOW_MS {
+            *entry = (now, 0);
+        }
+        if entry.1 >= STATION_IMAGE_FETCHES_PER_HOUR {
+            return false;
+        }
+        entry.1 += 1;
+        true
+    }
+}
+
 /// An image fetched and written to the store, not yet named by a row.
 #[derive(Debug, Clone)]
 pub(super) struct FetchedArtwork {
@@ -112,4 +146,22 @@ pub(super) async fn record_artwork(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_account_spends_its_hourly_budget_and_gets_it_back_an_hour_later() {
+        let budget = FetchBudget::default();
+        let (one, other) = (Uuid::new_v4(), Uuid::new_v4());
+        for _ in 0..STATION_IMAGE_FETCHES_PER_HOUR {
+            assert!(budget.take(one, 1_000));
+        }
+        assert!(!budget.take(one, 1_000 + BUDGET_WINDOW_MS - 1));
+        // Another account's budget is its own.
+        assert!(budget.take(other, 1_000));
+        assert!(budget.take(one, 1_000 + BUDGET_WINDOW_MS));
+    }
 }
