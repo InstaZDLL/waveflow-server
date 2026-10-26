@@ -10,7 +10,18 @@ import {
   resumeSeconds,
   SAVE_EVERY_MS,
   shownDuration,
+  sounding,
 } from "./aside";
+
+describe("whether the aside sounds", () => {
+  it("is not paused and not failed", () => {
+    expect(sounding({ paused: false, error: null })).toBe(true);
+    expect(sounding({ paused: true, error: null })).toBe(false);
+    // A failed source leaves `paused` false: it is still silent.
+    expect(sounding({ paused: false, error: { code: 2 } })).toBe(false);
+    expect(sounding({ paused: true, error: { code: 2 } })).toBe(false);
+  });
+});
 
 const station: RadioStation = {
   id: "station-1",

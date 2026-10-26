@@ -36,6 +36,7 @@ import {
   reportsPlaybackFailure,
   resumeSeconds,
   shownDuration,
+  sounding,
 } from "../lib/aside";
 import { connectWhenRunning, needsWaking } from "../lib/audio-graph";
 import { isKeptOffline, keptSongs, offlineTrackUrl } from "../lib/offline";
@@ -288,6 +289,29 @@ export function setDirectionalMediaSessionHandlers(
   mediaSession.setActionHandler("pause", () => {
     if (!element.paused) pause();
   });
+}
+
+/**
+ * The same directional handlers for the aside, which ask whether it is
+ * sounding rather than whether it is paused: a failed station keeps `paused`
+ * false, and the system's Play would be ignored and its Pause would retry it.
+ * The queue's element keeps the plain rule above.
+ */
+export function setAsideMediaSessionHandlers(
+  mediaSession: Pick<MediaSession, "setActionHandler">,
+  element: Pick<HTMLAudioElement, "paused" | "error">,
+  toggle: () => void,
+): void {
+  setDirectionalMediaSessionHandlers(
+    mediaSession,
+    {
+      get paused() {
+        return !sounding(element);
+      },
+    },
+    toggle,
+    toggle,
+  );
 }
 
 export function usePlayer(): PlayerState {
@@ -720,8 +744,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (
         previous?.kind === "live" &&
         previous.station.id === station.id &&
-        !element.paused &&
-        !element.error
+        sounding(element)
       )
         return;
       if (previous?.kind === "episode") saveEpisode(true);
@@ -800,7 +823,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (!element || !current) return;
     // A failed source is not playing, whatever `paused` says (see `playLive`):
     // pressing play on it tries it again.
-    if (!element.paused && !element.error) {
+    if (sounding(element)) {
       if (current.kind === "live") {
         // Stopped rather than paused: a live stream left paused keeps its
         // connection, and resuming it would play the past.
@@ -1211,12 +1234,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const element = asideKind ? side.current : audio.current;
     if (!mediaSession || !element) return;
     if (asideKind) {
-      setDirectionalMediaSessionHandlers(
-        mediaSession,
-        element,
-        toggleAside,
-        toggleAside,
-      );
+      setAsideMediaSessionHandlers(mediaSession, element, toggleAside);
       mediaSession.setActionHandler("previoustrack", null);
       mediaSession.setActionHandler("nexttrack", null);
       mediaSession.setActionHandler(

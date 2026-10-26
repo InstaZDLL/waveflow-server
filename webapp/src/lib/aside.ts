@@ -109,6 +109,22 @@ export function reportsPlaybackFailure(
 }
 
 /**
+ * Whether the aside's element is really sounding.
+ *
+ * Not `!paused` alone: a source that fails leaves `paused` at false — the
+ * failure steps reject the pending play, they do not pause — so a failed
+ * station would be taken for one that plays, and every control that asks
+ * "is it playing?" would answer backwards: Listen doing nothing, play
+ * stopping it, the system's Play ignored and its Pause starting it again.
+ */
+export function sounding(element: {
+  readonly paused: boolean;
+  readonly error: unknown;
+}): boolean {
+  return !element.paused && !element.error;
+}
+
+/**
  * The duration an element reports, as the transport shows it. A live stream
  * reports `Infinity`, and an element that has loaded nothing `NaN`; both are
  * "no duration" here.
