@@ -6,7 +6,7 @@ import { expect, type Page, test } from "@playwright/test";
  * the mixes set apart from the albums, the artist's image actions behind one
  * menu, and the measured bit depth said as a measurement.
  *
- * Its own mock, shaped like the one `studio-nocturne.spec.ts` drives — the
+ * Its own mock, shaped like the one `fixtures/api.ts` serves — the
  * same session, the same `Library` shape, the same lyrics envelope — and kept
  * to the routes these screens read. Anything else answers 404, as there.
  */

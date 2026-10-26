@@ -5,7 +5,7 @@ import { expect, type Page, test } from "@playwright/test";
  * The workspace pages: Radio, Podcasts, Folders and the Maintenance hub, which
  * manage something rather than present it.
  *
- * The radio mock keeps what it is sent, as the one in `studio-nocturne` does:
+ * The radio mock keeps what it is sent, as the one in `fixtures/api.ts` does:
  * a delete that deleted nothing, or an edit that saved nothing, would
  * otherwise pass against a fixed answer.
  */
