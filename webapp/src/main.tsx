@@ -69,6 +69,11 @@ import { GenrePage } from "./pages/genre-page";
 import { GenresPage } from "./pages/genres-page";
 import { HistoryPage } from "./pages/history-page";
 import { LoginPage } from "./pages/login-page";
+import {
+  MaintenanceHub,
+  MaintenanceIndex,
+  maintenanceSections,
+} from "./pages/maintenance-hub";
 import { MissingPage } from "./pages/missing-page";
 import { MixPage } from "./pages/mix-page";
 import { NotFoundPage } from "./pages/not-found-page";
@@ -94,8 +99,6 @@ import { I18nProvider, type TranslationKey, useI18n } from "./state/i18n";
 import {
   LibraryPicker,
   LibraryScopeProvider,
-  mayCorrectTracks,
-  mayManageMissing,
   useLibraryScope,
 } from "./state/library-scope";
 import { PreferencesProvider } from "./state/preferences";
@@ -135,9 +138,7 @@ const navigation: Array<{
     | "/artists"
     | "/songs"
     | "/folders"
-    | "/attention"
-    | "/missing"
-    | "/quality"
+    | "/maintenance"
     | "/genres"
     | "/search"
     | "/favourites"
@@ -153,13 +154,11 @@ const navigation: Array<{
     | "/settings";
   labelKey: TranslationKey;
   icon: IconName;
-  /** Shown only to the active library's owners and managers. */
-  curate?: boolean;
   /**
-   * Shown to the active library's owners and managers, and to administrators
-   * whatever their role in it: the missing files (RFC-021).
+   * Shown only when at least one of Maintenance's sections is this account's
+   * to use in the active library; each keeps the rule its own entry had.
    */
-  missing?: boolean;
+  maintenance?: boolean;
   primary?: boolean;
   /** The rail section it is filed under. */
   group: NavigationGroup;
@@ -180,24 +179,13 @@ const navigation: Array<{
     icon: "folder",
     group: "library",
   },
+  // One entry where three were: "Needs attention", "Missing files" and
+  // "Quality" are the sections of Maintenance, each behind its own rule.
   {
-    to: "/attention",
-    labelKey: "nav.attention",
-    icon: "info",
-    curate: true,
-    group: "library",
-  },
-  {
-    to: "/missing",
-    labelKey: "nav.missing",
-    icon: "inbox",
-    missing: true,
-    group: "library",
-  },
-  {
-    to: "/quality",
-    labelKey: "nav.quality",
-    icon: "quality",
+    to: "/maintenance",
+    labelKey: "nav.maintenance",
+    icon: "maintenance",
+    maintenance: true,
     group: "library",
   },
   {
@@ -340,9 +328,7 @@ async function prepareTab(
     // page draws its own frame and waits for its folder there.
     case "/folders":
     // Its lists are asked for once the page knows the active library.
-    case "/attention":
-    case "/missing":
-    case "/quality":
+    case "/maintenance":
       break;
     // A fresh draw on every ask, held for no time at all: a draw made here
     // is thrown away before the page mounts, and the page then draws again.
@@ -403,12 +389,9 @@ function Brand() {
 function permitted(
   item: (typeof navigation)[number],
   role: string | undefined,
-  library: Parameters<typeof mayCorrectTracks>[0] | null,
+  library: Parameters<typeof maintenanceSections>[0],
 ): boolean {
-  return (
-    (!item.curate || mayCorrectTracks(library ?? undefined)) &&
-    (!item.missing || mayManageMissing(library ?? undefined, role))
-  );
+  return !item.maintenance || maintenanceSections(library, role).length > 0;
 }
 
 function Navigation({ mobile = false }: { mobile?: boolean }) {
@@ -1065,16 +1048,37 @@ const foldersRoute = createRoute({
   },
 });
 
+/**
+ * Maintenance: "Needs attention", "Missing files" and "Quality" behind one
+ * rail entry, as Settings holds the account's pages. `/maintenance` itself
+ * opens the first section the account may use.
+ */
+const maintenanceRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/maintenance",
+  component: MaintenanceHub,
+});
+
+const maintenanceIndexRoute = createRoute({
+  getParentRoute: () => maintenanceRoute,
+  path: "/",
+  component: MaintenanceIndex,
+});
+
+const validateAttentionSearch = (search: Record<string, unknown>) => ({
+  category: isAttentionCategory(search.category) ? search.category : undefined,
+});
+
+const validateQualitySearch = (search: Record<string, unknown>) => ({
+  verdict: isQualityVerdict(search.verdict) ? search.verdict : undefined,
+});
+
 // The open list is a search parameter, so a list can be linked to and the
 // back button walks between them.
 const attentionRoute = createRoute({
-  getParentRoute: () => authedRoute,
+  getParentRoute: () => maintenanceRoute,
   path: "/attention",
-  validateSearch: (search: Record<string, unknown>) => ({
-    category: isAttentionCategory(search.category)
-      ? search.category
-      : undefined,
-  }),
+  validateSearch: validateAttentionSearch,
   component: function AttentionRoute() {
     const { category } = attentionRoute.useSearch();
     return <AttentionPage category={category} />;
@@ -1082,7 +1086,7 @@ const attentionRoute = createRoute({
 });
 
 const missingRoute = createRoute({
-  getParentRoute: () => authedRoute,
+  getParentRoute: () => maintenanceRoute,
   path: "/missing",
   component: MissingPage,
 });
@@ -1090,14 +1094,41 @@ const missingRoute = createRoute({
 // The verdict filter is a search parameter, so a filtered list can be linked
 // to, as the lists of "Needs attention" can.
 const qualityRoute = createRoute({
-  getParentRoute: () => authedRoute,
+  getParentRoute: () => maintenanceRoute,
   path: "/quality",
-  validateSearch: (search: Record<string, unknown>) => ({
-    verdict: isQualityVerdict(search.verdict) ? search.verdict : undefined,
-  }),
+  validateSearch: validateQualitySearch,
   component: function QualityRoute() {
     const { verdict } = qualityRoute.useSearch();
     return <QualityPage verdict={verdict} />;
+  },
+});
+
+// Their addresses before they moved under Maintenance, redirected as the
+// Settings pages' are: the open list or verdict filter comes along, and the
+// redirect replaces its own history entry.
+const legacyAttentionRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/attention",
+  validateSearch: validateAttentionSearch,
+  beforeLoad: ({ search }) => {
+    throw redirect({ to: "/maintenance/attention", search, replace: true });
+  },
+});
+
+const legacyMissingRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/missing",
+  beforeLoad: () => {
+    throw redirect({ to: "/maintenance/missing", replace: true });
+  },
+});
+
+const legacyQualityRoute = createRoute({
+  getParentRoute: () => authedRoute,
+  path: "/quality",
+  validateSearch: validateQualitySearch,
+  beforeLoad: ({ search }) => {
+    throw redirect({ to: "/maintenance/quality", search, replace: true });
   },
 });
 
@@ -1119,9 +1150,15 @@ const routeTree = rootRoute.addChildren([
     albumRoute,
     songsRoute,
     foldersRoute,
-    attentionRoute,
-    missingRoute,
-    qualityRoute,
+    maintenanceRoute.addChildren([
+      maintenanceIndexRoute,
+      attentionRoute,
+      missingRoute,
+      qualityRoute,
+    ]),
+    legacyAttentionRoute,
+    legacyMissingRoute,
+    legacyQualityRoute,
     artistsRoute,
     artistRoute,
     genresRoute,

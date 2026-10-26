@@ -75,7 +75,7 @@ export function MissingPage() {
 
   const header = (
     <PageHeader
-      kicker={t("nav.group.library")}
+      kicker={t("nav.maintenance")}
       title={t("nav.missing")}
       detail={
         total === undefined

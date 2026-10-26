@@ -129,7 +129,7 @@ export function QualityPage({
 
   const header = (
     <PageHeader
-      kicker={t("nav.group.library")}
+      kicker={t("nav.maintenance")}
       title={t("nav.quality")}
       detail={detail}
     >
@@ -169,7 +169,7 @@ export function QualityPage({
           <ul className="quality-verdicts" aria-label={t("quality.filters")}>
             <li>
               <Link
-                to="/quality"
+                to="/maintenance/quality"
                 search={{ verdict: undefined }}
                 className="attention-category"
                 aria-current={verdict === undefined ? "page" : undefined}
@@ -180,7 +180,7 @@ export function QualityPage({
             {QUALITY_VERDICTS.map((key) => (
               <li key={key}>
                 <Link
-                  to="/quality"
+                  to="/maintenance/quality"
                   search={{ verdict: key }}
                   className={`attention-category${count(key) === 0 ? " empty" : ""}`}
                   aria-current={verdict === key ? "page" : undefined}

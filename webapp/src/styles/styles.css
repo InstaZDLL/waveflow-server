@@ -2068,9 +2068,10 @@ button.danger {
   color: var(--text);
 }
 
-/* The Settings sections: a row of tabs over the open section. They are links,
-   one route each, and the open one is the router's `aria-current`. */
-.settings-sections {
+/* A hub's sections, for Settings and for Maintenance: a row of tabs over the
+   open section. They are links, one route each, and the open one is the
+   router's `aria-current`. */
+.section-menu {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
@@ -2083,7 +2084,7 @@ button.danger {
   background: var(--panel-soft);
 }
 
-.settings-sections .settings-section {
+.section-menu-link {
   display: flex;
   align-items: center;
   min-height: 2.25rem;
@@ -2096,11 +2097,11 @@ button.danger {
   white-space: nowrap;
 }
 
-.settings-sections .settings-section:hover {
+.section-menu-link:hover {
   color: var(--text);
 }
 
-.settings-sections .settings-section[aria-current="page"] {
+.section-menu-link[aria-current="page"] {
   background: var(--panel-strong);
   color: var(--text);
 }
@@ -2109,14 +2110,14 @@ button.danger {
    its edge, so the same links become a list, two to a row, each a full
    touch target. */
 @media (max-width: 820px) {
-  .settings-sections {
+  .section-menu {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: auto;
     margin-bottom: var(--space-6);
   }
 
-  .settings-sections .settings-section {
+  .section-menu-link {
     min-height: 2.75rem;
     white-space: normal;
   }
