@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { placeTracks, type Song, streamUrl } from "../api";
+import { creditedArtists } from "../lib/artist-credits";
 import { downloadUrl, saveFrom } from "../lib/download";
 import {
   forgetOffline,
@@ -341,10 +342,17 @@ function TrackMenu({
     const away = (event: Event) => {
       if (!list.current?.contains(event.target as Node)) closeRef.current();
     };
-    // The wheel closes it wherever it turns, over the menu too: the menu does
-    // not scroll, so a wheel over it scrolls the page beneath and leaves the
-    // menu where its row used to be.
-    const wheel = () => closeRef.current();
+    // The wheel closes it, over the menu too, unless the menu has rows to
+    // scroll: a track credited to many artists makes it taller than a short
+    // window, and it is then capped and scrolls on its own. A menu with nothing
+    // to scroll would hand the wheel to the page beneath and leave the menu
+    // where its row used to be, so that one still closes.
+    const wheel = (event: Event) => {
+      const menu = list.current;
+      const inside = menu?.contains(event.target as Node) ?? false;
+      if (inside && menu && menu.scrollHeight > menu.clientHeight) return;
+      closeRef.current();
+    };
     const leave = () => closeRef.current();
     // A long press opens the menu with the finger still down, and that finger
     // drifts as it lifts: its moves are the gesture that opened the menu, not
@@ -429,6 +437,33 @@ function TrackMenu({
               },
         ]
       : []),
+    // Where the track belongs, from every list it appears in. The artist
+    // column of a song table is hidden on a narrow screen, so this is how a
+    // phone reaches an artist from a playlist or a mix.
+    ...(song.album_id
+      ? [
+          {
+            key: "album",
+            icon: "albums" as const,
+            label: t("trackMenu.goToAlbum"),
+            run: () =>
+              void navigate({
+                to: "/albums/$albumId",
+                params: { albumId: song.album_id as string },
+              }),
+          },
+        ]
+      : []),
+    ...creditedArtists(song).map((artist) => ({
+      key: `artist-${artist.id}`,
+      icon: "artists" as const,
+      label: t("trackMenu.goToArtist", { name: artist.name }),
+      run: () =>
+        void navigate({
+          to: "/artists/$artistId",
+          params: { artistId: artist.id },
+        }),
+    })),
     {
       key: "properties",
       icon: "info",
