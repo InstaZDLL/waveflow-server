@@ -889,6 +889,107 @@ async fn the_subsonic_podcast_methods_answer_the_schema_shapes() {
         .is_none_or(|channels| channels.as_array().is_some_and(Vec::is_empty)));
 }
 
+/// Episodes are never purged, so a channel lists only its newest
+/// [`MAX_EPISODES_LISTED`] — and, past them, any it stores, which an
+/// administrator must still be able to reach to delete. Every channel's
+/// episodes are read in one statement and handed to their own channel.
+#[tokio::test]
+async fn a_channel_lists_its_newest_episodes_and_every_stored_one() {
+    use waveflow_server::services::MAX_EPISODES_LISTED;
+
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (_, admin_password, _) = account(&state, "pod-cap-admin", AccountRole::Admin).await;
+    let (_, _, reader_key) = account(&state, "pod-cap-reader", AccountRole::User).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let admin_token = login_token(&router, "pod-cap-admin", &admin_password).await;
+
+    let (status, long) = subscribe(&router, &admin_token, &format!("{}/feed.xml", host.base)).await;
+    assert_eq!(status, StatusCode::CREATED, "{long}");
+    let long_id = uuid_of(&long);
+    let short_url = format!(
+        "{}/private/p{}/podcast.xml",
+        host.base,
+        Uuid::new_v4().simple()
+    );
+    let (status, short) = subscribe(&router, &admin_token, &short_url).await;
+    assert_eq!(status, StatusCode::CREATED, "{short}");
+    let short_id = uuid_of(&short);
+
+    // Years of a daily show the feed no longer names, all older than the four
+    // it does: the oldest of them stored, the rest never downloaded.
+    let backlog = MAX_EPISODES_LISTED + 10;
+    let now = now_ms();
+    let mut tx = state.db.pool().begin().await.unwrap();
+    for n in 0..backlog {
+        let stored = n == 0;
+        sqlx::query(
+            "INSERT INTO podcast_episode \
+               (id, channel_id, guid, title, published_at, enclosure_url, status, file_name, \
+                created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(long_id.to_string())
+        .bind(format!("old-{n}"))
+        .bind(format!("Old {n}"))
+        .bind(1_000_000 + n * 1_000)
+        .bind(format!("{}/audio.mp3", host.base))
+        .bind(if stored { "completed" } else { "new" })
+        .bind(stored.then(|| format!("{}.mp3", Uuid::new_v4())))
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let listed = usize::try_from(MAX_EPISODES_LISTED).unwrap();
+
+    let read = json_body(
+        send_json(
+            &router,
+            "GET",
+            &format!("/api/v2/podcasts/{long_id}"),
+            &admin_token,
+            None,
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(read["episode_count"], 4 + backlog, "the count is every one");
+    let episodes = read["episodes"].as_array().unwrap();
+    assert_eq!(episodes.len(), listed + 1, "the newest, and the stored one");
+    assert_eq!(episodes[0]["title"], "Through a redirect");
+    assert_eq!(
+        episodes[listed - 1]["title"],
+        format!("Old {}", backlog - (MAX_EPISODES_LISTED - 4)),
+        "the oldest of the newest"
+    );
+    assert_eq!(episodes[listed]["title"], "Old 0");
+    assert_eq!(episodes[listed]["status"], "completed");
+
+    // Every channel at once, as `getPodcasts` answers by default: each keeps
+    // its own episodes, however they were read.
+    let podcasts = subsonic_json(&router, "getPodcasts", &reader_key, "").await;
+    let channels = podcasts["subsonic-response"]["podcasts"]["channel"]
+        .as_array()
+        .unwrap();
+    assert_eq!(channels.len(), 2);
+    for (id, count) in [(long_id, listed + 1), (short_id, 4)] {
+        let channel = channels
+            .iter()
+            .find(|channel| channel["id"] == id.to_string())
+            .unwrap();
+        let episodes = channel["episode"].as_array().unwrap();
+        assert_eq!(episodes.len(), count, "{id}");
+        assert!(episodes
+            .iter()
+            .all(|episode| episode["channelId"] == id.to_string()));
+        assert_eq!(episodes[0]["title"], "Through a redirect");
+    }
+}
+
 /// Decision 8: a private feed's token — in its path, in its query and on every
 /// enclosure — reaches the account that may manage podcasts and nobody else,
 /// on any surface. A reader is shown the feed's scheme and host in the

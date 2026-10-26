@@ -14,7 +14,10 @@
 //! - **Redirects are followed by hand, at most [`MAX_REDIRECTS`]**, and each
 //!   hop is put through every rule above before it is contacted. The shared
 //!   client follows none: a `302` to `http://169.254.169.254/` is refused as an
-//!   address, never fetched.
+//!   address, never fetched. **A hop never leaves https for http**, whatever
+//!   `WAVEFLOW_PODCAST_ALLOW_HTTP` says: the switch admits feeds and
+//!   enclosures served in clear, not a secure address handing its request —
+//!   and the token a private feed carries in it — to a clear one.
 //! - **Bodies are bounded while they are read**, and the whole request by a
 //!   deadline.
 //! - **Nothing about a request is logged** but a verdict from a fixed list: a
@@ -146,6 +149,17 @@ async fn resolve(url: &url::Url, policy: AddressPolicy) -> Result<SocketAddr, Fe
     Ok(addresses[0])
 }
 
+/// Where a redirect from `current` to `location` leads, refused when it would
+/// leave https for http. Every other rule is applied to the hop when it is
+/// opened.
+fn next_hop(current: &url::Url, location: &str) -> Result<url::Url, FetchError> {
+    let next = current.join(location).map_err(|_| FetchError::Redirects)?;
+    if current.scheme() == "https" && next.scheme() == "http" {
+        return Err(FetchError::Destination);
+    }
+    Ok(next)
+}
+
 /// Opens `url` under every rule above, following redirects by hand, and
 /// answers the response that carries the body.
 ///
@@ -185,7 +199,7 @@ pub async fn open(url: &url::Url, policy: FetchPolicy) -> Result<reqwest::Respon
                 .get(reqwest::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
                 .ok_or(FetchError::Redirects)?;
-            current = current.join(location).map_err(|_| FetchError::Redirects)?;
+            current = next_hop(&current, location)?;
             continue;
         }
         if !status.is_success() {
@@ -696,6 +710,45 @@ mod tests {
         )
         .unwrap();
         assert!(feed.episodes.is_empty());
+    }
+
+    /// A secure address may move anywhere secure, a clear one anywhere; a
+    /// secure one may not move into the clear, by an absolute address or a
+    /// scheme-relative one.
+    #[test]
+    fn a_redirect_never_leaves_https_for_http() {
+        let secure = url::Url::parse("https://feeds.example.org/show.xml?auth=t").unwrap();
+        let clear = url::Url::parse("http://feeds.example.org/show.xml").unwrap();
+        assert_eq!(
+            next_hop(&secure, "https://cdn.example.org/show.xml")
+                .unwrap()
+                .as_str(),
+            "https://cdn.example.org/show.xml"
+        );
+        assert_eq!(
+            next_hop(&secure, "/moved.xml").unwrap().as_str(),
+            "https://feeds.example.org/moved.xml"
+        );
+        assert_eq!(
+            next_hop(&clear, "https://cdn.example.org/show.xml")
+                .unwrap()
+                .as_str(),
+            "https://cdn.example.org/show.xml"
+        );
+        assert_eq!(
+            next_hop(&clear, "http://cdn.example.org/show.xml")
+                .unwrap()
+                .as_str(),
+            "http://cdn.example.org/show.xml"
+        );
+        assert_eq!(
+            next_hop(&secure, "http://cdn.example.org/show.xml"),
+            Err(FetchError::Destination)
+        );
+        assert_eq!(
+            next_hop(&secure, "HTTP://cdn.example.org/show.xml"),
+            Err(FetchError::Destination)
+        );
     }
 
     #[test]
