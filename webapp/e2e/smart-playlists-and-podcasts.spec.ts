@@ -577,6 +577,10 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   await page.goto("/podcasts");
   await expect(page.getByRole("heading", { name: "Podcasts" })).toBeVisible();
   await expect(page.getByText("No podcasts yet.")).toBeVisible();
+  // Whoever subscribes is told, at the field, that the show is not theirs alone.
+  await expect(page.getByLabel("Feed address")).toHaveAccessibleDescription(
+    /^Visible to every account/,
+  );
   await page.getByLabel("Feed address").fill("https://feeds.example.org/night.xml");
   await page.getByRole("button", { name: "Subscribe" }).click();
   expect(podcastWrites).toEqual(["subscribe https://feeds.example.org/night.xml"]);
