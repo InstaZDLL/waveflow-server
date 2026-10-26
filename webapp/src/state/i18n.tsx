@@ -1120,6 +1120,8 @@ const en = {
   "podcasts.off":
     "Podcasts are switched off on this server. What was kept before stays readable; nothing new is fetched.",
   "podcasts.url": "Feed address",
+  "podcasts.shared":
+    "Visible to every account: anyone on this server sees the show and can play the episodes it downloads. Only administrators see the feed address.",
   "podcasts.subscribe": "Subscribe",
   "podcasts.refresh": "Refresh every feed",
   "podcasts.refreshing": "The feeds are being fetched again.",
@@ -2286,6 +2288,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "podcasts.off":
     "Les podcasts sont désactivés sur ce serveur. Ce qui a été conservé reste lisible ; rien de nouveau n’est récupéré.",
   "podcasts.url": "Adresse du flux",
+  "podcasts.shared":
+    "Visible par tous les comptes : chacun sur ce serveur voit l’émission et peut écouter les épisodes téléchargés. Seuls les administrateurs voient l’adresse du flux.",
   "podcasts.subscribe": "S’abonner",
   "podcasts.refresh": "Actualiser tous les flux",
   "podcasts.refreshing": "Les flux sont en cours de récupération.",

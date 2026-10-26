@@ -112,23 +112,31 @@ export function PodcastsPage() {
       </PageHeader>
       {overview.enabled ? null : <p className="muted">{t("podcasts.off")}</p>}
       {overview.can_manage ? (
-        <form
-          className="inline-form"
-          onSubmit={(event) => void subscribe(event)}
-        >
-          <input
-            type="url"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="https://example.org/feed.xml"
-            aria-label={t("podcasts.url")}
-            required
-            disabled={busy}
-          />
-          <button type="submit" disabled={busy || !url.trim()}>
-            {t("podcasts.subscribe")}
-          </button>
-        </form>
+        <>
+          <form
+            className="inline-form"
+            onSubmit={(event) => void subscribe(event)}
+          >
+            <input
+              type="url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              placeholder="https://example.org/feed.xml"
+              aria-label={t("podcasts.url")}
+              aria-describedby="podcast-shared"
+              required
+              disabled={busy}
+            />
+            <button type="submit" disabled={busy || !url.trim()}>
+              {t("podcasts.subscribe")}
+            </button>
+          </form>
+          {/* One list per instance: a private feed's episodes reach every
+              account once it is added, though its address does not. */}
+          <p id="podcast-shared" className="muted">
+            {t("podcasts.shared")}
+          </p>
+        </>
       ) : null}
       {message ? (
         <p className="muted" role="status">
