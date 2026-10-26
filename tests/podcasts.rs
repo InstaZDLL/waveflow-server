@@ -159,6 +159,12 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
         }
         "/cover.jpg" => image("image/jpeg", jpeg(1)),
         "/cover-2.jpg" => image("image/jpeg", jpeg(2)),
+        // A cover host that answers, eventually: longer than any request
+        // should be held open for it.
+        "/slow-cover.jpg" => {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            image("image/jpeg", jpeg(6))
+        }
         // Object storage labels everything so; the bytes decide.
         "/unlabelled.jpg" => image("application/octet-stream", jpeg(3)),
         "/station.png" => image("image/png", png()),
@@ -299,6 +305,30 @@ async fn subscribe(router: &Router, token: &str, url: &str) -> (StatusCode, serd
     .await;
     let status = response.status();
     (status, json_body(response).await)
+}
+
+/// Subscribes, waits for the cover the subscription fetches in the background,
+/// and answers the channel as it then reads.
+async fn subscribe_settled(
+    router: &Router,
+    state: &waveflow_server::AppState,
+    token: &str,
+    url: &str,
+) -> (StatusCode, serde_json::Value) {
+    let (status, channel) = subscribe(router, token, url).await;
+    if status != StatusCode::CREATED {
+        return (status, channel);
+    }
+    state.services.podcast_covers_settled().await;
+    let read = send_json(
+        router,
+        "GET",
+        &format!("/api/v2/podcasts/{}", uuid_of(&channel)),
+        token,
+        None,
+    )
+    .await;
+    (status, json_body(read).await)
 }
 
 fn episode<'a>(channel: &'a serde_json::Value, title: &str) -> &'a serde_json::Value {
@@ -1020,8 +1050,13 @@ async fn a_feeds_cover_is_fetched_once_and_served_by_its_hash() {
     let admin_token = login_token(&router, "cover-admin", &admin_password).await;
     let reader_token = login_token(&router, "cover-reader", &reader_password).await;
 
-    let (status, channel) =
-        subscribe(&router, &admin_token, &format!("{}/feed.xml", host.base)).await;
+    let (status, channel) = subscribe_settled(
+        &router,
+        &state,
+        &admin_token,
+        &format!("{}/feed.xml", host.base),
+    )
+    .await;
     assert_eq!(status, StatusCode::CREATED, "{channel}");
     let hash = hash_of(&jpeg(1));
     assert_eq!(channel["artwork_hash"], hash.as_str(), "{channel}");
@@ -1154,8 +1189,13 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
         ),
     ];
     for (cover, _, why) in cases {
-        let (status, channel) =
-            subscribe(&router, &token, &format!("{}/covered{cover}", host.base)).await;
+        let (status, channel) = subscribe_settled(
+            &router,
+            &state,
+            &token,
+            &format!("{}/covered{cover}", host.base),
+        )
+        .await;
         assert_eq!(status, StatusCode::CREATED, "{why}: {channel}");
         assert!(channel["artwork_hash"].is_null(), "{why}: {channel}");
         assert_eq!(host.count(cover), 1, "{why}");
@@ -1180,8 +1220,9 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
     assert_eq!(written, 0, "a refused cover leaves nothing in the store");
 
     // Labelled as nothing in particular, and a JPEG by its bytes.
-    let (_, channel) = subscribe(
+    let (_, channel) = subscribe_settled(
         &router,
+        &state,
         &token,
         &format!("{}/covered/unlabelled.jpg", host.base),
     )
@@ -1190,7 +1231,8 @@ async fn a_cover_that_is_not_a_safe_image_stores_nothing() {
 
     // A host that fails stores nothing, and the next refresh tries again.
     host.cover_failing.store(true, Ordering::SeqCst);
-    let (_, channel) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    let (_, channel) =
+        subscribe_settled(&router, &state, &token, &format!("{}/feed.xml", host.base)).await;
     assert!(channel["artwork_hash"].is_null(), "{channel}");
     host.cover_failing.store(false, Ordering::SeqCst);
     state.services.refresh_all_podcasts().await;
@@ -1457,7 +1499,8 @@ async fn covers_named_by_a_channel_or_a_station_survive_the_sweep_until_deleted(
     let router = waveflow_server::app(&config, state.clone());
     let token = login_token(&router, "sweep-admin", &password).await;
 
-    let (_, channel) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    let (_, channel) =
+        subscribe_settled(&router, &state, &token, &format!("{}/feed.xml", host.base)).await;
     let (_, created) = station(
         &router,
         "POST",
@@ -1493,15 +1536,65 @@ async fn covers_named_by_a_channel_or_a_station_survive_the_sweep_until_deleted(
     assert!(files.iter().all(|file| file.exists()));
     assert_eq!(artwork_rows(&state).await, 2);
 
-    for uri in [
-        format!("/api/v2/podcasts/{}", uuid_of(&channel)),
-        format!("/api/v2/radio-stations/{}", uuid_of(&created)),
+    // Named by a fixed word, not by the address: a failure message has no
+    // reason to print an id.
+    for (what, uri) in [
+        ("channel", format!("/api/v2/podcasts/{}", uuid_of(&channel))),
+        (
+            "station",
+            format!("/api/v2/radio-stations/{}", uuid_of(&created)),
+        ),
     ] {
         let deleted = send_json(&router, "DELETE", &uri, &token, None).await;
-        assert_eq!(deleted.status(), StatusCode::NO_CONTENT, "{uri}");
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT, "{what}");
     }
     let swept = state.services.sweep_artwork_store().await.unwrap();
     assert_eq!(swept.rows_removed, 2, "{swept:?}");
     assert_eq!(swept.covers_removed, 2, "{swept:?}");
     assert!(files.iter().all(|file| !file.exists()));
+}
+
+/// A subscription answers without waiting for its cover (RFC-025 A2). The
+/// cover follows in the background: a cover host as slow as the feed would
+/// otherwise hold the answer for the sum of both, and on Subsonic's
+/// `createPodcastChannel`, which no `TimeoutLayer` bounds, for as long as the
+/// host liked. The fixture's cover deadline is ten seconds, so an answer
+/// within five is one that did not wait for it.
+#[tokio::test]
+async fn a_slow_cover_host_does_not_hold_a_subsonic_subscription() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (admin, _, key) = account(&state, "slow-cover-admin", AccountRole::Admin).await;
+    let router = waveflow_server::app(&config, state.clone());
+
+    let feed = format!("{}/covered/slow-cover.jpg", host.base);
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        subsonic_json(
+            &router,
+            "createPodcastChannel",
+            &key,
+            &format!("&url={feed}"),
+        ),
+    )
+    .await
+    .expect("the subscription waited for its cover");
+    assert_eq!(answered["subsonic-response"]["status"], "ok", "{answered}");
+
+    // Created, with its cover pending.
+    let channels = state
+        .services
+        .podcast_channels(admin, None, false)
+        .await
+        .unwrap();
+    assert_eq!(channels.len(), 1);
+    assert!(channels[0].artwork_hash.is_none());
+    // And the cover is being asked for, outside the request.
+    for _ in 0..500 {
+        if host.count("/slow-cover.jpg") > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(host.count("/slow-cover.jpg"), 1);
 }

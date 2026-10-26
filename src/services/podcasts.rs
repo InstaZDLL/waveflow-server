@@ -151,6 +151,9 @@ pub(super) struct PodcastRuntime {
     /// One refresh pass at a time; a second asked for while one runs is
     /// answered by the one that runs.
     refreshing: Arc<tokio::sync::Mutex<()>>,
+    /// Held for reading by every cover fetch a subscription starts in the
+    /// background, so that taking it for writing waits for all of them.
+    covers: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl PodcastRuntime {
@@ -159,6 +162,7 @@ impl PodcastRuntime {
             settings,
             downloads: Arc::new(tokio::sync::Semaphore::new(1)),
             refreshing: Arc::new(tokio::sync::Mutex::new(())),
+            covers: Arc::new(tokio::sync::RwLock::new(())),
         }
     }
 }
@@ -394,20 +398,59 @@ impl DomainServices {
         }
         // Only once the channel is stored: a subscription refused for the
         // ceiling or as a duplicate has fetched no cover and written nothing
-        // to the store. A cover that cannot be fetched leaves the channel
-        // without one, and the next refresh tries again.
+        // to the store.
+        //
+        // **And not in the request.** The feed has already spent up to its own
+        // deadline, and a cover host as slow again would hold the answer for
+        // the sum of both — past the native route's timeout, after the channel
+        // is committed, and without any bound at all on Subsonic's
+        // `createPodcastChannel`, which no `TimeoutLayer` covers. So the
+        // subscription answers with the cover pending, and the cover follows
+        // in the background, under its own deadline. A cover that cannot be
+        // fetched leaves the channel without one; the next refresh tries
+        // again.
+        if let Some(named) = feed.image_url {
+            // Taken before the task is spawned, so a caller of
+            // `podcast_covers_settled` that returns after this answer cannot
+            // miss it.
+            let pending = Arc::clone(&self.podcasts.covers).read_owned().await;
+            let this = self.clone();
+            tokio::spawn(async move {
+                let _pending = pending;
+                this.fill_first_cover(id, &named).await;
+            });
+        }
+        Ok(self.podcast_channel(user_id, id).await?)
+    }
+
+    /// The cover of a channel just subscribed, fetched and attached.
+    async fn fill_first_cover(&self, channel_id: Uuid, named: &str) {
         let cover = self
-            .channel_cover(feed.image_url.as_deref(), &KnownCover::default())
+            .channel_cover(Some(named), &KnownCover::default())
             .await;
-        if !matches!(cover, CoverWrite::Keep) {
+        if matches!(cover, CoverWrite::Keep) {
+            return;
+        }
+        let recorded: Result<(), ServiceError> = async {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
             // Unsubscribed meanwhile: the update names no row, and the file
             // is left to the sweep.
-            write_cover(&mut tx, &id.to_string(), &cover, now_ms()).await?;
+            write_cover(&mut tx, &channel_id.to_string(), &cover, now_ms()).await?;
             tx.commit().await?;
+            Ok(())
         }
-        Ok(self.podcast_channel(user_id, id).await?)
+        .await;
+        if let Err(error) = recorded {
+            tracing::error!(error = %error, "a podcast cover could not be recorded");
+        }
+    }
+
+    /// Waits until every cover fetch a subscription started so far has
+    /// ended. Public for the tests, which otherwise could not tell a cover
+    /// refused from one still on its way.
+    pub async fn podcast_covers_settled(&self) {
+        let _all = self.podcasts.covers.write().await;
     }
 
     /// Unsubscribes: the channel, its episodes, the bookmarks on them, and the
