@@ -2095,6 +2095,93 @@ test("puts the songs playback action beside the sort and names its scope", async
 });
 
 /**
+ * Every credited artist in a song list is a link to its own page.
+ *
+ * The column used to be the display string as plain text, so a playlist or a
+ * mix offered no way to reach an artist. A track credited to two artists names
+ * two pages; a track whose credits the server did not list still links through
+ * its primary credit; an artist the catalogue does not know stays text.
+ */
+test("links each credited artist in a song list to its page", async ({
+  page,
+}, testInfo) => {
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          ...track,
+          id: "song-duo",
+          title: "Soleil Bleu",
+          artist: "Bleu Soleil, LUIZA",
+          artist_id: "artist-1",
+          artists: [
+            { id: "artist-1", name: "Bleu Soleil" },
+            { id: "artist-2", name: "LUIZA" },
+          ],
+        },
+        {
+          ...track,
+          id: "song-primary",
+          title: "Second track",
+          artist: "Björk",
+          artist_id: "artist-1",
+          artists: [],
+        },
+        {
+          ...track,
+          id: "song-unknown",
+          title: "Third track",
+          artist: "Nobody We Know",
+          artist_id: null,
+          artists: [],
+        },
+      ],
+    }),
+  );
+  await page.goto("/songs");
+  const rows = page.locator(".songs tbody tr");
+  await expect(rows).toHaveCount(3);
+
+  // Every layout: the track's menu names each credited artist, which is how a
+  // phone, whose song table hides the artist column, reaches one.
+  await rows.nth(0).locator("button.song-title").focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for Soleil Bleu" });
+  await expect(menu.getByRole("menuitem", { name: /^Go to / })).toHaveText([
+    "Go to album",
+    "Go to Bleu Soleil",
+    "Go to LUIZA",
+  ]);
+  await menu.getByRole("menuitem", { name: "Go to LUIZA" }).click();
+  await expect(page).toHaveURL(/\/artists\/artist-2$/);
+  await page.goBack();
+  await expect(rows).toHaveCount(3);
+
+  // The column itself is drawn on a wide screen only.
+  if (testInfo.project.name !== "desktop") return;
+  const duo = rows.nth(0).locator(".song-artists");
+  await expect(duo.getByRole("link")).toHaveCount(2);
+  await expect(duo).toHaveText("Bleu Soleil, LUIZA");
+  await expect(duo.getByRole("link", { name: "LUIZA" })).toHaveAttribute(
+    "href",
+    "/artists/artist-2",
+  );
+
+  await expect(
+    rows.nth(1).locator(".song-artists").getByRole("link", { name: "Björk" }),
+  ).toHaveAttribute("href", "/artists/artist-1");
+  await expect(rows.nth(2).locator(".song-artists").getByRole("link")).toHaveCount(
+    0,
+  );
+  await expect(rows.nth(2).locator(".song-artists")).toHaveText("Nobody We Know");
+
+  await expectNoWcagViolations(page);
+
+  await duo.getByRole("link", { name: "Bleu Soleil" }).click();
+  await expect(page).toHaveURL(/\/artists\/artist-1$/);
+});
+
+/**
  * The right click on a track, and the properties it opens (RFC-012 decision 4).
  *
  * Driven from the keyboard first, because a menu reachable only by a right
@@ -2141,6 +2228,9 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "Download",
     // RFC-022: this browser supports Cache Storage, so it offers the copy.
     "Keep for offline",
+    // Where the track belongs, reachable from any list and on a phone.
+    "Go to album",
+    "Go to Skunk Anansie",
     "Properties",
     "Edit tags",
     "Move to folder…",
@@ -2151,11 +2241,11 @@ test("opens a track's properties from its context menu", async ({ page }) => {
     "outline-style",
     "solid",
   );
-  // Past "Keep for offline" (RFC-022), the fourth item.
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
+  // Past "Keep for offline" (RFC-022) and the album and artist entries, the
+  // seventh item.
+  for (let press = 0; press < 6; press += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
   await expect(menu.getByRole("menuitem", { name: "Properties" })).toBeFocused();
   await page.keyboard.press("Enter");
 
@@ -2182,10 +2272,9 @@ test("opens a track's properties from its context menu", async ({ page }) => {
 
   // The backdrop, outside the panel's box, does close it.
   await page.keyboard.press("Shift+F10");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("ArrowDown");
+  for (let press = 0; press < 6; press += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
   await page.keyboard.press("Enter");
   await expect(panel).toBeVisible();
   await page.mouse.click(2, 2);

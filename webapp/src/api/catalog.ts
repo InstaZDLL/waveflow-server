@@ -26,6 +26,13 @@ export type Song = {
   album: string | null;
   artist: string | null;
   artist_id: string | null;
+  /**
+   * Every credited artist, in tag order: the structured form of `artist`,
+   * which stays the display string. On the wire since `SongItem` gained it;
+   * declared here so each name can link to its own page. Optional, so a mock
+   * that leaves it out is a track credited by its display string alone.
+   */
+  artists?: Array<{ id: string; name: string }>;
   artwork_hash: string | null;
   duration_ms: number;
   track: number | null;

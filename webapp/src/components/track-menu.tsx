@@ -12,6 +12,7 @@ import {
 import { createPortal } from "react-dom";
 
 import { placeTracks, type Song, streamUrl } from "../api";
+import { creditedArtists } from "../lib/artist-credits";
 import { downloadUrl, saveFrom } from "../lib/download";
 import {
   forgetOffline,
@@ -429,6 +430,33 @@ function TrackMenu({
               },
         ]
       : []),
+    // Where the track belongs, from every list it appears in. The artist
+    // column of a song table is hidden on a narrow screen, so this is how a
+    // phone reaches an artist from a playlist or a mix.
+    ...(song.album_id
+      ? [
+          {
+            key: "album",
+            icon: "albums" as const,
+            label: t("trackMenu.goToAlbum"),
+            run: () =>
+              void navigate({
+                to: "/albums/$albumId",
+                params: { albumId: song.album_id as string },
+              }),
+          },
+        ]
+      : []),
+    ...creditedArtists(song).map((artist) => ({
+      key: `artist-${artist.id}`,
+      icon: "artists" as const,
+      label: t("trackMenu.goToArtist", { name: artist.name }),
+      run: () =>
+        void navigate({
+          to: "/artists/$artistId",
+          params: { artistId: artist.id },
+        }),
+    })),
     {
       key: "properties",
       icon: "info",
