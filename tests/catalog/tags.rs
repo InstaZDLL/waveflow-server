@@ -632,3 +632,88 @@ async fn genre_matching_is_canonical_on_every_surface() {
     assert_eq!(album["song"][0]["displayAlbumArtist"], "Nine Mics");
     assert_eq!(album["song"][0]["albumArtists"][0]["name"], "Nine Mics");
 }
+
+/// A file that names one genre twice — `Rock; Rock`, or `Rock; rock`, which
+/// canonicalisation folds into one — is one genre on its track.
+///
+/// `track_genre` keys on the pair, and the scan used to insert the repeat and
+/// fail on that key. The failure rolled back the whole batch it was applied in,
+/// so a single odd tag kept every other file of the batch out of the library.
+#[tokio::test]
+async fn a_repeated_genre_is_one_genre_and_spoils_no_batch() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, _) = admin_with_api_token(&state, "repeat-owner").await;
+    let music = config.data_dir.join("repeat-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Repeats",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let scan = state
+        .db
+        .create_scan_job(library, Some(owner), "manual")
+        .await
+        .unwrap();
+    state.db.start_scan_job(scan, 3, false).await.unwrap();
+
+    let applies = [
+        ("Echo", "Rock; Rock"),
+        ("Fold", "Rock; rock"),
+        ("Plain", "Pop"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (title, genre))| {
+        let mut input = browse_input(
+            600 + index,
+            title,
+            "Repeater",
+            "Twice Told",
+            Some(index as i64 + 1),
+            Some(1),
+        );
+        input.relative_path = format!("repeat-{index}.flac");
+        input.quick_hash = format!("{:064x}", index + 61_000);
+        input.full_hash = format!("{:064x}", index + 62_000);
+        input.genre = Some(genre.into());
+        waveflow_server::storage::catalog::CatalogApply {
+            input,
+            existing_id: None,
+            moved: false,
+            origin_device_id: None,
+        }
+    })
+    .collect::<Vec<_>>();
+    state
+        .db
+        .apply_catalog_tracks(library, scan, &applies)
+        .await
+        .expect("a repeated genre must not fail the batch");
+    state.db.finish_scan_job(scan, 0).await.unwrap();
+
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT t.title, COUNT(tg.genre_id) FROM track t \
+         LEFT JOIN track_genre tg ON tg.track_id = t.id \
+         WHERE t.library_id = ? GROUP BY t.id ORDER BY t.title",
+    )
+    .bind(library.to_string())
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("Echo".to_owned(), 1),
+            ("Fold".to_owned(), 1),
+            ("Plain".to_owned(), 1),
+        ],
+        "every file of the batch is in, each with its one genre"
+    );
+}
