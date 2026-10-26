@@ -113,11 +113,11 @@ path = "tests/migrations.rs"
 
 [[test]]
 name = "auth"
-path = "tests/auth.rs"
+path = "tests/auth/main.rs"
 
 [[test]]
 name = "scanner"
-path = "tests/scanner.rs"
+path = "tests/scanner/main.rs"
 
 [[test]]
 name = "identity"
@@ -125,11 +125,11 @@ path = "tests/identity.rs"
 
 [[test]]
 name = "catalog"
-path = "tests/catalog.rs"
+path = "tests/catalog/main.rs"
 
 [[test]]
 name = "subsonic_contract"
-path = "tests/subsonic_contract.rs"
+path = "tests/subsonic_contract/main.rs"
 
 [[test]]
 name = "subsonic_fields"
@@ -141,11 +141,11 @@ path = "tests/subsonic_browse.rs"
 
 [[test]]
 name = "subsonic_methods"
-path = "tests/subsonic_methods.rs"
+path = "tests/subsonic_methods/main.rs"
 
 [[test]]
 name = "native_api"
-path = "tests/native_api.rs"
+path = "tests/native_api/main.rs"
 
 [[test]]
 name = "sync"
@@ -153,7 +153,7 @@ path = "tests/sync.rs"
 
 [[test]]
 name = "media"
-path = "tests/media.rs"
+path = "tests/media/main.rs"
 
 [[test]]
 name = "service"
@@ -170,7 +170,7 @@ strip = "debuginfo"
 
 [[test]]
 name = "uploads"
-path = "tests/uploads.rs"
+path = "tests/uploads/main.rs"
 
 [[test]]
 name = "canvas"
@@ -178,11 +178,11 @@ path = "tests/canvas.rs"
 
 [[test]]
 name = "scrobbling"
-path = "tests/scrobbling.rs"
+path = "tests/scrobbling/main.rs"
 
 [[test]]
 name = "enrichment"
-path = "tests/enrichment.rs"
+path = "tests/enrichment/main.rs"
 
 [[test]]
 name = "credits"
@@ -202,4 +202,4 @@ path = "tests/smart_playlists.rs"
 
 [[test]]
 name = "podcasts"
-path = "tests/podcasts.rs"
+path = "tests/podcasts/main.rs"

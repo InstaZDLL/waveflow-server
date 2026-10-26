@@ -442,7 +442,7 @@ async fn a_minted_secret_leaves_on_standard_output_by_itself() {
 
 /// A double for the half of the Last.fm protocol that would leave this machine.
 ///
-/// Small and local rather than shared with `tests/scrobbling.rs`: what this
+/// Small and local rather than shared with `tests/scrobbling/lastfm_journey.rs`: what this
 /// file needs is an exchange that exists, and a token it can recognise coming
 /// back out.
 struct Approves;
