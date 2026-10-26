@@ -161,8 +161,21 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
         }
         "/cover.jpg" => image("image/jpeg", jpeg(1)),
         "/cover-2.jpg" => image("image/jpeg", jpeg(2)),
-        // A cover host that answers, eventually: longer than any request
-        // should be held open for it.
+        // The gated cover below, for its first request only; every later one
+        // answers at once with other bytes, as if the image behind the
+        // address changed.
+        "/gated-once.jpg" => {
+            if host.count("/gated-once.jpg") > 1 {
+                return image("image/jpeg", jpeg(8));
+            }
+            for _ in 0..2_000 {
+                if host.gate_open.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            image("image/jpeg", jpeg(7))
+        }
         // A cover host that answers only once the test opens the gate.
         "/gated-cover.jpg" => {
             for _ in 0..2_000 {
@@ -173,6 +186,8 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
             }
             image("image/jpeg", jpeg(7))
         }
+        // A cover host that answers, eventually: longer than any request
+        // should be held open for it.
         "/slow-cover.jpg" => {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             image("image/jpeg", jpeg(6))
@@ -1612,9 +1627,12 @@ async fn a_slow_cover_host_does_not_hold_a_subsonic_subscription() {
     assert_eq!(host.count("/slow-cover.jpg"), 1);
 }
 
-/// A subscription's cover arrives after a refresh has moved the feed to
-/// another one: the late cover is dropped, and the channel keeps the cover
-/// the refresh recorded — never the stale one. Its row is left to the sweep.
+/// A subscription's cover arrives after a refresh has moved on: the late cover
+/// is dropped, and the channel keeps what the refresh left — the new cover, or
+/// none — never the stale one. Three ways: the feed names another cover, which
+/// the refresh records; it names one the refresh cannot fetch; it names the
+/// same address, whose image the refresh records anew. The dropped row is
+/// left to the sweep.
 #[tokio::test]
 async fn a_first_cover_that_lands_after_a_refresh_moved_the_feed_is_dropped() {
     let host = fake_host().await;
@@ -1690,5 +1708,36 @@ async fn a_first_cover_that_lands_after_a_refresh_moved_the_feed_is_dropped() {
     assert_eq!(
         second.artwork_hash, None,
         "a cover the feed no longer names was attached"
+    );
+
+    // And with the same address both times: the refresh fetches it again
+    // while the first fetch is held, and records what it is now. Only the
+    // record tells the late cover is the older one.
+    host.gate_open.store(false, Ordering::SeqCst);
+    *host.cover.lock().unwrap() = "/gated-once.jpg".to_owned();
+    let (status, third) =
+        subscribe(&router, &token, &format!("{}/feed.xml?third", host.base)).await;
+    assert_eq!(status, StatusCode::CREATED, "{third}");
+    for _ in 0..500 {
+        if host.count("/gated-once.jpg") > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    state.services.refresh_all_podcasts().await;
+    // Every channel names it now, so each refreshes it; only the first
+    // request, the subscription's, is held.
+    assert!(host.count("/gated-once.jpg") > 1);
+    host.gate_open.store(true, Ordering::SeqCst);
+    state.services.podcast_covers_settled().await;
+    let third = state
+        .services
+        .podcast_channel(admin, uuid_of(&third))
+        .await
+        .unwrap();
+    assert_eq!(
+        third.artwork_hash,
+        Some(hash_of(&jpeg(8))),
+        "an older fetch of the same address replaced the newer one"
     );
 }
