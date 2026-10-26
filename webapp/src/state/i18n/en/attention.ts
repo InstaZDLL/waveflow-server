@@ -1,0 +1,53 @@
+// The attention lists and artist splits.
+export const attention = {
+  "attention.lists": "Lists",
+  "attention.total": {
+    one: "{count} thing to look at",
+    other: "{count} things to look at",
+  },
+  "attention.nothing": "Nothing needs attention.",
+  "attention.notYours":
+    "Only the owners and managers of this library see what needs attention in it.",
+  "attention.empty": "Nothing in this list.",
+  "attention.tracksNote":
+    "Fix a track from its menu: once corrected, it leaves the list.",
+  "attention.creditsNote":
+    "Each of these credits names several artists in one string. Split it into the artists it names, or keep it as one when it is a single name. Every later scan applies the decision.",
+  "attention.pending": "To decide",
+  "attention.decided": "Decided",
+  "attention.split": "Split",
+  "attention.confirmSplit": "Confirm: split into {count}",
+  "attention.keep": "Keep as one",
+  "attention.splitDone": "{name} is split.",
+  "attention.keepDone": "{name} stays as one.",
+  "attention.undone": "The decision about {name} is undone.",
+  "attention.alreadyDecided":
+    "This credit was decided in the meantime. The list has been reloaded.",
+  "attention.failed": "That did not work. Try again.",
+  "attention.noCredits": "No credit is waiting for a decision.",
+  "attention.noDecisions": "Nothing has been decided yet.",
+  "attention.fragments": "What {name} would split into",
+  "attention.knownFragment": "Already an artist in this library",
+  "attention.decidedSplit": "Split into {parts}",
+  "attention.decidedKeep": "Kept as one",
+  "attention.decidedBy": "By {who}, {when}",
+  "attention.undo": "Undo",
+  "attention.duplicateGroup": "Probable duplicate {group}",
+  "attention.split_credits": "Artists to split",
+  "attention.missing_artist": "Missing artist",
+  "attention.missing_album": "Missing album",
+  "attention.missing_year": "Missing year",
+  "attention.missing_track_number": "Missing track number",
+  "attention.missing_cover": "Missing cover",
+  "attention.album_year_conflict": "Albums with several years",
+  "attention.compilation_no_album_artist":
+    "Compilations without an album artist",
+  "attention.duplicate_track_number": "Duplicate track numbers",
+  "attention.track_number_gap": "Gaps in track numbers",
+  "attention.probable_duplicate": "Probable duplicates",
+  "attention.probable_fake_lossless": "Probable fake lossless",
+  "artistSplit.offer": "Split into {count} artists",
+  "artistSplit.confirm": "Confirm: split into {count}",
+  "artistSplit.done": "Split into {parts}.",
+  "artistSplit.failed": "This credit could not be split. Try again.",
+} as const;

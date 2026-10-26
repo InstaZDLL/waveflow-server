@@ -1,0 +1,101 @@
+// Folders, filing and uploads.
+export const folders = {
+  "folders.count": {
+    one: "{count} folder created in this library",
+    other: "{count} folders created in this library",
+  },
+  "folders.where": "Folder path",
+  "folders.subfolders": "Folders",
+  "folders.noLibrary": "No library is available to this account.",
+  "folders.none": "No folder has been created in this library yet.",
+  "folders.system": "Kept by WaveFlow",
+  "folders.systemNote":
+    "To sort gathers every track that is in no folder. WaveFlow keeps it itself: it is not counted among the folders above, and it cannot be renamed, moved or deleted.",
+  "filed.unfiled": "To sort",
+  "filed.automatic": "Automatic",
+  "filed.topLevel": "Top level",
+  "filed.here": "Here now",
+  "filed.destinations": "Folders to choose from",
+  "filed.loadError": "The folders could not be loaded.",
+  "filed.moveFailed": "The move failed. Try again.",
+  "filed.moveTrack": "Move “{title}” to a folder",
+  "filed.moveFolder": "Move “{name}”",
+  "filed.note":
+    "Folders that exist only in WaveFlow. Filing a track here moves no file.",
+  "filed.newFolder": "New folder",
+  "filed.name": "Folder name",
+  "filed.renameLabel": "New name",
+  "filed.create": "Create",
+  "filed.save": "Save",
+  "filed.cancel": "Cancel",
+  "filed.rename": "Rename",
+  "filed.move": "Move…",
+  "filed.delete": "Delete",
+  "filed.confirmDelete":
+    "Delete “{name}” and its sub-folders? Their tracks go back to To sort; no file is touched.",
+  "filed.created": "“{name}” created.",
+  "filed.renamed": "Renamed to “{name}”.",
+  "filed.deleted": {
+    one: "Folder deleted: {count} track is back in To sort.",
+    other: "Folder deleted: {count} tracks are back in To sort.",
+  },
+  "filed.filed": {
+    one: "{count} track filed in {folder}.",
+    other: "{count} tracks filed in {folder}.",
+  },
+  "filed.folderMoved": "“{name}” moved.",
+  "filed.nameTaken": "A folder of that name is already here.",
+  "filed.refused":
+    "That folder cannot go there: check its name, or the tree is too deep or full.",
+  "filed.failed": "That did not work. Try again.",
+  "filed.missing": "This folder no longer exists.",
+  "filed.empty": "Nothing is filed here yet.",
+  "filed.allFiled": "Every track is filed.",
+  "filed.uploadHere": "Upload here",
+  "filed.unfiledNote":
+    "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed, and it cannot be renamed or deleted. To file a track, open its menu and choose “Move to folder…”.",
+  "filed.unfiledNoteReader":
+    "Every track that is in no folder yet. WaveFlow keeps this list itself: a track leaves it as soon as it is filed.",
+  "upload.into": "Received files go into the folder {folder}.",
+  "upload.doneUnfiled": "Added to the library, in To sort",
+  "upload.folderMissing":
+    "The folder this upload was opened for cannot be found: received files will go to To sort.",
+  "upload.folderUnchecked":
+    "The folder this upload was opened for could not be checked, so no file is taken yet.",
+  "upload.checkAgain": "Check again",
+  "upload.title": "Upload to {library}",
+  "upload.detail":
+    "Each file is fingerprinted in your browser first, so a file the library already holds is never sent again, and an interrupted transfer picks up where it stopped.",
+  "upload.pick": "Choose audio files",
+  "upload.formats": "Formats the library can index: {extensions}",
+  "upload.noLibrary": "Choose a library first.",
+  "upload.notAllowed":
+    "Only an owner or a manager of this library can add files to it.",
+  "upload.closed":
+    "This library does not take files. Its operator decides that on the server.",
+  "upload.waiting": "Waiting",
+  "upload.hashing": "Fingerprinting…",
+  "upload.negotiating": "Asking the server…",
+  "upload.uploading": "Sending…",
+  "upload.committing": "Adding to the library…",
+  "upload.done": "Added to the library",
+  "upload.present": "Already in the library",
+  "upload.refused": "Refused: {reason}",
+  "upload.failed": "Failed: {reason}",
+  "upload.progress": "Progress: {name}",
+  "upload.reason.unsupportedFormat":
+    "not an audio format the library can index",
+  "upload.reason.tooLarge": "larger than the server accepts",
+  "upload.reason.quotaExceeded": "the library has no room left",
+  "upload.reason.libraryClosed": "the library does not take files",
+  "upload.reason.tooManySessions":
+    "too many transfers already open — try again shortly",
+  "upload.reason.refusedFile":
+    "what arrived did not match the file, or is not audio the library can read",
+  "upload.reason.unavailable":
+    "the server could not take it just now — try again",
+  "upload.reason.network": "the connection was lost",
+  "upload.reason.notAllowed": "you may no longer add files to this library",
+  "upload.reason.error": "something went wrong",
+  "upload.reason.hashing": "this browser could not fingerprint the file",
+} as const;

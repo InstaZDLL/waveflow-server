@@ -1,0 +1,23 @@
+// Words shared across screens, file sizes, card buttons and ratings.
+export const common = {
+  "common.loading": "Loading",
+  "common.loadError": "We could not load this view",
+  "common.noAlbums": "No albums yet.",
+  "common.noArtists": "No artists yet.",
+  "common.variousArtists": "Various artists",
+  "common.unknownArtist": "Unknown artist",
+  "common.album": "Album",
+  "common.artist": "Artist",
+  "common.albums": { one: "{count} album", other: "{count} albums" },
+  "common.tracks": { one: "{count} track", other: "{count} tracks" },
+  "common.delete": "Delete",
+  "common.cancel": "Cancel",
+  "common.back": "Back",
+  "file.megabytes": "{size} MB",
+  "file.kilobytes": "{size} kB",
+  "file.channels": { one: "mono", other: "{count} ch" },
+  "card.play": "Play",
+  "card.queue": "Add to queue",
+  "rating.label": "Rating",
+  "rating.stars": { one: "{count} star", other: "{count} stars" },
+} as const;
