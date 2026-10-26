@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 
+import { themeSurfaces } from "../src/styles/design-tokens/apply";
 import { THEME_PRESETS } from "../src/styles/design-tokens/themes";
 
 /**
@@ -342,6 +343,74 @@ test("follows the device between a preset and its pair, live", async ({
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("waveflow.theme")))
     .toBe("default");
+});
+
+/**
+ * What a colour value computes to in this page, by painting it on a probe:
+ * the expected value goes through the same engine as the page's own, so the
+ * two compare as computed colours and not as spellings.
+ */
+async function painted(page: Page, value: string): Promise<string> {
+  return page.evaluate((colour) => {
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = colour;
+    document.body.append(probe);
+    const computed = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return computed;
+  }, value);
+}
+
+function backgroundOf(page: Page, selector: string): Promise<string> {
+  return page
+    .locator(selector)
+    .first()
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+}
+
+test("paints the page in each dark preset's own surfaces", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/settings");
+  const themes = picker(page);
+  await expect(themes).toBeVisible();
+  const desktop = testInfo.project.name === "desktop";
+  const grounds = new Set<string>();
+  for (const id of ["midnight", "lavender", "ocean", "oled"]) {
+    const preset = THEME_PRESETS.find((candidate) => candidate.id === id);
+    if (!preset) throw new Error(`no preset ${id}`);
+    await page.locator(`.theme-card[data-theme-id="${id}"]`).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", id);
+    const { ground, surface } = themeSurfaces(preset);
+
+    // The page's ground is the preset's ambient, and OLED's is black.
+    const body = await backgroundOf(page, "body");
+    expect(body, `${id}: the page`).toBe(await painted(page, ground));
+    grounds.add(body);
+    // The play bar and the rail are its panel, as translucent as they are.
+    expect(await backgroundOf(page, ".player"), `${id}: the play bar`).toBe(
+      await painted(page, `color-mix(in srgb, ${surface} 92%, transparent)`),
+    );
+    if (desktop) {
+      expect(await backgroundOf(page, ".sidebar"), `${id}: the rail`).toBe(
+        await painted(page, `color-mix(in srgb, ${surface} 82%, transparent)`),
+      );
+    }
+    // And the card that chose it shows what the page now paints.
+    const card = page.locator(`.theme-card[data-theme-id="${id}"]`);
+    expect(
+      await backgroundOf(page, `.theme-card[data-theme-id="${id}"] .theme-card-preview`),
+      `${id}: the card's ground`,
+    ).toBe(body);
+    expect(
+      await card
+        .locator(".theme-card-sidebar")
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+      `${id}: the card's panel`,
+    ).toBe(await painted(page, "var(--fe-surface)"));
+  }
+  expect(grounds.size).toBe(4);
+  expect(grounds.has("rgb(0, 0, 0)")).toBe(true);
 });
 
 test("reflows the cards at any width without scrolling sideways", async ({
