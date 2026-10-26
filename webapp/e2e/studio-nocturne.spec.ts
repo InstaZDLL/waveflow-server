@@ -1462,12 +1462,11 @@ test("renders the studio shell and persists appearance preferences", async ({
     page.getByRole("heading", { name: "Account", exact: true }),
   ).toBeVisible();
   const preferences = page.locator(".settings-panel").first();
-  const theme = preferences.getByLabel("Theme");
-  await theme.selectOption({ index: 1 });
-  const selectedTheme = await theme.inputValue();
+  const theme = preferences.getByRole("radiogroup", { name: "Theme" });
+  await theme.getByRole("radio", { name: "Midnight light" }).check();
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("waveflow.theme")))
-    .toBe(selectedTheme);
+    .toBe("midnight-light");
 
   const language = preferences.getByLabel("Language");
   await language.selectOption("fr");
