@@ -629,16 +629,20 @@ impl DomainServices {
         match cover_plan(named, known, file_present, now_ms()) {
             CoverPlan::Keep => CoverWrite::Keep,
             CoverPlan::Clear => CoverWrite::Clear,
-            CoverPlan::Fetch(url) => match self
-                .fetch_remote_artwork(url, self.podcasts.settings.allow_http, "podcast cover")
-                .await
-            {
-                Some(artwork) => CoverWrite::Stored {
-                    artwork,
-                    url: url.to_owned(),
-                },
-                None => CoverWrite::Keep,
-            },
+            CoverPlan::Fetch(url) => {
+                let seen = known.fetched_at;
+                match self
+                    .fetch_remote_artwork(url, self.podcasts.settings.allow_http, "podcast cover")
+                    .await
+                {
+                    Some(artwork) => CoverWrite::Stored {
+                        artwork,
+                        url: url.to_owned(),
+                        seen,
+                    },
+                    None => CoverWrite::Keep,
+                }
+            }
         }
     }
 
@@ -1093,7 +1097,12 @@ enum CoverWrite {
     Clear,
     Stored {
         artwork: super::remote_artwork::FetchedArtwork,
+        /// The address it was fetched from.
         url: String,
+        /// `artwork_fetched_at` as it was read before the fetch began. Any
+        /// other value at write time means a cover was recorded meanwhile,
+        /// and that one is the newer, whatever order the fetches end in.
+        seen: Option<i64>,
     },
 }
 
@@ -1129,8 +1138,17 @@ fn cover_plan<'a>(
     }
 }
 
-/// Writes a cover decision onto a channel, in the transaction that writes the
-/// rest of its refresh.
+/// Writes a cover decision onto a channel, under the writer gate: in the
+/// transaction of a refresh, or in its own after a subscription.
+///
+/// **Only while the decision still holds.** A cover is fetched outside the
+/// gate, and two fetches for one channel can be in flight at once — the
+/// subscription's, in the background, and a refresh's. So the write names what
+/// the fetch assumed: the channel still exists, it still names the address the
+/// cover came from (or, to clear it, names none), and no cover was recorded
+/// since this fetch began. Otherwise nothing is written, the newer state
+/// stands, and an `artwork` row recorded for the dropped cover names nothing;
+/// the sweep collects it with its file.
 async fn write_cover(
     tx: &mut sqlx::Transaction<'static, sqlx::Sqlite>,
     channel_id: &str,
@@ -1142,22 +1160,26 @@ async fn write_cover(
         CoverWrite::Clear => {
             sqlx::query(
                 "UPDATE podcast_channel SET artwork_hash=NULL, artwork_url=NULL, \
-                   artwork_fetched_at=NULL WHERE id=?",
+                   artwork_fetched_at=NULL WHERE id=? AND image_url IS NULL",
             )
             .bind(channel_id)
             .execute(&mut **tx)
             .await?;
         }
-        CoverWrite::Stored { artwork, url } => {
+        CoverWrite::Stored { artwork, url, seen } => {
             super::remote_artwork::record_artwork(tx, artwork, "podcast", now).await?;
+            // `IS`, not `=`: a channel that held no cover reads `NULL`, and
+            // must still read `NULL` for this write to be the first.
             sqlx::query(
                 "UPDATE podcast_channel SET artwork_hash=?, artwork_url=?, artwork_fetched_at=? \
-                 WHERE id=?",
+                 WHERE id=? AND image_url=? AND artwork_fetched_at IS ?",
             )
             .bind(&artwork.hash)
             .bind(url)
             .bind(now)
             .bind(channel_id)
+            .bind(url)
+            .bind(seen)
             .execute(&mut **tx)
             .await?;
         }

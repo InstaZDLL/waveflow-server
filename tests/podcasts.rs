@@ -54,6 +54,8 @@ struct Host {
     cover_failing: Arc<AtomicBool>,
     /// The cover `/feed.xml` names, as a path on this host.
     cover: Arc<Mutex<String>>,
+    /// `/gated-cover.jpg` holds its answer until this is set.
+    gate_open: Arc<AtomicBool>,
 }
 
 impl Host {
@@ -161,6 +163,16 @@ async fn serve(State(host): State<Host>, request: Request<Body>) -> Response {
         "/cover-2.jpg" => image("image/jpeg", jpeg(2)),
         // A cover host that answers, eventually: longer than any request
         // should be held open for it.
+        // A cover host that answers only once the test opens the gate.
+        "/gated-cover.jpg" => {
+            for _ in 0..2_000 {
+                if host.gate_open.load(Ordering::SeqCst) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            image("image/jpeg", jpeg(7))
+        }
         "/slow-cover.jpg" => {
             tokio::time::sleep(std::time::Duration::from_secs(60)).await;
             image("image/jpeg", jpeg(6))
@@ -241,6 +253,7 @@ async fn fake_host() -> Host {
         failing: Arc::default(),
         cover_failing: Arc::default(),
         cover: Arc::new(Mutex::new("/cover.jpg".to_owned())),
+        gate_open: Arc::default(),
     };
     let router = Router::new().fallback(serve).with_state(host.clone());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -1597,4 +1610,85 @@ async fn a_slow_cover_host_does_not_hold_a_subsonic_subscription() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!(host.count("/slow-cover.jpg"), 1);
+}
+
+/// A subscription's cover arrives after a refresh has moved the feed to
+/// another one: the late cover is dropped, and the channel keeps the cover
+/// the refresh recorded — never the stale one. Its row is left to the sweep.
+#[tokio::test]
+async fn a_first_cover_that_lands_after_a_refresh_moved_the_feed_is_dropped() {
+    let host = fake_host().await;
+    let (_temp, config, state) = podcast_app(|_| {}).await;
+    let (admin, password, _) = account(&state, "late-cover-admin", AccountRole::Admin).await;
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "late-cover-admin", &password).await;
+
+    // The subscription's cover is held at the host.
+    *host.cover.lock().unwrap() = "/gated-cover.jpg".to_owned();
+    let (status, channel) = subscribe(&router, &token, &format!("{}/feed.xml", host.base)).await;
+    assert_eq!(status, StatusCode::CREATED, "{channel}");
+    for _ in 0..500 {
+        if host.count("/gated-cover.jpg") > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(host.count("/gated-cover.jpg"), 1);
+
+    // Meanwhile the feed names another cover, and a refresh records it.
+    *host.cover.lock().unwrap() = "/cover-2.jpg".to_owned();
+    state.services.refresh_all_podcasts().await;
+    let channel_id = uuid_of(&channel);
+    let refreshed = state
+        .services
+        .podcast_channel(admin, channel_id)
+        .await
+        .unwrap();
+    assert_eq!(refreshed.artwork_hash, Some(hash_of(&jpeg(2))));
+
+    // Then the first cover lands.
+    host.gate_open.store(true, Ordering::SeqCst);
+    state.services.podcast_covers_settled().await;
+    let settled = state
+        .services
+        .podcast_channel(admin, channel_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        settled.artwork_hash,
+        Some(hash_of(&jpeg(2))),
+        "a stale cover replaced the newer one"
+    );
+    // Whatever the late fetch recorded names nothing, and the sweep forgets it.
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.rows_removed, 1, "{swept:?}");
+
+    // Again, with a refresh that moves the feed to a cover it cannot fetch:
+    // no newer cover is recorded, so only the address tells the late one is
+    // stale. The channel ends with none.
+    host.gate_open.store(false, Ordering::SeqCst);
+    *host.cover.lock().unwrap() = "/gated-cover.jpg".to_owned();
+    let (status, second) =
+        subscribe(&router, &token, &format!("{}/feed.xml?second", host.base)).await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    for _ in 0..500 {
+        if host.count("/gated-cover.jpg") > 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(host.count("/gated-cover.jpg"), 2);
+    *host.cover.lock().unwrap() = "/no-such-cover.jpg".to_owned();
+    state.services.refresh_all_podcasts().await;
+    host.gate_open.store(true, Ordering::SeqCst);
+    state.services.podcast_covers_settled().await;
+    let second = state
+        .services
+        .podcast_channel(admin, uuid_of(&second))
+        .await
+        .unwrap();
+    assert_eq!(
+        second.artwork_hash, None,
+        "a cover the feed no longer names was attached"
+    );
 }
