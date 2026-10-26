@@ -20,11 +20,14 @@ cargo test --all-features
 
 Tests are hermetic and use temporary SQLite databases. No PostgreSQL or Better Auth process is required.
 
+Unit tests live in `tests.rs` beside their module (`foo/mod.rs` declares `#[cfg(test)] mod tests;`), never inline. Integration targets are declared in `Cargo.toml`; a large one is a directory whose `main.rs` declares one file per subject. CI runs `sh scripts/check-rust-layout.sh`: no source file under `src/` past 800 lines, no `tests.rs` or file under `tests/` past 1,000, no inline `mod tests {`. It also runs `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS="-D warnings"`.
+
 ## v2 conventions
 
 - `src/main.rs` only loads config, initializes state, dispatches CLI commands and serves the router. Testable runtime behaviour belongs behind library functions.
-- All environment access lives in `src/config.rs`.
-- SQL stays in `src/database.rs` or later repository modules. Handlers orchestrate HTTP only.
+- `src/` is filed by domain; only `main.rs` and `lib.rs` sit at its root. `app/` (boot, state, router), `cli/`, `config/`; the surfaces `api/` and `subsonic/` over the one domain `services/`; `auth/` (sessions, sign-in guard, OAuth, setup token, instance-key cryptography, stream tickets); `library/` (scanner, watcher, tags, PIDs, credit splitting, playlist files, lyrics parsing); `storage/` (database, catalogue, sync journal, collation, pre-migration copy); `remote/` (outbound client, enrichment, portraits, LRCLIB, podcast feeds, scrobblers); `http/` (security headers, public share, `/reference`, web client); `media/`; `quality/`. A new module goes under the parent whose domain it serves, never at the root.
+- All environment access lives in `src/config/`.
+- SQL stays in `src/storage/database/`, `src/storage/catalog/` or `src/services/`. Handlers orchestrate HTTP only.
 - SQLite connections enable WAL, foreign keys and `busy_timeout`. All mutations acquire the single process-wide writer gate; libraries may scan concurrently but never create independent SQLite writers.
 - Migrations under `migrations-v2/` are immutable once merged. Schema changes always add a new dated migration.
 - Tenant isolation is enforced in repository queries through account plus library membership, not only in handlers.

@@ -251,7 +251,7 @@ media from any `http:` or `https:` host, because internet radio is played
 straight from the station. `/rest` carries none of these headers.
 
 Every tunable is a field on `Config` in
-[`src/config.rs`](../src/config.rs), with its environment variable documented on
+[`src/config/mod.rs`](../src/config/mod.rs), with its environment variable documented on
 it. That file is the authority; this page is not a copy of it.
 
 ## Switching metadata enrichment on
