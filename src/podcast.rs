@@ -713,8 +713,8 @@ mod tests {
     }
 
     /// A secure address may move anywhere secure, a clear one anywhere; a
-    /// secure one may not move into the clear, by an absolute address or a
-    /// scheme-relative one.
+    /// secure one may not move into the clear. A scheme-relative target
+    /// (`//host/path`) keeps the scheme it came from, so it never downgrades.
     #[test]
     fn a_redirect_never_leaves_https_for_http() {
         let secure = url::Url::parse("https://feeds.example.org/show.xml?auth=t").unwrap();
@@ -728,6 +728,18 @@ mod tests {
         assert_eq!(
             next_hop(&secure, "/moved.xml").unwrap().as_str(),
             "https://feeds.example.org/moved.xml"
+        );
+        assert_eq!(
+            next_hop(&secure, "//cdn.example.org/show.xml")
+                .unwrap()
+                .as_str(),
+            "https://cdn.example.org/show.xml"
+        );
+        assert_eq!(
+            next_hop(&clear, "//cdn.example.org/show.xml")
+                .unwrap()
+                .as_str(),
+            "http://cdn.example.org/show.xml"
         );
         assert_eq!(
             next_hop(&clear, "https://cdn.example.org/show.xml")
