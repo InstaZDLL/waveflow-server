@@ -491,7 +491,7 @@ async fn a_corrected_artist_agrees_with_itself_everywhere() {
         .unwrap();
     // One genre; which of its spellings it is shown under is the genre's own
     // business, not this correction's.
-    assert_eq!(repeated[0].genres.len(), 1, "{:?}", repeated[0].genres);
+    assert_eq!(repeated[0].genres.len(), 1);
     assert!(repeated[0].genres[0].eq_ignore_ascii_case("jazz"));
 
     // Removing the correction hands the track back to its file. The rows the
