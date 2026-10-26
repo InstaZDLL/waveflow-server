@@ -2,7 +2,9 @@
 
 - **Status**: Proposed
 - **Implemented by**: [#333](https://github.com/InstaZDLL/waveflow-server/pull/333)
-  (this RFC and its implementation, together). The *Status* field above never
+  (this RFC and its implementation, together), and
+  [#342](https://github.com/InstaZDLL/waveflow-server/pull/342) (the amendment
+  on artwork for podcasts and radio stations). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -381,7 +383,9 @@ lyrics:
   newest are kept per refresh.
 - **The cover is not fetched.** Its address is kept and handed to clients as
   `originalImageUrl`; channels carry no `coverArt`. Fetching artwork is a second
-  outbound surface this RFC does not open.
+  outbound surface this RFC does not open. *Superseded by the
+  [amendment](#amendment--artwork-for-podcasts-and-radio-stations) below: the
+  cover is fetched, and its address is shown to managers only.*
 
 ## Decision 11 — episodes are downloaded, never relayed
 
@@ -484,6 +488,139 @@ enclosure that is HTML, an episode past its ceiling and one past the quota.
 and the production address policy's refusal of loopback is the portrait
 fetcher's own test.
 
+## Amendment — artwork for podcasts and radio stations
+
+*Added 2026-10-26.* The play bar showed a station or an episode with a
+generic symbol, and the podcasts page showed no cover at all. The covers
+existed — a feed names one, and a station may have a logo — but the web client
+cannot load them: RFC-019's Content-Security-Policy keeps `img-src` to this
+origin, and an image loaded from the feed's host would hand that host the
+address of every listener, which decision 11 exists to prevent for the audio.
+So the server fetches the image once and serves it from the artwork store,
+like any cover.
+
+**A1 — one fetcher, the podcast rules, the portrait checks.** A cover's address
+comes out of a document, a station image's from a person, so neither can be
+held to an allowlist as a provider's portrait is (RFC-011 decision 8).
+`portrait::fetch_followed` reaches the host through decision 9's rules —
+`podcast::open`: http or https, no user information, every address public,
+checked and pinned, redirects followed by hand, at most five, each hop checked
+before it is contacted — and reads the answer through the portrait fetcher's
+own checks, now shared by both doors: 10 MiB, read with
+`outbound::read_bounded_body`, and the bytes sniffed as JPEG, PNG or WebP. A
+`Content-Type` naming another type is refused unread; one naming none, or
+`application/octet-stream` — what object storage labels every cover with — is
+read and judged by its bytes. A page of HTML is refused whatever it is
+labelled. Nothing is logged but a verdict.
+
+**A2 — a channel's cover.** Fetched when the channel is subscribed — in the
+background, once the channel is committed, so that the subscription answers
+with its cover pending rather than holding the request for a feed fetch and a
+cover fetch in a row (Subsonic's `createPodcastChannel` sits under no
+`TimeoutLayer`, so nothing else would bound that sum) — and on a refresh,
+before the writer gate, recorded in the refresh's transaction:
+`podcast_channel.artwork_hash`, with the address it was fetched from
+(`artwork_url`) and when (`artwork_fetched_at`). A refresh fetches it again
+only when the feed names an address other than the one fetched from, when no
+cover is held (the last fetch failed), when the file is gone from the store,
+or when the copy is older than a week; otherwise the feed is read and the cover
+is not. A failed fetch stores nothing and keeps whatever was held — the old
+cover, when the feed moved to a new one that cannot be reached — and the next
+refresh tries again, because the addresses still differ. A feed that stops
+naming a cover has it forgotten. Plain http is allowed for a cover exactly
+when `WAVEFLOW_PODCAST_ALLOW_HTTP` allows it for the feed.
+
+Two fetches of one channel's cover can be in flight at once — the
+subscription's, in the background, and a refresh's — so the write that records
+one names what its fetch assumed: the channel still names the address it came
+from (or, to forget a cover, names none), and `artwork_fetched_at` is still
+what it was when the fetch began. Otherwise the cover is dropped and the newer
+state stands; its `artwork` row names nothing, and the sweep collects it.
+
+**A3 — episodes show their channel's cover.** An episode's own
+`itunes:image` is not fetched: a refresh keeps up to five hundred episodes, and
+fetching one image each would make the cover traffic proportional to the
+episodes rather than to the channels, which is what decision 8 keeps it to.
+
+**A4 — what is handed out.** The hash, natively as `artwork_hash` on a channel
+and on each episode, and through Subsonic as `coverArt` on `getPodcasts`,
+`getNewestPodcasts`, `getPodcastEpisode` and an episode bookmark's entry,
+served by `/api/v2/artwork/{hash}` and `getCoverArt` to every account, as every
+account reads the channels. **The address is shown to managers only** —
+natively `image_url`, through Subsonic `originalImageUrl` — as the feed's is
+(decision 8): a private feed's cover can carry its subscriber's token. This
+changes an answer: `originalImageUrl` was given to every account.
+
+**A5 — a station's image.** A station may carry an `image_url`, validated as
+`homepage_url` is: absolute, http or https, a blank value meaning none. When it
+is set or changed through the native API, the server fetches it once under A1
+— plain http allowed, as a station's stream so often is — and stores
+`radio_station.artwork_hash`; an address already stored, with its image in the
+store, is not fetched again. **A failed fetch keeps the address and shows no
+image**, and the retry is the next save that carries the address; there is no
+background pass, so a station image is never fetched without an account
+asking. The image is served to the station's account alone, as the station is
+(404 to everyone else). **A replacement does not clear the image by omission**:
+`PUT` without `image_url` keeps it, and `null` clears it. The Subsonic writes
+have no image parameter — `createInternetRadioStation` creates a station
+without one and `updateInternetRadioStation` leaves it as it is — so renaming a
+station in a Subsonic client cannot take its image away, and a native client
+written before the field existed cannot either. `internetRadioStation` is
+unchanged and carries no `coverArt`: the frozen contract defines none.
+
+**A5b — nothing is fetched for a write that is refused, and a station image
+has a budget.** Every check that can refuse a write runs, and the row is
+committed, before any image is fetched: the address rules, the per-account
+station ceiling, the station being the account's own (404 otherwise), and for
+a channel the instance ceiling and the duplicate check — the ceiling is now
+also asked before the *feed* is fetched. The image is then fetched, written to
+the store, and attached by a second write that names the row (and, for a
+station, its account and the address it was fetched for), so an image that
+arrives after the row was deleted or its address changed attaches to nothing
+and is swept. An account at its ceiling, or naming a station that is not its
+own, makes the server contact nobody and write nothing. Station images are the
+one fetch any account can ask for, so they are also bounded per account: at
+most ten an hour (in memory, refilled by a restart), past which a station is
+saved without an image and a later save retries. With an unchanged address
+never fetched again, that caps the worst case at 100 MiB an hour per account,
+which the sweep collects.
+
+**A6 — one switch, on by default.** `WAVEFLOW_REMOTE_ARTWORK` (on) stops both
+when it is off: the addresses are still stored, nothing is fetched, and images
+already stored stay shown. On by default because nothing here happens on its
+own: a cover only while `WAVEFLOW_PODCASTS` — off by default — is on, and a
+station image only when an account sets one. That makes a station image the
+one request a server at its defaults can be asked to make; `docs/privacy.md`
+says so.
+
+**A7 — the sweep.** `sweep_artwork_store` counts `podcast_channel.artwork_hash`
+and `radio_station.artwork_hash` as references, so a cover named by either is
+never collected, however old its file. Deleting the channel or the station —
+or the feed or the account naming another image — releases it, and the next
+sweep collects the row and the file. The window the sweep's module describes
+(a row committed an instant after the sweep read the table) can carry off a
+fetched file; the next write that names it asks whether the file is still
+there before it trusts an unchanged address, and fetches it again.
+
+**Tests.** `tests/podcasts.rs`, against its loopback host: a cover fetched,
+served natively and through `getCoverArt`, and `coverArt` on channels and
+episodes; an unchanged address not fetched again, a moved one fetched once
+through a redirect and the old cover released; a cover over the ceiling,
+declared and streamed; HTML labelled as an image and as HTML; redirects to a
+private and to a mapped private address; an unlabelled JPEG accepted; a failed
+fetch retried on the next refresh; a station image fetched, served to its
+account only, kept by a native write without the field and by a Subsonic edit,
+retried on the next save, cleared by `null`, and a foreign station's
+replacement answered 404 with no request made; an account at its station
+ceiling and an instance at its channel ceiling refused with no request to the
+feed's or the image's host and nothing stored; and the sweep keeping both
+images until the channel and the station are deleted.
+`src/services/remote_artwork.rs` tests the hourly budget. A Subsonic
+`createPodcastChannel` whose cover host never answers is answered within five
+seconds, the channel created and its cover pending. The private-feed test's cover
+now carries the subscriber's token, so it proves the address reaches no
+reader. `src/services/podcasts.rs` tests when a cover is due.
+
 ## What is still open
 
 - **Navidrome `.nsp` import** (decision 6).
@@ -493,8 +630,7 @@ fetcher's own test.
   only, so that no existing answer changes in this pull request.
 - **A per-account `podcastRole`.** Only administrators manage podcasts; a role
   column on accounts would let an operator grant it.
-- **Channel artwork**, fetched into the artwork store under the outbound rules,
-  so `coverArt` can be answered.
+- **An episode's own artwork** (`itunes:image` on an item): see A3.
 - **Automatic downloads** of new episodes, per channel, and a per-channel
   refresh.
 - **OPML import and export** of subscriptions.

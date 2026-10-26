@@ -411,6 +411,41 @@ never a feed address — a private feed carries its token in its path or its
 query string. For the same reason only administrators are shown a feed's
 address; other accounts see at most its scheme and host.
 
+## Podcast covers and station images
+
+**On by default.** The server fetches the cover a podcast feed names, and the
+image an account gives one of its radio stations, into the artwork store
+(`artwork/` in the data directory), so the web client and Subsonic clients
+show them as they show album covers — the browser never loads them from
+their own host. [RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)
+carries the decisions; [privacy](privacy.md) says what is fetched and when.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WAVEFLOW_REMOTE_ARTWORK` | on | `off` fetches neither: an address is still stored, no image is fetched, and the images already stored stay shown |
+
+**When.** A podcast cover only while `WAVEFLOW_PODCASTS` is on: when a channel
+is subscribed, and on a refresh that finds the feed naming a cover it does not
+hold — a new address, a failed last attempt, a file gone from the store, or a
+copy older than a week. A station image once, when an account sets or changes
+it, and only once the station is saved; saving the station again retries one
+that failed. An account may have at most ten station images fetched an hour;
+past that, a station is saved without its image until a later save. Never on a timer of its
+own, never at boot, and never while anybody listens.
+
+**Under which rules.** Those of the podcast fetcher: public addresses only,
+checked before connecting and pinned, at most five redirects each checked
+before it is followed, 10 MiB, and the bytes must be a JPEG, PNG or WebP —
+a page of HTML is refused whatever it is labelled. A podcast cover may be
+plain http only while `WAVEFLOW_PODCAST_ALLOW_HTTP` is on; a station image may
+always be, as its stream may. **What it logs**: a verdict such as
+`image over the size ceiling`, never the address.
+
+**What it stores.** One file per image, `<hash>.<format>`, beside the scanned
+covers. The artwork sweep collects it once nothing names it: when the channel
+or the station is deleted, or when the feed or the account names another
+image.
+
 ## Scanning
 
 A scan reads only what changed. A file whose size and modification time are

@@ -103,9 +103,11 @@ pub(super) async fn podcasts(
     }
 }
 
-/// A channel as `PodcastChannel` has it. The cover is the feed's own address,
-/// as `originalImageUrl`; there is no `coverArt`, because the server does not
-/// fetch the image (decision 10).
+/// A channel as `PodcastChannel` has it. The cover is `coverArt`, the hash of
+/// the copy the server fetched into the artwork store, which `getCoverArt`
+/// serves (decision 10, amended). The feed's own address for it,
+/// `originalImageUrl`, is given to a manager only, like the feed's: a private
+/// feed's cover can carry its subscriber's token.
 fn channel_node(channel: &PodcastChannelItem) -> Node {
     Node::new("channel")
         .attr("id", channel.id.to_string())
@@ -121,6 +123,7 @@ fn channel_node(channel: &PodcastChannelItem) -> Node {
         )
         .attr("title", channel.title.clone())
         .maybe_attr("description", channel.description.clone())
+        .maybe_attr("coverArt", channel.artwork_hash.clone())
         .maybe_attr("originalImageUrl", channel.image_url.clone())
         .attr("status", channel.status.clone())
         .maybe_attr("errorMessage", channel.error.clone())
@@ -141,6 +144,8 @@ pub(super) fn episode_node(episode: &PodcastEpisodeItem) -> Node {
         .attr("title", episode.title.clone())
         .attr("album", episode.channel_title.clone())
         .attr("artist", episode.channel_title.clone())
+        // The channel's cover: an episode's own `itunes:image` is not fetched.
+        .maybe_attr("coverArt", episode.artwork_hash.clone())
         .maybe_attr("description", episode.description.clone())
         .maybe_attr("publishDate", episode.published_at.map(iso_time))
         .maybe_attr(

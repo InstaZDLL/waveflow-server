@@ -51,6 +51,9 @@ pub(super) async fn radio_stations(
                     params.first("name").ok_or_else(missing)?,
                     params.first("streamUrl").ok_or_else(missing)?,
                     params.first("homepageUrl"),
+                    // The protocol has no image parameter: a station created
+                    // here has none, and one edited here keeps its own.
+                    None,
                 )
                 .await
                 .map_err(service_protocol)?;
@@ -65,6 +68,7 @@ pub(super) async fn radio_stations(
                     params.first("name").ok_or_else(missing)?,
                     params.first("streamUrl").ok_or_else(missing)?,
                     params.first("homepageUrl"),
+                    crate::services::StationImage::Keep,
                 )
                 .await
                 .map_err(service_protocol)?;

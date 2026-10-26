@@ -9,6 +9,7 @@ import {
   replaceRadioStation,
 } from "../api";
 import { radioStationsQuery } from "../api/queries";
+import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import {
   EmptyState,
@@ -54,9 +55,19 @@ export function isBlockedAsMixedContent(
   return pageProtocol === "https:" && streamUrl.trim().startsWith("http:");
 }
 
-type Draft = { name: string; stream_url: string; homepage_url: string };
+type Draft = {
+  name: string;
+  stream_url: string;
+  homepage_url: string;
+  image_url: string;
+};
 
-const emptyDraft: Draft = { name: "", stream_url: "", homepage_url: "" };
+const emptyDraft: Draft = {
+  name: "",
+  stream_url: "",
+  homepage_url: "",
+  image_url: "",
+};
 
 export function RadioPage() {
   const { t } = useI18n();
@@ -101,6 +112,10 @@ export function RadioPage() {
       name: draft.name,
       stream_url: draft.stream_url,
       homepage_url: draft.homepage_url.trim() ? draft.homepage_url : null,
+      // Sent every time as well, so emptying the field clears the image. The
+      // server fetches it once, when it is new; the same address saved again
+      // is not fetched twice, and one whose fetch failed is tried again.
+      image_url: draft.image_url.trim() ? draft.image_url : null,
     };
     try {
       if (editing) {
@@ -150,8 +165,14 @@ export function RadioPage() {
   const homepageRefused = draft.homepage_url.trim()
     ? !isPlayableAddress(draft.homepage_url)
     : false;
+  const imageRefused = draft.image_url.trim()
+    ? !isPlayableAddress(draft.image_url)
+    : false;
   const submittable =
-    draft.name.trim().length > 0 && !addressRefused && !homepageRefused;
+    draft.name.trim().length > 0 &&
+    !addressRefused &&
+    !homepageRefused &&
+    !imageRefused;
 
   return (
     <section>
@@ -199,7 +220,23 @@ export function RadioPage() {
             disabled={busy}
           />
         </label>
-        {addressRefused || homepageRefused ? (
+        <label>
+          {t("radio.image")}
+          <input
+            type="url"
+            value={draft.image_url}
+            onChange={(event) =>
+              setDraft({ ...draft, image_url: event.target.value })
+            }
+            placeholder="https://radio.example.org/logo.png"
+            aria-describedby="radio-image-hint"
+            disabled={busy}
+          />
+        </label>
+        <p className="muted" id="radio-image-hint">
+          {t("radio.imageHint")}
+        </p>
+        {addressRefused || homepageRefused || imageRefused ? (
           <p className="error">{t("radio.addressRefused")}</p>
         ) : null}
         {isBlockedAsMixedContent(draft.stream_url, window.location.protocol) ? (
@@ -232,15 +269,28 @@ export function RadioPage() {
         <ul className="resource-list">
           {stations.map((station) => (
             <li key={station.id}>
-              <div>
-                <strong>{station.name}</strong>
-                <span className="muted resource-url">{station.stream_url}</span>
-                {isBlockedAsMixedContent(
-                  station.stream_url,
-                  window.location.protocol,
-                ) ? (
-                  <span className="muted">{t("radio.mixedContent")}</span>
-                ) : null}
+              <div className="resource-with-cover">
+                <Artwork
+                  artworkId={station.artwork_hash}
+                  title={station.name}
+                  className="resource-cover"
+                  placeholder={<Icon name="radio" size={20} />}
+                />
+                <div className="resource-copy">
+                  <strong>{station.name}</strong>
+                  <span className="muted resource-url">
+                    {station.stream_url}
+                  </span>
+                  {isBlockedAsMixedContent(
+                    station.stream_url,
+                    window.location.protocol,
+                  ) ? (
+                    <span className="muted">{t("radio.mixedContent")}</span>
+                  ) : null}
+                  {station.image_url && !station.artwork_hash ? (
+                    <span className="muted">{t("radio.imageMissing")}</span>
+                  ) : null}
+                </div>
               </div>
               {station.homepage_url ? (
                 <a
@@ -274,6 +324,7 @@ export function RadioPage() {
                     name: station.name,
                     stream_url: station.stream_url,
                     homepage_url: station.homepage_url ?? "",
+                    image_url: station.image_url ?? "",
                   });
                 }}
               >

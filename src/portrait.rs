@@ -21,6 +21,13 @@
 //! host lives on loopback, which the default refuses. [`AddressPolicy::default`]
 //! is production, and a test asserts it refuses loopback, so the suite cannot
 //! prove the fetcher only with its main protection switched off.
+//!
+//! A second door, [`fetch_followed`], serves the addresses no allowlist can
+//! hold: a podcast feed's cover and a radio station's image (RFC-025, amended).
+//! It reaches the host through the podcast fetcher's rules instead — the same
+//! address policy, checked and pinned, and redirects followed by hand with
+//! every hop checked — and reads the answer through the same ceiling and the
+//! same sniffing as this one.
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -144,6 +151,9 @@ pub enum Refusal {
     Unreached,
     /// The host answered something other than success.
     Status(u16),
+    /// More redirects than a followed fetch allows, or one without a usable
+    /// target. Only [`fetch_followed`] follows any.
+    Redirects,
 }
 
 impl Refusal {
@@ -153,7 +163,7 @@ impl Refusal {
     pub fn is_answer(self) -> bool {
         matches!(
             self,
-            Self::Destination | Self::Address | Self::NotAnImage | Self::TooLarge
+            Self::Destination | Self::Address | Self::NotAnImage | Self::TooLarge | Self::Redirects
         )
     }
 }
@@ -167,6 +177,7 @@ impl std::fmt::Display for Refusal {
             Self::TooLarge => formatter.write_str("image over the size ceiling"),
             Self::Unreached => formatter.write_str("image host unreached"),
             Self::Status(status) => write!(formatter, "image host answered HTTP {status}"),
+            Self::Redirects => formatter.write_str("too many redirects for an image"),
         }
     }
 }
@@ -238,14 +249,46 @@ async fn fetch_within(
     if !response.status().is_success() {
         return Err(Refusal::Status(response.status().as_u16()));
     }
-    let declared = response
+    checked_image(response, Declared::Image).await
+}
+
+/// What the `Content-Type` of an answer must say before its body is read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Declared {
+    /// One of the three image types, and the same one the bytes turn out to
+    /// be. What a provider's API answers, and so what it is held to.
+    Image,
+    /// That, or a type that names no type: none at all,
+    /// `application/octet-stream` or `binary/octet-stream`. Podcast covers are
+    /// commonly served from object storage that labels everything so, and the
+    /// bytes decide either way. A type that names something else — `text/html`
+    /// above all — is still refused unread.
+    ImageOrUnlabelled,
+}
+
+/// The body of a successful answer, read under [`MAX_IMAGE_BYTES`] and
+/// recognised from its bytes. Shared by the provider fetcher above and the
+/// followed one below, so the two cannot come to disagree about what an image
+/// is.
+async fn checked_image(response: reqwest::Response, rule: Declared) -> Result<Portrait, Refusal> {
+    let mime = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.split(';').next())
-        .map(|value| value.trim().to_ascii_lowercase())
-        .and_then(|value| format_of_mime(&value))
-        .ok_or(Refusal::NotAnImage)?;
+        .map(|value| value.trim().to_ascii_lowercase());
+    let declared = match mime.as_deref().and_then(format_of_mime) {
+        Some(format) => Some(format),
+        None if rule == Declared::ImageOrUnlabelled
+            && matches!(
+                mime.as_deref(),
+                None | Some("" | "application/octet-stream" | "binary/octet-stream")
+            ) =>
+        {
+            None
+        }
+        None => return Err(Refusal::NotAnImage),
+    };
     // The shared bounded read (RFC-023 decision 1), under this fetcher's own
     // ceiling: an image is allowed to weigh more than an API answer.
     let bytes = crate::outbound::read_bounded_body(response, MAX_IMAGE_BYTES)
@@ -255,7 +298,7 @@ async fn fetch_within(
             crate::outbound::BodyError::Unread => Refusal::Unreached,
         })?;
     let format = sniff(&bytes).ok_or(Refusal::NotAnImage)?;
-    if format != declared {
+    if declared.is_some_and(|declared| declared != format) {
         return Err(Refusal::NotAnImage);
     }
     Ok(Portrait {
@@ -263,6 +306,48 @@ async fn fetch_within(
         format,
         bytes,
     })
+}
+
+/// Fetches an image whose address came from a person or out of a document —
+/// a podcast feed's cover, a radio station's image — rather than from a
+/// provider on an allowlist.
+///
+/// There is no allowlist to hold such an address to, so it is held instead to
+/// every rule the podcast fetcher applies to a feed address
+/// ([`crate::podcast::open`]): http or https only (http where `policy` allows
+/// it), no user information, every address the name resolves to admitted by
+/// the address policy, checked before connecting and pinned, and redirects
+/// followed by hand, at most [`crate::podcast::MAX_REDIRECTS`], each hop put
+/// through the same checks before it is contacted. What comes back is then
+/// held to the rules above: [`MAX_IMAGE_BYTES`], and JPEG, PNG or WebP by the
+/// bytes. The whole of it, redirects included, within `policy.timeout`.
+pub async fn fetch_followed(
+    url: &url::Url,
+    policy: crate::podcast::FetchPolicy,
+) -> Result<Portrait, Refusal> {
+    let within = async {
+        let response = crate::podcast::open(url, policy)
+            .await
+            .map_err(Refusal::from)?;
+        checked_image(response, Declared::ImageOrUnlabelled).await
+    };
+    tokio::time::timeout(policy.timeout, within)
+        .await
+        .unwrap_or(Err(Refusal::Unreached))
+}
+
+impl From<crate::podcast::FetchError> for Refusal {
+    fn from(error: crate::podcast::FetchError) -> Self {
+        use crate::podcast::FetchError;
+        match error {
+            FetchError::Destination => Self::Destination,
+            FetchError::Address => Self::Address,
+            FetchError::Redirects => Self::Redirects,
+            FetchError::TooLarge => Self::TooLarge,
+            FetchError::Unreached => Self::Unreached,
+            FetchError::Status(status) => Self::Status(status),
+        }
+    }
 }
 
 fn format_of_mime(mime: &str) -> Option<&'static str> {

@@ -94,6 +94,26 @@ pub struct PodcastSettings {
     pub addresses: crate::portrait::AddressPolicy,
 }
 
+/// Remote artwork: the cover a podcast feed names, and the image an account
+/// gives a radio station (RFC-025, amended).
+///
+/// **On by default**, unlike podcasts, because nothing here happens on its own:
+/// a station image is fetched once when an account sets or changes one, and a
+/// podcast cover only while `WAVEFLOW_PODCASTS` is on and a channel is
+/// subscribed or refreshed. Off, an address is still stored and nothing is
+/// fetched; covers already stored stay shown.
+#[derive(Debug, Clone, Copy)]
+pub struct RemoteArtworkSettings {
+    /// `WAVEFLOW_REMOTE_ARTWORK`, on by default.
+    pub enabled: bool,
+    /// One image fetch, redirects included. Derived, not set: the figure the
+    /// feed fetch defaults to, for a body the size of a cover.
+    pub timeout: Duration,
+    /// Which addresses a fetch may reach, as for podcasts: public ones in
+    /// production, always, and loopback as well for the test suite's hosts.
+    pub addresses: crate::portrait::AddressPolicy,
+}
+
 /// What the server accepts when a member attaches a loop to a track.
 ///
 /// Apart from [`UploadLimits`] rather than folded into it: the two magazines
@@ -557,6 +577,9 @@ pub struct Config {
     pub lyrics: LyricsSettings,
     /// Podcasts — RFC-025. See [`PodcastSettings`].
     pub podcasts: PodcastSettings,
+    /// Podcast covers and station images — RFC-025, amended. See
+    /// [`RemoteArtworkSettings`].
+    pub remote_artwork: RemoteArtworkSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// `WAVEFLOW_TRUSTED_PROXIES`: the reverse proxies whose
     /// `X-Forwarded-For` is believed when telling one client from another
@@ -632,6 +655,7 @@ impl std::fmt::Debug for Config {
             .field("metadata", &self.metadata)
             .field("lyrics", &self.lyrics)
             .field("podcasts", &self.podcasts)
+            .field("remote_artwork", &self.remote_artwork)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
             // Whether it is set, never what it is.
@@ -868,6 +892,11 @@ impl Config {
         let metadata = parse_metadata_settings()?;
         let lyrics = parse_lyrics_settings()?;
         let podcasts = parse_podcast_settings(&data_dir)?;
+        let remote_artwork = RemoteArtworkSettings {
+            enabled: parse_bool_env("WAVEFLOW_REMOTE_ARTWORK", true)?,
+            timeout: Duration::from_secs(20),
+            addresses: crate::portrait::AddressPolicy::Public,
+        };
         // Absent is empty; a value that is not UTF-8 refuses to boot, rather
         // than starting with no trusted proxy and counting every client behind
         // it under the proxy's address.
@@ -971,6 +1000,7 @@ impl Config {
             metadata,
             lyrics,
             podcasts,
+            remote_artwork,
             allowed_origins,
             trusted_proxies,
             setup_token,
@@ -1109,6 +1139,15 @@ impl Config {
                 feed_timeout: Duration::from_secs(10),
                 download_timeout: Duration::from_secs(30),
                 dir: podcast_dir_for_tests,
+                addresses: crate::portrait::AddressPolicy::AllowLoopback,
+            },
+            // On, as production defaults, and admitting loopback for the same
+            // reason the podcast policy above does: the image hosts the suite
+            // serves are listeners of its own. No test reaches this unless it
+            // names an image, so nothing leaves the machine.
+            remote_artwork: RemoteArtworkSettings {
+                enabled: true,
+                timeout: Duration::from_secs(10),
                 addresses: crate::portrait::AddressPolicy::AllowLoopback,
             },
             allowed_origins: Vec::new(),

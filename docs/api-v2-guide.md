@@ -1040,7 +1040,20 @@ leaving `homepage_url` out clears it. That is what the Subsonic
 every call — and both surfaces are the same domain method, so an absent field
 cannot mean two different things depending on the door.
 
-**The server never connects to a station.** The address is validated as
+**`image_url` is the one exception, and for the same reason turned around.**
+A station may carry an image address, validated as `homepage_url` is. The
+protocol has no image parameter, so a Subsonic edit says nothing about it; for
+renaming a station in a Subsonic client not to take its image away, an absent
+`image_url` leaves the image as it is, on `PUT` too. `null` or a blank value
+clears it. The server fetches the image **once**, when it is set or changed
+(an address already stored, with its image held, is not fetched again), into
+the artwork store, and answers `artwork_hash` — read it from
+`/api/v2/artwork/{hash}` like any cover, which serves it to the station's own
+account only. A fetch that fails keeps `image_url` with `artwork_hash: null`;
+saving the station again with the address retries it. Subsonic's
+`internetRadioStation` is unchanged and carries no `coverArt`.
+
+**The server never connects to a station's stream.** The address is validated as
 absolute `http` or `https`, stored as typed and handed back; the player is
 what reaches the station. That is the whole security answer for the feature: a
 station is a URL somebody supplies, and a server that fetched one would be a

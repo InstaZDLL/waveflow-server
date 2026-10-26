@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { artworkUrl, cachedArtworkUrl } from "../api";
 
@@ -6,6 +6,11 @@ type ArtworkProps = {
   artworkId: string | null;
   title: string;
   className?: string;
+  /**
+   * What the placeholder shows instead of the title's first letter: a radio
+   * station or a podcast keeps its symbol until, or unless, its image comes.
+   */
+  placeholder?: ReactNode;
 };
 
 /**
@@ -42,7 +47,12 @@ const observable = typeof IntersectionObserver !== "undefined";
  * make `<img src>` work and let the HTTP cache serve between sessions, which
  * is the deeper fix and is not this one.
  */
-export function Artwork({ artworkId, title, className = "" }: ArtworkProps) {
+export function Artwork({
+  artworkId,
+  title,
+  className = "",
+  placeholder,
+}: ArtworkProps) {
   // Read straight out of the cache, during the render rather than after it.
   // A cover whose bytes are already held has nothing to wait for, and starting
   // at `null` put the grey placeholder on screen for a frame every time this
@@ -106,7 +116,9 @@ export function Artwork({ artworkId, title, className = "" }: ArtworkProps) {
       className={`${classes} cover-fallback`}
       aria-hidden="true"
     >
-      <span>{title.slice(0, 1).toLocaleUpperCase()}</span>
+      {/* A symbol is centred as the grid places it, where the letter is set
+          in the corner by `.cover-fallback span`. */}
+      {placeholder ?? <span>{title.slice(0, 1).toLocaleUpperCase()}</span>}
     </span>
   );
 }

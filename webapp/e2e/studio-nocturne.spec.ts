@@ -342,9 +342,20 @@ let stations: Array<{
   name: string;
   stream_url: string;
   homepage_url: string | null;
+  image_url: string | null;
+  artwork_hash: string | null;
   created_at: number;
   updated_at: number;
 }> = [];
+/** Every image address a station write carried, as the server would fetch it. */
+let stationImages: Array<string | null | undefined> = [];
+
+/**
+ * The hash the server would store a station's image under, made up from its
+ * address: what the mock answers instead of fetching anything.
+ */
+const imageHash = (address: string) =>
+  `station-art-${address.replace(/[^a-z0-9]/gi, "")}`;
 
 const playlists = [
   {
@@ -836,11 +847,15 @@ async function mockAuthenticatedApi(page: Page) {
         radioWrites.push("POST");
         await radioGate;
         const draft = route.request().postDataJSON();
+        stationImages.push(draft.image_url);
+        const image = draft.image_url ?? null;
         const created = {
           id: `station-${stations.length + 1}`,
           name: String(draft.name).trim(),
           stream_url: draft.stream_url,
           homepage_url: draft.homepage_url ?? null,
+          image_url: image,
+          artwork_hash: image ? imageHash(image) : null,
           created_at: 1_700_000_000_000,
           updated_at: 1_700_000_000_000,
         };
@@ -861,12 +876,21 @@ async function mockAuthenticatedApi(page: Page) {
         return;
       }
       // A replacement: every field arrives, so an absent homepage clears it.
+      // The image is the exception the server makes: absent, it is kept.
       const draft = route.request().postDataJSON();
+      stationImages.push(draft.image_url);
+      const previous = stations.find((station) => station.id === id);
+      const image =
+        "image_url" in draft
+          ? (draft.image_url ?? null)
+          : (previous?.image_url ?? null);
       const replaced = {
         id,
         name: String(draft.name).trim(),
         stream_url: draft.stream_url,
         homepage_url: draft.homepage_url ?? null,
+        image_url: image,
+        artwork_hash: image ? imageHash(image) : null,
         created_at: 1_700_000_000_000,
         updated_at: 1_700_000_000_001,
       };
@@ -1368,6 +1392,7 @@ test.beforeEach(async ({ page }) => {
   exportAsks = [];
   stations = [];
   radioWrites = [];
+  stationImages = [];
   radioGate = Promise.resolve();
   artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
   topSongAsks = [];
@@ -6125,6 +6150,8 @@ async function serveStationAndQueue(page: Page) {
       name: "Radio Nova",
       stream_url: NOVA,
       homepage_url: null,
+      image_url: null,
+      artwork_hash: null,
       created_at: 1_700_000_000_000,
       updated_at: 1_700_000_000_000,
     },
@@ -6294,6 +6321,117 @@ test("pauses the queue under a station, keeps it, and gives it back to a track",
  * Taking a station out of the bar leaves the queue's track there, paused
  * where it was, and the light theme keeps the live badge readable.
  */
+/** A one-pixel PNG, for every cover the artwork route is asked for. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/**
+ * A station's image is an address the account types, sent with the station;
+ * the server fetches it once and answers a hash, and what the page shows is
+ * the artwork route's answer for that hash — never the image's own host,
+ * which RFC-019's `img-src` would refuse and which would see the listener.
+ */
+test("takes an image address for a station, and shows the image the server kept", async ({
+  page,
+}) => {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).hostname === "logos.example.org") {
+      asked.push(request.url());
+    }
+  });
+  await page.route("**/api/v2/artwork/station-art-*", (route) =>
+    route.fulfill({ contentType: "image/png", body: PIXEL }),
+  );
+  await page.goto("/radio");
+  await page.getByLabel("Station name").fill("Radio Nova");
+  await page.getByLabel("Stream address").fill(NOVA);
+  // Refused here first, as the server would, and the button stays shut.
+  await page.getByLabel("Station image (optional)").fill("ftp://logos.example.org/n.png");
+  await expect(
+    page.getByText("An address must start with http:// or https://."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
+  await page
+    .getByLabel("Station image (optional)")
+    .fill("https://logos.example.org/nova.png");
+  await expect(
+    page.getByText("The server downloads it once, when you save", { exact: false }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Add station" }).click();
+
+  const listed = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
+  await expect(listed.locator("img.resource-cover")).toBeVisible();
+  expect(stationImages).toEqual(["https://logos.example.org/nova.png"]);
+
+  // Edited, the form shows the address back and sends it again; cleared, it
+  // sends `null` and the station keeps the symbol.
+  await listed.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByLabel("Station image (optional)")).toHaveValue(
+    "https://logos.example.org/nova.png",
+  );
+  await page.getByLabel("Station image (optional)").fill("");
+  await page.getByRole("button", { name: "Save station" }).click();
+  await expect(listed.locator(".resource-cover.cover-fallback svg")).toBeVisible();
+  expect(stationImages).toEqual(["https://logos.example.org/nova.png", null]);
+  await expectNoWcagViolations(page);
+  expect(asked, "the browser never asks the image's own host").toEqual([]);
+});
+
+for (const theme of ["dark", "light"] as const) {
+  test(`shows a station's image in the bar, and the symbol without one, in the ${theme}`, async ({
+    page,
+  }) => {
+    if (theme === "light") await chooseLightTheme(page);
+    await serveStationAndQueue(page);
+    stations = [
+      { ...stations[0], image_url: "https://logos.example.org/nova.png", artwork_hash: "station-art-nova" },
+      {
+        ...stations[0],
+        id: "station-2",
+        name: "Radio Plain",
+      },
+    ];
+    let served = 0;
+    await page.route("**/api/v2/artwork/station-art-nova", (route) => {
+      served += 1;
+      return route.fulfill({ contentType: "image/png", body: PIXEL });
+    });
+    await page.goto("/radio");
+    const nova = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
+    await expect(nova.locator("img.resource-cover")).toBeVisible();
+    await nova.getByRole("button", { name: "Listen" }).click();
+
+    const bar = page.locator(".player");
+    await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
+    await expect(bar.locator("img.player-cover")).toBeVisible();
+    // The system's controls are given the same cover, by its object URL.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => navigator.mediaSession?.metadata?.artwork?.[0]?.src ?? "",
+        ),
+      )
+      .toMatch(/^blob:/);
+    expect(served).toBe(1);
+    await expectNoWcagViolations(page);
+
+    // A station without an image keeps the radio symbol.
+    const plain = page.locator(".resource-list li").filter({ hasText: "Radio Plain" });
+    await plain.getByRole("button", { name: "Listen" }).click();
+    await expect(bar.locator(".player-track strong")).toHaveText("Radio Plain");
+    await expect(bar.locator(".player-cover.cover-fallback svg")).toBeVisible();
+    await expect(bar.locator("img.player-cover")).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => navigator.mediaSession?.metadata?.artwork?.length ?? 0),
+      )
+      .toBe(0);
+  });
+}
+
 test("keeps a live station readable in the light, and closes back to the queue", async ({
   page,
 }) => {

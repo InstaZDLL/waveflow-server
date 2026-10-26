@@ -53,6 +53,18 @@ export function asideMetadata(
 }
 
 /**
+ * The cover an aside shows: the station's image, or the episode's channel's
+ * cover — both fetched by the server into the artwork store, so this is a
+ * hash for `/api/v2/artwork`, never another host's address. `null` keeps the
+ * generic symbol.
+ */
+export function asideArtwork(aside: Aside): string | null {
+  return aside.kind === "live"
+    ? aside.station.artwork_hash
+    : aside.episode.artwork_hash;
+}
+
+/**
  * The position an episode resumes from: its bookmark, unless it was left
  * within the last few seconds, which is an episode heard to the end.
  */

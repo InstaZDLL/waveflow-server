@@ -25,6 +25,25 @@ pub struct RadioStationRequest {
     pub stream_url: String,
     #[serde(default)]
     pub homepage_url: Option<String>,
+    /// An image for the station, absolute `http` or `https`, which the server
+    /// fetches once into the artwork store and hands out as `artwork_hash`.
+    ///
+    /// The one field that is not replaced by omission: absent, the image stays
+    /// as it is; `null` or blank, it is cleared. A client written before the
+    /// field existed — or a Subsonic one, which has no such parameter — must
+    /// not take a station's image away by renaming it.
+    #[serde(default, deserialize_with = "crate::services::present")]
+    #[schema(value_type = Option<String>, nullable)]
+    pub image_url: Option<Option<String>>,
+}
+
+impl RadioStationRequest {
+    fn image(&self) -> crate::services::StationImage<'_> {
+        match &self.image_url {
+            None => crate::services::StationImage::Keep,
+            Some(value) => crate::services::StationImage::Set(value.as_deref()),
+        }
+    }
 }
 
 #[utoipa::path(get, path = "/api/v2/radio-stations", tag = "radio", responses((status = 200, body = [crate::services::RadioStationItem]), (status = 401, body = ErrorResponse)))]
@@ -72,6 +91,7 @@ pub async fn create_radio_station(
             &request.name,
             &request.stream_url,
             request.homepage_url.as_deref(),
+            request.image_url.as_ref().and_then(Option::as_deref),
         )
         .await
         .map_err(service_error)?;
@@ -97,6 +117,7 @@ pub async fn replace_radio_station(
             &request.name,
             &request.stream_url,
             request.homepage_url.as_deref(),
+            request.image(),
         )
         .await
         .map(Json)

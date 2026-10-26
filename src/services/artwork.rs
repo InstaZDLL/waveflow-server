@@ -46,6 +46,12 @@
 //! next visit downloads it again, up to the hit TTL — and is the same width,
 //! since its row is committed in one transaction under this same gate.
 //!
+//! A podcast cover and a station image (RFC-025, amended) are the same case:
+//! their bytes came from another host. Both are repaired on the next write
+//! that names them — a refresh of the channel, a save of the station — which
+//! asks whether the file is still in the store before it trusts an unchanged
+//! address, and fetches it again when it is not.
+//!
 //! That is an argument for tolerating the window, not for pretending it is
 //! shut. It is narrow, it needs a scan and a sweep to interleave at one
 //! instant, and no test here forces that ordering.
@@ -208,10 +214,13 @@ impl DomainServices {
         Ok(swept)
     }
 
-    /// Drops every `artwork` row no artist, album, track or hand-chosen
-    /// artist image (RFC-013) names, and says how many went. The choice
-    /// table's key has no `ON DELETE`: forgetting it here would fail the
-    /// sweep rather than strand a choice.
+    /// Drops every `artwork` row no artist, album, track, hand-chosen artist
+    /// image (RFC-013), podcast channel or radio station (RFC-025, amended)
+    /// names, and says how many went. The choice table's key has no
+    /// `ON DELETE`: forgetting it here would fail the sweep rather than strand
+    /// a choice. A channel's cover and a station's image are released by
+    /// deleting the channel or the station — or by the feed naming another
+    /// cover, or the account another image — and collected here.
     ///
     /// Three columns rather than the canvas store's one link table, and all
     /// three are `ON DELETE SET NULL` — which is the reason this is needed at
@@ -234,7 +243,9 @@ impl DomainServices {
                AND NOT EXISTS (SELECT 1 FROM album WHERE album.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM track WHERE track.artwork_hash = artwork.hash) \
                AND NOT EXISTS (SELECT 1 FROM artist_image_choice c WHERE c.artwork_hash = artwork.hash) \
-               AND NOT EXISTS (SELECT 1 FROM artist_image_candidate c WHERE c.artwork_hash = artwork.hash)",
+               AND NOT EXISTS (SELECT 1 FROM artist_image_candidate c WHERE c.artwork_hash = artwork.hash) \
+               AND NOT EXISTS (SELECT 1 FROM podcast_channel p WHERE p.artwork_hash = artwork.hash) \
+               AND NOT EXISTS (SELECT 1 FROM radio_station r WHERE r.artwork_hash = artwork.hash)",
         )
         .execute(&mut *tx)
         .await?

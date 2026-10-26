@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PodcastEpisode, RadioStation } from "../api";
 import {
+  asideArtwork,
   asideMetadata,
   asideTransport,
   bookmarkWrite,
@@ -28,6 +29,8 @@ const station: RadioStation = {
   name: "Radio Nova",
   stream_url: "https://nova.example.org/live",
   homepage_url: null,
+  image_url: null,
+  artwork_hash: null,
   created_at: 1,
   updated_at: 1,
 };
@@ -36,6 +39,7 @@ const episode: PodcastEpisode = {
   id: "episode-1",
   channel_id: "channel-1",
   channel_title: "Night Shift",
+  artwork_hash: null,
   title: "First night",
   description: null,
   published_at: null,
@@ -48,6 +52,35 @@ const episode: PodcastEpisode = {
   position_ms: null,
   created_at: 1,
 };
+
+describe("the cover an aside shows", () => {
+  it("is the station's image, or the episode's channel's cover", () => {
+    expect(asideArtwork({ kind: "live", station })).toBeNull();
+    expect(
+      asideArtwork({
+        kind: "live",
+        station: { ...station, artwork_hash: "s" },
+      }),
+    ).toBe("s");
+    expect(
+      asideArtwork({
+        kind: "episode",
+        episode: { ...episode, artwork_hash: "c" },
+      }),
+    ).toBe("c");
+  });
+
+  it("is never the address an image came from", () => {
+    // A station whose image could not be fetched keeps its address and shows
+    // the symbol: the browser does not load another host's image.
+    expect(
+      asideArtwork({
+        kind: "live",
+        station: { ...station, image_url: "https://logos.example.org/n.png" },
+      }),
+    ).toBeNull();
+  });
+});
 
 describe("the transport an aside offers", () => {
   it("has no position and nowhere to seek for a station", () => {

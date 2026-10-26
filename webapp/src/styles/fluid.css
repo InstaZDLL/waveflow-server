@@ -1102,6 +1102,12 @@
   box-shadow: 0 0.5rem 1.25rem var(--fe-shadow-soft);
 }
 
+/* A station's or a channel's image in its list, and a channel's above its
+   episodes: tiles, as the bar's cover is. */
+:where(:root) :is(.resource-cover, .podcast-cover) {
+  border-radius: var(--fe-radius-tile);
+}
+
 :where(:root) .player-track strong {
   color: var(--fe-ink);
   font-weight: 560;

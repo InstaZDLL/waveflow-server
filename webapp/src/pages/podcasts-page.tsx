@@ -13,6 +13,7 @@ import {
   unsubscribePodcast,
 } from "../api";
 import { podcastChannelQuery, podcastsQuery } from "../api/queries";
+import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import {
   EmptyState,
@@ -138,14 +139,24 @@ export function PodcastsPage() {
         <ul className="resource-list podcast-channels">
           {overview.channels.map((channel) => (
             <li key={channel.id}>
-              <div>
-                <strong>{channel.title}</strong>
-                <span className="muted">
-                  {t("podcasts.episodes", { count: channel.episode_count })}
-                  {channel.status === "error"
-                    ? ` · ${t("podcasts.failed", { reason: channel.error ?? "" })}`
-                    : ""}
-                </span>
+              <div className="resource-with-cover">
+                {/* Fetched by the server into the artwork store: the feed's
+                    own host is never asked by the browser. */}
+                <Artwork
+                  artworkId={channel.artwork_hash}
+                  title={channel.title}
+                  className="resource-cover"
+                  placeholder={<Icon name="podcasts" size={20} />}
+                />
+                <div className="resource-copy">
+                  <strong>{channel.title}</strong>
+                  <span className="muted">
+                    {t("podcasts.episodes", { count: channel.episode_count })}
+                    {channel.status === "error"
+                      ? ` · ${t("podcasts.failed", { reason: channel.error ?? "" })}`
+                      : ""}
+                  </span>
+                </div>
               </div>
               <button
                 type="button"
@@ -222,11 +233,19 @@ function ChannelEpisodes({
       aria-labelledby="podcast-title"
     >
       <header className="collection-header">
-        <div>
-          <h3 id="podcast-title">{channel.title}</h3>
-          {channel.description ? (
-            <p className="muted">{channel.description}</p>
-          ) : null}
+        <div className="resource-with-cover podcast-heading">
+          <Artwork
+            artworkId={channel.artwork_hash}
+            title={channel.title}
+            className="podcast-cover"
+            placeholder={<Icon name="podcasts" size={32} />}
+          />
+          <div className="resource-copy">
+            <h3 id="podcast-title">{channel.title}</h3>
+            {channel.description ? (
+              <p className="muted">{channel.description}</p>
+            ) : null}
+          </div>
         </div>
         {canManage ? (
           <button type="button" onClick={() => reload()}>
