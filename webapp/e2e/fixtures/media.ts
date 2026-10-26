@@ -2,10 +2,6 @@
 
 
 
-/**
- * Taking a station out of the bar leaves the queue's track there, paused
- * where it was, and the light theme keeps the live badge readable.
- */
 /** A one-pixel PNG, for every cover the artwork route is asked for. */
 export const PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",

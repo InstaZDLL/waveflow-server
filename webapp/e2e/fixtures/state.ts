@@ -110,16 +110,16 @@ class MockState {
   /** What the export route was asked for, and what it answered. */
   exportAsks: string[] = [];
 
-  /**
-   * The account's radio stations, which this harness really does keep: the page
-   * writes and reads them back, so a mock answering a fixed list would pass a
-   * delete that deleted nothing.
-   */
   /** Every write the radio page sent, so one click can be told from two. */
   radioWrites: string[] = [];
   /** Held open by the double-press test; instant for everyone else. */
   radioGate: Promise<void> = Promise.resolve();
 
+  /**
+   * The account's radio stations, which this harness really does keep: the page
+   * writes and reads them back, so a mock answering a fixed list would pass a
+   * delete that deleted nothing.
+   */
   stations: Array<{
     id: string;
     name: string;

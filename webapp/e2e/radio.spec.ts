@@ -403,6 +403,10 @@ for (const theme of ["dark", "light"] as const) {
   });
 }
 
+/**
+ * Taking a station out of the bar leaves the queue's track there, paused
+ * where it was, and the light theme keeps the live badge readable.
+ */
 test("keeps a live station readable in the light, and closes back to the queue", async ({
   page,
 }) => {
