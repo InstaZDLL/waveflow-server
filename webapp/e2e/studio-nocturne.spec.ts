@@ -2182,6 +2182,66 @@ test("links each credited artist in a song list to its page", async ({
 });
 
 /**
+ * A track menu taller than the window stays on screen and scrolls itself.
+ *
+ * One "Go to" entry per credited artist means a compilation track can carry a
+ * menu longer than a short window. It is capped at the window and scrolls on
+ * its own; the wheel over it scrolls it rather than closing it, and the wheel
+ * over the page still closes it.
+ */
+test("keeps a long track menu on screen and lets it scroll", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 420 });
+  const many = Array.from({ length: 30 }, (_, index) => ({
+    id: `artist-${index + 1}`,
+    name: `Guest ${index + 1}`,
+  }));
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          ...track,
+          id: "song-crowd",
+          title: "Crowded",
+          artist: many.map((artist) => artist.name).join(", "),
+          artist_id: "artist-1",
+          artists: many,
+        },
+      ],
+    }),
+  );
+  await page.goto("/songs");
+  await page.locator(".songs tbody tr button.song-title").first().focus();
+  await page.keyboard.press("Shift+F10");
+  const menu = page.getByRole("menu", { name: "Actions for Crowded" });
+  await expect(menu).toBeVisible();
+
+  const box = await menu.boundingBox();
+  expect(box).not.toBeNull();
+  expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(420);
+  expect(await menu.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(
+    true,
+  );
+
+  // The wheel over the menu scrolls it and leaves it open.
+  await menu.hover();
+  await page.mouse.wheel(0, 400);
+  await expect
+    .poll(() => menu.evaluate((node) => node.scrollTop))
+    .toBeGreaterThan(0);
+  await expect(menu).toBeVisible();
+  const last = menu.getByRole("menuitem", { name: "Go to Guest 30" });
+  await last.scrollIntoViewIfNeeded();
+  await expect(last).toBeInViewport();
+
+  // The wheel anywhere else still closes it.
+  await page.mouse.move(880, 400);
+  await page.mouse.wheel(0, 100);
+  await expect(menu).toHaveCount(0);
+});
+
+/**
  * The right click on a track, and the properties it opens (RFC-012 decision 4).
  *
  * Driven from the keyboard first, because a menu reachable only by a right

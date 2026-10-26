@@ -2848,6 +2848,11 @@ button.danger {
   z-index: 40;
   display: grid;
   min-width: 13rem;
+  /* A track credited to many artists lists one entry each: capped at the
+     window, the menu scrolls on its own rather than running off the screen. */
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--space-1);
   border: 1px solid var(--line-strong);
   border-radius: 0.75rem;
