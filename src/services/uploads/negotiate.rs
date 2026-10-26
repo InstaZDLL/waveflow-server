@@ -3,6 +3,34 @@
 
 use super::*;
 
+/// A hash the server will compare against one it computes itself.
+///
+/// Lowercase hex, sixty-four characters. A client that sends anything else has
+/// a bug rather than a file the server declines, which is why this refuses the
+/// whole request instead of earning a verdict.
+fn clean_hash(value: &str) -> Option<String> {
+    let value = value.trim().to_ascii_lowercase();
+    (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(value)
+}
+
+/// The extension the file will keep once it is stored, without its dot.
+fn clean_extension(value: &str) -> Option<String> {
+    let value = value.trim().trim_start_matches('.').to_ascii_lowercase();
+    waveflow_core::scanner::AUDIO_EXTENSIONS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&value))
+        .then_some(value)
+}
+
+fn refused(full_hash: String, decision: UploadDecision) -> UploadVerdict {
+    UploadVerdict {
+        full_hash,
+        decision,
+        track_id: None,
+        session: None,
+    }
+}
+
 impl DomainServices {
     /// Answers a batch of offers, opening a session for each one it accepts.
     ///
