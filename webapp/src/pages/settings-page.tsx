@@ -9,8 +9,9 @@ import {
 } from "../api";
 import { ownApiTokensQuery, ownSubsonicCredentialQuery } from "../api/queries";
 import { Loading, PageHeader, useReload } from "../components/page-shell";
+import { ThemePicker } from "../components/theme-picker";
 import { LanguagePicker, type Locale, useI18n } from "../state/i18n";
-import { ReplayGainPicker, ThemePicker } from "../state/preferences";
+import { ReplayGainPicker } from "../state/preferences";
 
 /**
  * The Account section of Settings, the clients allowed to read the library,

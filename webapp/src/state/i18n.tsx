@@ -31,6 +31,19 @@ const en = {
   "nav.moreClose": "Close",
   "preferences.theme": "Theme",
   "preferences.language": "Language",
+  "preferences.themeLight": "Light",
+  "preferences.themeDark": "Dark",
+  "preferences.followSystem": "Follow the system",
+  "preferences.followSystemDetail":
+    "Switch between a theme’s light and dark versions when your device does.",
+  "preferences.followingLight":
+    "Your device is in light mode, so the light version is shown. Picking a theme picks both of its versions.",
+  "preferences.followingDark":
+    "Your device is in dark mode, so the dark version is shown. Picking a theme picks both of its versions.",
+  "preferences.standInLight":
+    "{theme} has no light version, so {fallback} stands in while your device is in light mode.",
+  "preferences.standInDark":
+    "{theme} has no dark version, so {fallback} stands in while your device is in dark mode.",
   "replayGain.label": "ReplayGain",
   "replayGain.off": "Off",
   "replayGain.track": "Track gain",
@@ -1170,6 +1183,19 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "nav.moreClose": "Fermer",
   "preferences.theme": "Thème",
   "preferences.language": "Langue",
+  "preferences.themeLight": "Clair",
+  "preferences.themeDark": "Sombre",
+  "preferences.followSystem": "Suivre le système",
+  "preferences.followSystemDetail":
+    "Passer de la version claire d’un thème à sa version sombre en même temps que votre appareil.",
+  "preferences.followingLight":
+    "Votre appareil est en mode clair : la version claire est affichée. Choisir un thème choisit ses deux versions.",
+  "preferences.followingDark":
+    "Votre appareil est en mode sombre : la version sombre est affichée. Choisir un thème choisit ses deux versions.",
+  "preferences.standInLight":
+    "{theme} n’a pas de version claire : {fallback} le remplace tant que votre appareil est en mode clair.",
+  "preferences.standInDark":
+    "{theme} n’a pas de version sombre : {fallback} le remplace tant que votre appareil est en mode sombre.",
   "replayGain.label": "ReplayGain",
   "replayGain.off": "Désactivé",
   "replayGain.track": "Gain par piste",
