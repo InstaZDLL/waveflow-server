@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useState,
 } from "react";
 import {
@@ -19,12 +20,20 @@ import {
 import {
   applyTheme,
   findTheme,
-  THEME_PRESETS,
+  type ThemeMode,
   type ThemePreset,
+  themeForScheme,
 } from "../styles/design-tokens";
 import { type TranslationKey, useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.theme";
+/**
+ * Per browser, beside the theme it qualifies: whether the device's light or
+ * dark setting chooses between a preset and its pair. A phone and a desktop
+ * on one account can disagree about it, as they can about the theme.
+ */
+const FOLLOW_SYSTEM_KEY = "waveflow.themeFollowSystem";
+const DARK_SCHEME = "(prefers-color-scheme: dark)";
 /**
  * Per browser, like the volume and the theme: how loud a device should be is
  * not a property of the account (RFC-022 decision 1).
@@ -32,8 +41,15 @@ const STORAGE_KEY = "waveflow.theme";
 const REPLAY_GAIN_KEY = "waveflow.replayGain";
 
 type Preferences = {
+  /** The preset on screen: the chosen one, or its pair while following. */
   themeId: string;
+  /** The preset last picked, which is what is stored. */
+  chosenThemeId: string;
   setThemeId: (id: string) => void;
+  followSystem: boolean;
+  setFollowSystem: (follow: boolean) => void;
+  /** The device's scheme, or null where the browser cannot say. */
+  systemScheme: ThemeMode | null;
   replayGain: ReplayGainPreference;
   setReplayGain: (preference: ReplayGainPreference) => void;
 };
@@ -49,26 +65,94 @@ function readStoredReplayGain(): ReplayGainPreference {
   }
 }
 
+function readStoredTheme(): ThemePreset {
+  try {
+    return findTheme(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return findTheme(null);
+  }
+}
+
+/** Off unless this browser turned it on: a first visit keeps the default. */
+function readStoredFollowSystem(): boolean {
+  try {
+    return localStorage.getItem(FOLLOW_SYSTEM_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/** The device's scheme query, where the browser has one. */
+function schemeQuery(): MediaQueryList | null {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function")
+    return null;
+  try {
+    return window.matchMedia(DARK_SCHEME);
+  } catch {
+    return null;
+  }
+}
+
+function readSystemScheme(): ThemeMode | null {
+  const query = schemeQuery();
+  return query ? (query.matches ? "dark" : "light") : null;
+}
+
+/**
+ * The preset to paint: the chosen one, or — while following a scheme the
+ * browser can report — the member of its family that suits that scheme.
+ */
+function resolveTheme(
+  chosenId: string,
+  followSystem: boolean,
+  scheme: ThemeMode | null,
+): ThemePreset {
+  const chosen = findTheme(chosenId);
+  return followSystem && scheme ? themeForScheme(chosen, scheme) : chosen;
+}
+
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  const [themeId, setStoredThemeId] = useState(() => {
-    let theme: ThemePreset;
-    try {
-      theme = findTheme(localStorage.getItem(STORAGE_KEY));
-    } catch {
-      theme = findTheme(null);
-    }
-    applyTheme(theme);
-    return theme.id;
-  });
+  const [chosenThemeId, setChosenThemeId] = useState(
+    () => readStoredTheme().id,
+  );
+  const [followSystem, setFollowSystemState] = useState(readStoredFollowSystem);
+  const [systemScheme, setSystemScheme] = useState(readSystemScheme);
   const [replayGain, setReplayGainState] = useState(readStoredReplayGain);
+
+  const theme = resolveTheme(chosenThemeId, followSystem, systemScheme);
+  // Painted during the first render rather than after it, so the page never
+  // shows one frame of the default before the stored theme; then again
+  // whenever the choice, the box or the device changes it.
+  useState(() => applyTheme(theme));
+  useLayoutEffect(() => applyTheme(theme), [theme]);
+
+  // Live: a device that turns dark at sunset takes the page with it. Heard
+  // only while following, since nothing else reads the scheme.
+  useEffect(() => {
+    if (!followSystem) return;
+    const query = schemeQuery();
+    if (!query) return;
+    const update = () => setSystemScheme(query.matches ? "dark" : "light");
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, [followSystem]);
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, themeId);
+      localStorage.setItem(STORAGE_KEY, chosenThemeId);
     } catch {
       // Appearance remains usable when persistent storage is disabled.
     }
-  }, [themeId]);
+  }, [chosenThemeId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOLLOW_SYSTEM_KEY, String(followSystem));
+    } catch {
+      // Following still works for this session without persistence.
+    }
+  }, [followSystem]);
 
   useEffect(() => {
     try {
@@ -79,10 +163,19 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   }, [replayGain]);
 
   const setThemeId = useCallback((id: string) => {
-    const theme = findTheme(id);
-    applyTheme(theme);
-    setStoredThemeId(theme.id);
+    setChosenThemeId(findTheme(id).id);
   }, []);
+
+  const setFollowSystem = useCallback(
+    (follow: boolean) => {
+      // Turning it off keeps what is on screen: the page should not jump back
+      // to the other half of the family the moment the box is cleared.
+      if (!follow) setChosenThemeId(theme.id);
+      else setSystemScheme(readSystemScheme());
+      setFollowSystemState(follow);
+    },
+    [theme],
+  );
 
   const setReplayGain = useCallback((preference: ReplayGainPreference) => {
     setReplayGainState({
@@ -93,11 +186,36 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
 
   return (
     <PreferencesContext.Provider
-      value={{ themeId, setThemeId, replayGain, setReplayGain }}
+      value={{
+        themeId: theme.id,
+        chosenThemeId,
+        setThemeId,
+        followSystem,
+        setFollowSystem,
+        systemScheme,
+        replayGain,
+        setReplayGain,
+      }}
     >
       {children}
     </PreferencesContext.Provider>
   );
+}
+
+/** The theme preference, for the picker that sets it. */
+export function useThemePreference(): Pick<
+  Preferences,
+  | "themeId"
+  | "chosenThemeId"
+  | "setThemeId"
+  | "followSystem"
+  | "setFollowSystem"
+  | "systemScheme"
+> {
+  const preferences = useContext(PreferencesContext);
+  if (!preferences)
+    throw new Error("useThemePreference requires PreferencesProvider");
+  return preferences;
 }
 
 /** The ReplayGain preference, for the player that applies it. */
@@ -106,28 +224,6 @@ export function useReplayGainPreference(): ReplayGainPreference {
   if (!preferences)
     throw new Error("useReplayGainPreference requires PreferencesProvider");
   return preferences.replayGain;
-}
-
-export function ThemePicker() {
-  const preferences = useContext(PreferencesContext);
-  const { t } = useI18n();
-  if (!preferences) throw new Error("ThemePicker requires PreferencesProvider");
-  return (
-    <label className="theme-picker">
-      <span>{t("preferences.theme")}</span>
-      <select
-        aria-label={t("preferences.theme")}
-        value={preferences.themeId}
-        onChange={(event) => preferences.setThemeId(event.target.value)}
-      >
-        {THEME_PRESETS.map((theme) => (
-          <option key={theme.id} value={theme.id}>
-            {t(theme.labelKey as TranslationKey)}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 }
 
 const MODE_LABELS: Record<ReplayGainMode, TranslationKey> = {

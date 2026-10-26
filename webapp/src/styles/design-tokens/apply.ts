@@ -61,6 +61,31 @@ export function applyTheme(theme: ThemePreset): void {
 }
 
 /**
+ * The three surfaces a preset paints in its own mode — the page's ground, a
+ * panel and a raised panel — with the defaults `applyTheme` falls back to.
+ * The Settings picker draws each preset's miniature from these, so a card
+ * shows the preset's own colours rather than whichever theme is applied.
+ */
+export function themeSurfaces(theme: ThemePreset): {
+  ground: string;
+  surface: string;
+  raised: string;
+} {
+  if (theme.mode === "dark") {
+    return {
+      ground: theme.ambient ?? "#121212",
+      surface: theme.surfaceDark ?? DEFAULT_SURFACE_DARK,
+      raised: theme.surfaceDarkElevated ?? DEFAULT_SURFACE_DARK_ELEVATED,
+    };
+  }
+  return {
+    ground: theme.ambient ?? "#ffffff",
+    surface: theme.surfaceLight ?? DEFAULT_SURFACE_LIGHT,
+    raised: theme.surfaceLightElevated ?? DEFAULT_SURFACE_LIGHT_ELEVATED,
+  };
+}
+
+/**
  * Serialize a preset to a `<style>` rule body — useful for SSR-side
  * theme injection (write the resolved theme into the document
  * `<head>` so the first paint already has the right tint, no FOUC).

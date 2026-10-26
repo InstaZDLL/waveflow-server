@@ -1,4 +1,4 @@
-export { applyTheme, themeCssDeclarations } from "./apply";
+export { applyTheme, themeCssDeclarations, themeSurfaces } from "./apply";
 export {
   ACCENT_PALETTES,
   type AccentPalette,
@@ -18,4 +18,5 @@ export {
   THEME_PRESETS,
   type ThemeMode,
   type ThemePreset,
+  themeForScheme,
 } from "./themes";
