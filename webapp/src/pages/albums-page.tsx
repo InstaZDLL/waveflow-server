@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
 import type { AlbumSort } from "../api";
-import { albumsQuery } from "../api/queries";
+import { albumsQuery, mixesQuery } from "../api/queries";
 import { AlbumGrid } from "../components/album-grid";
 import { FilterField } from "../components/filter-field";
 import { MixShelves } from "../components/mix-shelves";
@@ -10,6 +10,7 @@ import { EmptyState, Loading, PageHeader } from "../components/page-shell";
 import { matches, normalizeFilter } from "../lib/filter";
 import { type TranslationKey, useI18n } from "../state/i18n";
 import { useScopeId } from "../state/library-scope";
+import { useLocalDay } from "../state/local-day";
 
 /**
  * The orders offered on the albums page, in menu order. Four of them narrow the
@@ -38,7 +39,11 @@ export function AlbumsPage() {
   const [filter, setFilter] = useState("");
   const scope = useScopeId();
   const { data: value, error } = useQuery(albumsQuery(sort, scope));
+  // The shelf's own question, answered from the same cache: the page needs to
+  // know whether the shelf is there to name the grid under it.
+  const { data: mixes } = useQuery(mixesQuery(scope, useLocalDay()));
   const needle = normalizeFilter(filter);
+  const shelf = !needle && Boolean(mixes?.length);
   const shown = useMemo(
     () =>
       !value || !needle
@@ -102,7 +107,14 @@ export function AlbumsPage() {
       </PageHeader>
       {/* Above the albums and not inside their filter: the shelf is what the
           server suggests today, and narrowing the grid does not narrow it. */}
-      {needle ? null : <MixShelves />}
+      {shelf ? <MixShelves /> : null}
+      {/* With the mixes above it, the grid is named too, so the line between
+          what was generated and what is in the library is drawn twice — once
+          by the shelf's heading and once by this one. Without them the page
+          title says it, and a second "albums" under it would only repeat. */}
+      {shelf ? (
+        <h3 className="albums-grid-title">{t("albums.gridTitle")}</h3>
+      ) : null}
       {needle && shown.length === 0 ? (
         <EmptyState message={t("browse.noMatch")} />
       ) : (
