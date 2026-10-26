@@ -536,3 +536,78 @@ async fn a_playlist_entry_moves_to_the_position_it_was_shown_at() {
     .await;
     assert_eq!(refused.status(), StatusCode::NOT_FOUND);
 }
+
+/// A comment cleared on one device is cleared on the others.
+///
+/// The statement writes `NULL` when `clear.comment` is set, whatever comment
+/// came with it; the journal entry a device mirrors from used to carry the old
+/// comment instead (or the new one sent alongside the clear), so every other
+/// device kept a comment the server no longer had.
+#[tokio::test]
+async fn a_cleared_comment_reaches_the_journal_as_cleared() {
+    let (_temp, _config, state) = test_app().await;
+    let (owner, _) = admin_with_api_token(&state, "comment-owner").await;
+    let playlist = state
+        .services
+        .create_playlist(owner, "Notes", &[])
+        .await
+        .unwrap();
+    let update = |comment: Option<&'static str>, clear: bool| {
+        let state = state.clone();
+        async move {
+            state
+                .services
+                .update_playlist(
+                    owner,
+                    playlist.id,
+                    None,
+                    comment,
+                    None,
+                    &[],
+                    &[],
+                    waveflow_server::services::PlaylistClear {
+                        comment: clear,
+                        tracks: false,
+                    },
+                )
+                .await
+                .unwrap()
+        }
+    };
+    let journalled = || {
+        let state = state.clone();
+        async move {
+            let payload: String = sqlx::query_scalar(
+                "SELECT payload_json FROM sync_event WHERE entity_type='playlist' \
+                 ORDER BY cursor DESC LIMIT 1",
+            )
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+            serde_json::from_str::<serde_json::Value>(&payload).unwrap()["comment"].clone()
+        }
+    };
+
+    update(Some("late night"), false).await;
+    assert_eq!(journalled().await, "late night");
+
+    // Cleared on its own.
+    let cleared = update(None, true).await;
+    assert_eq!(cleared.comment, None);
+    assert_eq!(
+        journalled().await,
+        serde_json::Value::Null,
+        "the clear is mirrored"
+    );
+
+    // Cleared with a comment beside it: the store keeps neither, so neither
+    // may the journal.
+    update(Some("again"), false).await;
+    let cleared = update(Some("ignored"), true).await;
+    assert_eq!(cleared.comment, None);
+    assert_eq!(
+        journalled().await,
+        serde_json::Value::Null,
+        "the journal agrees with the store"
+    );
+}
