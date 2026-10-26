@@ -10,6 +10,7 @@
 //! token, as in `tests/credits.rs`: nothing here hands a literal to a hash.
 
 #[allow(dead_code)]
+#[path = "../support/mod.rs"]
 mod support;
 
 use std::path::{Path, PathBuf};

@@ -6,6 +6,7 @@
 //! with a password, so nothing in it hands a literal to a hash.
 
 #[allow(dead_code)]
+#[path = "../support/mod.rs"]
 mod support;
 
 use axum::body::Body;
@@ -636,7 +637,7 @@ async fn the_feed_announces_what_a_split_moved() {
 /// repeats a credit and one whose credits share a part.
 #[tokio::test]
 async fn the_migrations_copy_gives_what_a_scan_gives() {
-    let migration = include_str!("../migrations-v2/20261024020000_artist_credit_decision.sql");
+    let migration = include_str!("../../migrations-v2/20261024020000_artist_credit_decision.sql");
     let copy = &migration[migration
         .find("INSERT INTO track_credit")
         .expect("the migration copies the participants")..];

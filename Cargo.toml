@@ -109,7 +109,7 @@ tokio-tungstenite = "0.30"
 
 [[test]]
 name = "migrations"
-path = "tests/migrations.rs"
+path = "tests/migrations/main.rs"
 
 [[test]]
 name = "auth"
@@ -133,11 +133,11 @@ path = "tests/subsonic_contract/main.rs"
 
 [[test]]
 name = "subsonic_fields"
-path = "tests/subsonic_fields.rs"
+path = "tests/subsonic_fields/main.rs"
 
 [[test]]
 name = "subsonic_browse"
-path = "tests/subsonic_browse.rs"
+path = "tests/subsonic_browse/main.rs"
 
 [[test]]
 name = "subsonic_methods"
@@ -149,7 +149,7 @@ path = "tests/native_api/main.rs"
 
 [[test]]
 name = "sync"
-path = "tests/sync.rs"
+path = "tests/sync/main.rs"
 
 [[test]]
 name = "media"
@@ -157,11 +157,11 @@ path = "tests/media/main.rs"
 
 [[test]]
 name = "service"
-path = "tests/service.rs"
+path = "tests/service/main.rs"
 
 [[test]]
 name = "cli"
-path = "tests/cli.rs"
+path = "tests/cli/main.rs"
 
 [profile.release]
 codegen-units = 1
@@ -174,7 +174,7 @@ path = "tests/uploads/main.rs"
 
 [[test]]
 name = "canvas"
-path = "tests/canvas.rs"
+path = "tests/canvas/main.rs"
 
 [[test]]
 name = "scrobbling"
@@ -186,15 +186,15 @@ path = "tests/enrichment/main.rs"
 
 [[test]]
 name = "credits"
-path = "tests/credits.rs"
+path = "tests/credits/main.rs"
 
 [[test]]
 name = "quality"
-path = "tests/quality.rs"
+path = "tests/quality/main.rs"
 
 [[test]]
 name = "discovery"
-path = "tests/discovery.rs"
+path = "tests/discovery/main.rs"
 
 [[test]]
 name = "smart_playlists"

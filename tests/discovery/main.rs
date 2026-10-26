@@ -10,6 +10,7 @@
 //! is reached through tokens and Subsonic keys drawn at run time.
 
 #[allow(dead_code)]
+#[path = "../support/mod.rs"]
 mod support;
 
 use std::{
