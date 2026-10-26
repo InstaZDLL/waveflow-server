@@ -11,6 +11,7 @@ import {
   Outlet,
   RouterProvider,
   redirect,
+  useMatches,
   useNavigate,
 } from "@tanstack/react-router";
 import {
@@ -699,6 +700,12 @@ function ScopedOutlet() {
 /** Compose the authenticated desktop and mobile application chrome. */
 function Shell() {
   const { t } = useI18n();
+  // Read from the routes rather than set by each page, so the width holds
+  // while a page is still loading and the hub's sections share it.
+  const workspace = useMatches({
+    select: (matches) =>
+      matches.some((match) => match.staticData.layout === "workspace"),
+  });
   return (
     <LibraryScopeProvider>
       <PlayerProvider>
@@ -721,7 +728,11 @@ function Shell() {
             <Brand />
             <LibraryPicker />
           </header>
-          <main id="main-content" tabIndex={-1}>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className={workspace ? "workspace" : undefined}
+          >
             <ScopedOutlet />
           </main>
           <Navigation mobile />
@@ -922,12 +933,14 @@ const queueRoute = createRoute({
 const radioRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/radio",
+  staticData: { layout: "workspace" },
   component: RadioPage,
 });
 
 const podcastsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/podcasts",
+  staticData: { layout: "workspace" },
   component: PodcastsPage,
 });
 
@@ -1037,6 +1050,7 @@ const legacyAdminRoute = createRoute({
 const foldersRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/folders",
+  staticData: { layout: "workspace" },
   // The folder: absent or empty for the root, `unfiled` for the tracks filed
   // nowhere, otherwise a folder id. Optional, so the rail links to the root.
   validateSearch: (search: Record<string, unknown>): { folder?: string } => ({
@@ -1056,6 +1070,9 @@ const foldersRoute = createRoute({
 const maintenanceRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/maintenance",
+  // Every section under the hub inherits it: a child route's match carries
+  // its own static data, but the hub's match is in the list beside it.
+  staticData: { layout: "workspace" },
   component: MaintenanceHub,
 });
 
@@ -1197,6 +1214,14 @@ const router = createRouter({
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router;
+  }
+  interface StaticDataRouteOption {
+    /**
+     * `workspace` for the pages that manage something rather than present
+     * it — Radio, Podcasts, Folders and the Maintenance hub. They take more of
+     * a wide window; the editorial pages keep the contained column.
+     */
+    layout?: "workspace";
   }
 }
 

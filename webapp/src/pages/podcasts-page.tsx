@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -46,6 +46,8 @@ export function PodcastsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  /** The feed field, which the empty state's action hands focus to. */
+  const feedField = useRef<HTMLInputElement>(null);
 
   async function subscribe(event: FormEvent) {
     event.preventDefault();
@@ -117,6 +119,7 @@ export function PodcastsPage() {
           onSubmit={(event) => void subscribe(event)}
         >
           <input
+            ref={feedField}
             type="url"
             value={url}
             onChange={(event) => setUrl(event.target.value)}
@@ -183,7 +186,23 @@ export function PodcastsPage() {
           ))}
         </ul>
       ) : (
-        <EmptyState message={t("podcasts.empty")} />
+        // Said to everyone, since a reader meets this page empty too; only a
+        // manager is offered the way out, which is the field above.
+        <EmptyState
+          icon="podcasts"
+          message={t("podcasts.empty")}
+          detail={t("podcasts.emptyDetail")}
+        >
+          {overview.can_manage ? (
+            <button
+              type="button"
+              className="action-primary"
+              onClick={() => feedField.current?.focus()}
+            >
+              {t("podcasts.addFirst")}
+            </button>
+          ) : null}
+        </EmptyState>
       )}
       {selected ? (
         <ChannelEpisodes

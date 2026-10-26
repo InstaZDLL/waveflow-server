@@ -1,5 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { type FormEvent, useState } from "react";
+import {
+  type FormEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from "react";
 
 import {
   ApiError,
@@ -9,6 +16,7 @@ import {
   replaceRadioStation,
 } from "../api";
 import { radioStationsQuery } from "../api/queries";
+import { ActionMenu } from "../components/action-menu";
 import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import {
@@ -69,15 +77,25 @@ const emptyDraft: Draft = {
   image_url: "",
 };
 
+/**
+ * The account's stations, as a grid of cards: each one's image, its name and
+ * the button that plays it. Adding and editing happen in a dialog that holds
+ * the form; editing and deleting are reached through the card's "⋯" menu,
+ * where a delete is asked to be confirmed first.
+ */
 export function RadioPage() {
   const { t } = useI18n();
   const player = usePlayer();
   const { data: stations, error } = useQuery(radioStationsQuery());
   const reload = useReload(radioStationsQuery().queryKey);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
+  /** Whether the dialog holding the form is open. */
+  const [formOpen, setFormOpen] = useState(false);
   /** The station the form is replacing, or `null` when it is adding one. */
   const [editing, setEditing] = useState<RadioStation | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  /** What had focus when the dialog opened, given focus back when it closes. */
+  const returnTo = useRef<HTMLElement | null>(null);
   // The station is the player's, not this page's: it plays in the bar, and
   // carries on when the reader goes elsewhere. What this page shows of it is
   // read from there.
@@ -93,13 +111,52 @@ export function RadioPage() {
    * reader had just filled, because `editing` and `draft` are read again
    * after the `await`. Closing the form removes both, where comparing the
    * values afterwards would have removed only the second (constats de revue,
-   * pris). Listening stays available throughout: it writes nothing, and a
-   * reader waiting on a save has no reason to lose the station they are
-   * hearing.
+   * pris). The dialog cannot be dismissed while it saves, for the same reason.
+   * Listening stays available throughout: it writes nothing, and a reader
+   * waiting on a delete has no reason to lose the station they are hearing.
    */
   const [busy, setBusy] = useState(false);
 
+  // Focus goes back once the dialog has left the page: while it is still
+  // open and modal, everything behind it is inert and refuses focus.
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (formOpen) {
+      wasOpen.current = true;
+    } else if (wasOpen.current) {
+      wasOpen.current = false;
+      returnTo.current?.focus();
+    }
+  }, [formOpen]);
+
   if (!stations) return <Loading error={error} />;
+
+  function openForm(station: RadioStation | null) {
+    returnTo.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    setMutationError(null);
+    setEditing(station);
+    setDraft(
+      station
+        ? {
+            name: station.name,
+            stream_url: station.stream_url,
+            homepage_url: station.homepage_url ?? "",
+            image_url: station.image_url ?? "",
+          }
+        : emptyDraft,
+    );
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setEditing(null);
+    setDraft(emptyDraft);
+    setMutationError(null);
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -125,8 +182,7 @@ export function RadioPage() {
       }
       // Safe to clear because the form was closed for the whole round trip:
       // nothing the reader did in the meantime is being thrown away.
-      setDraft(emptyDraft);
-      setEditing(null);
+      closeForm();
       reload();
     } catch (failure) {
       const full = failure instanceof ApiError && failure.status === 409;
@@ -138,6 +194,8 @@ export function RadioPage() {
 
   async function remove(station: RadioStation) {
     if (busy) return;
+    if (!window.confirm(t("radio.confirmDelete", { name: station.name })))
+      return;
     setBusy(true);
     setMutationError(null);
     try {
@@ -147,10 +205,6 @@ export function RadioPage() {
       // this request left, and stopping on that stale value would either leave
       // a deleted station sounding or stop one the reader had just started.
       player.stopAside(station.id);
-      if (editing?.id === station.id) {
-        setEditing(null);
-        setDraft(emptyDraft);
-      }
       reload();
     } catch {
       setMutationError(t("radio.deleteError"));
@@ -175,175 +229,283 @@ export function RadioPage() {
     !imageRefused;
 
   return (
-    <section>
+    <section className="radio-page">
       <PageHeader
         kicker={t("nav.group.listen")}
         title={t("nav.radio")}
         detail={t("radio.detail")}
-      />
-      <form
-        className="stacked-form radio-form"
-        onSubmit={(event) => void submit(event)}
       >
-        <label>
-          {t("radio.name")}
-          <input
-            value={draft.name}
-            onChange={(event) =>
-              setDraft({ ...draft, name: event.target.value })
-            }
-            required
-            disabled={busy}
-          />
-        </label>
-        <label>
-          {t("radio.address")}
-          <input
-            type="url"
-            value={draft.stream_url}
-            onChange={(event) =>
-              setDraft({ ...draft, stream_url: event.target.value })
-            }
-            placeholder="https://radio.example.org/stream"
-            required
-            disabled={busy}
-          />
-        </label>
-        <label>
-          {t("radio.homepage")}
-          <input
-            type="url"
-            value={draft.homepage_url}
-            onChange={(event) =>
-              setDraft({ ...draft, homepage_url: event.target.value })
-            }
-            disabled={busy}
-          />
-        </label>
-        <label>
-          {t("radio.image")}
-          <input
-            type="url"
-            value={draft.image_url}
-            onChange={(event) =>
-              setDraft({ ...draft, image_url: event.target.value })
-            }
-            placeholder="https://radio.example.org/logo.png"
-            aria-describedby="radio-image-hint"
-            disabled={busy}
-          />
-        </label>
-        <p className="muted" id="radio-image-hint">
-          {t("radio.imageHint")}
+        <button
+          type="button"
+          className="action-primary"
+          disabled={busy}
+          onClick={() => openForm(null)}
+        >
+          {t("radio.add")}
+        </button>
+      </PageHeader>
+      {mutationError && !formOpen ? (
+        <p className="error" role="alert">
+          {mutationError}
         </p>
-        {addressRefused || homepageRefused || imageRefused ? (
-          <p className="error">{t("radio.addressRefused")}</p>
-        ) : null}
-        {isBlockedAsMixedContent(draft.stream_url, window.location.protocol) ? (
-          <p className="muted">{t("radio.mixedContent")}</p>
-        ) : null}
-        <div className="actions">
-          <button type="submit" disabled={!submittable || busy}>
-            {editing ? t("radio.save") : t("radio.add")}
-          </button>
-          {editing ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setEditing(null);
-                setDraft(emptyDraft);
-              }}
-            >
-              {t("common.cancel")}
-            </button>
-          ) : null}
-        </div>
-        {editing ? <p className="muted">{t("radio.replacing")}</p> : null}
-      </form>
-      {mutationError ? <p className="error">{mutationError}</p> : null}
+      ) : null}
       {live && player.asideError ? (
         <p className="error">{t("radio.playbackError")}</p>
       ) : null}
       {stations.length ? (
-        <ul className="resource-list">
-          {stations.map((station) => (
-            <li key={station.id}>
-              <div className="resource-with-cover">
-                <Artwork
-                  artworkId={station.artwork_hash}
-                  title={station.name}
-                  className="resource-cover"
-                  placeholder={<Icon name="radio" size={20} />}
-                />
-                <div className="resource-copy">
-                  <strong>{station.name}</strong>
-                  <span className="muted resource-url">
+        <ul className="station-grid" aria-label={t("radio.stations")}>
+          {stations.map((station) => {
+            const playing = playingId === station.id;
+            return (
+              <li key={station.id} className="station-card">
+                <div className="station-art">
+                  <Artwork
+                    artworkId={station.artwork_hash}
+                    title={station.name}
+                    className="station-cover"
+                    placeholder={<Icon name="radio" size={36} />}
+                  />
+                  <button
+                    type="button"
+                    className="station-play"
+                    aria-pressed={playing}
+                    onClick={() =>
+                      playing ? player.toggleAside() : player.playLive(station)
+                    }
+                    aria-label={
+                      playing
+                        ? t("radio.stopNamed", { name: station.name })
+                        : t("radio.listenTo", { name: station.name })
+                    }
+                  >
+                    <Icon name={playing ? "stop" : "play"} size={20} />
+                  </button>
+                </div>
+                <div className="station-copy">
+                  <div className="station-title">
+                    <strong className="station-name">{station.name}</strong>
+                    <ActionMenu
+                      label={t("radio.actions", { name: station.name })}
+                      disabled={busy}
+                      items={[
+                        {
+                          key: "edit",
+                          label: t("radio.edit"),
+                          run: () => openForm(station),
+                        },
+                        {
+                          key: "delete",
+                          label: t("common.delete"),
+                          danger: true,
+                          run: () => void remove(station),
+                        },
+                      ]}
+                    />
+                  </div>
+                  <span
+                    className="muted station-url"
+                    title={station.stream_url}
+                  >
                     {station.stream_url}
                   </span>
                   {isBlockedAsMixedContent(
                     station.stream_url,
                     window.location.protocol,
                   ) ? (
-                    <span className="muted">{t("radio.mixedContent")}</span>
+                    <span className="muted station-note">
+                      {t("radio.mixedContent")}
+                    </span>
                   ) : null}
                   {station.image_url && !station.artwork_hash ? (
-                    <span className="muted">{t("radio.imageMissing")}</span>
+                    <span className="muted station-note">
+                      {t("radio.imageMissing")}
+                    </span>
+                  ) : null}
+                  {station.homepage_url ? (
+                    <a
+                      className="station-link"
+                      href={station.homepage_url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    >
+                      {t("radio.visit")}
+                    </a>
                   ) : null}
                 </div>
-              </div>
-              {station.homepage_url ? (
-                <a
-                  className="muted"
-                  href={station.homepage_url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                >
-                  {t("radio.visit")}
-                </a>
-              ) : null}
-              <button
-                type="button"
-                onClick={() =>
-                  playingId === station.id
-                    ? player.toggleAside()
-                    : player.playLive(station)
-                }
-                aria-label={
-                  playingId === station.id ? t("radio.stop") : t("radio.listen")
-                }
-              >
-                <Icon name={playingId === station.id ? "stop" : "play"} />
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  setEditing(station);
-                  setDraft({
-                    name: station.name,
-                    stream_url: station.stream_url,
-                    homepage_url: station.homepage_url ?? "",
-                    image_url: station.image_url ?? "",
-                  });
-                }}
-              >
-                {t("radio.edit")}
-              </button>
-              <button
-                type="button"
-                className="danger"
-                disabled={busy}
-                onClick={() => void remove(station)}
-              >
-                {t("common.delete")}
-              </button>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       ) : (
-        <EmptyState message={t("radio.empty")} />
+        <EmptyState icon="radio" message={t("radio.empty")} />
       )}
+      {formOpen ? (
+        <StationDialog
+          title={
+            editing
+              ? t("radio.editTitle", { name: editing.name })
+              : t("radio.newTitle")
+          }
+          locked={busy}
+          onClose={closeForm}
+        >
+          {(close) => (
+            <form
+              className="stacked-form radio-form"
+              onSubmit={(event) => void submit(event)}
+            >
+              <label>
+                {t("radio.name")}
+                <input
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft({ ...draft, name: event.target.value })
+                  }
+                  required
+                  disabled={busy}
+                />
+              </label>
+              <label>
+                {t("radio.address")}
+                <input
+                  type="url"
+                  value={draft.stream_url}
+                  onChange={(event) =>
+                    setDraft({ ...draft, stream_url: event.target.value })
+                  }
+                  placeholder="https://radio.example.org/stream"
+                  required
+                  disabled={busy}
+                />
+              </label>
+              <label>
+                {t("radio.homepage")}
+                <input
+                  type="url"
+                  value={draft.homepage_url}
+                  onChange={(event) =>
+                    setDraft({ ...draft, homepage_url: event.target.value })
+                  }
+                  disabled={busy}
+                />
+              </label>
+              <label>
+                {t("radio.image")}
+                <input
+                  type="url"
+                  value={draft.image_url}
+                  onChange={(event) =>
+                    setDraft({ ...draft, image_url: event.target.value })
+                  }
+                  placeholder="https://radio.example.org/logo.png"
+                  aria-describedby="radio-image-hint"
+                  disabled={busy}
+                />
+              </label>
+              <p className="muted" id="radio-image-hint">
+                {t("radio.imageHint")}
+              </p>
+              {addressRefused || homepageRefused || imageRefused ? (
+                <p className="error">{t("radio.addressRefused")}</p>
+              ) : null}
+              {isBlockedAsMixedContent(
+                draft.stream_url,
+                window.location.protocol,
+              ) ? (
+                <p className="muted">{t("radio.mixedContent")}</p>
+              ) : null}
+              {editing ? <p className="muted">{t("radio.replacing")}</p> : null}
+              {mutationError ? (
+                <p className="error" role="alert">
+                  {mutationError}
+                </p>
+              ) : null}
+              <div className="actions">
+                <button type="submit" disabled={!submittable || busy}>
+                  {t("radio.save")}
+                </button>
+                <button type="button" disabled={busy} onClick={close}>
+                  {t("common.cancel")}
+                </button>
+              </div>
+            </form>
+          )}
+        </StationDialog>
+      ) : null}
     </section>
+  );
+}
+
+/**
+ * The dialog the station form sits in: a native `<dialog>` opened with
+ * `showModal`, as the folder picker is, so the focus trap, Escape and the
+ * inert page behind come from the platform.
+ *
+ * `locked` holds it open while a save is in flight: Escape, the backdrop and
+ * the close button would otherwise put the form away under a request that is
+ * about to report into it.
+ */
+function StationDialog({
+  title,
+  locked,
+  onClose,
+  children,
+}: {
+  title: string;
+  locked: boolean;
+  onClose: () => void;
+  /** Handed the way to close, for the form's own Cancel button. */
+  children: (close: () => void) => ReactNode;
+}) {
+  const { t } = useI18n();
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    const node = dialog.current;
+    if (node && !node.open) node.showModal();
+  }, []);
+
+  const close = () => {
+    if (!locked) dialog.current?.close();
+  };
+
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: Escape closes a <dialog> natively
+    <dialog
+      ref={dialog}
+      className="station-dialog"
+      aria-labelledby={titleId}
+      onClose={onClose}
+      onCancel={(event) => {
+        if (locked) event.preventDefault();
+      }}
+      onClick={(event) => {
+        // A click on the backdrop lands on the dialog itself, outside its box.
+        const node = dialog.current;
+        if (!node || event.target !== node) return;
+        const box = node.getBoundingClientRect();
+        const inside =
+          event.clientX >= box.left &&
+          event.clientX <= box.right &&
+          event.clientY >= box.top &&
+          event.clientY <= box.bottom;
+        if (!inside) close();
+      }}
+    >
+      <header>
+        <h2 id={titleId}>{title}</h2>
+        <button
+          type="button"
+          className="properties-close"
+          aria-label={t("properties.close")}
+          disabled={locked}
+          onClick={close}
+        >
+          <Icon name="close" />
+        </button>
+      </header>
+      {children(close)}
+    </dialog>
   );
 }

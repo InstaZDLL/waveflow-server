@@ -5964,15 +5964,19 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
     page.getByRole("heading", { name: "Radio", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("No stations yet. Add one above."),
+    page.getByText("No stations yet. Add one to keep it here."),
   ).toBeVisible();
 
-  await page.getByLabel("Station name").fill("Radio Nova");
-  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
-  await page.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  // The form lives in a dialog the page's own button opens.
   await page.getByRole("button", { name: "Add station" }).click();
+  const form = page.getByRole("dialog", { name: "Add a station" });
+  await form.getByLabel("Station name").fill("Radio Nova");
+  await form.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await form.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  await form.getByRole("button", { name: "Save station" }).click();
+  await expect(form).toHaveCount(0);
 
-  const listed = page.locator(".resource-list li");
+  const listed = page.locator(".station-grid li");
   await expect(listed).toHaveCount(1);
   await expect(listed.first()).toContainText("Radio Nova");
   await expect(listed.first()).toContainText("https://nova.example.org/live");
@@ -5982,41 +5986,53 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
 
   // An address the server would refuse is refused here first, with a reason,
   // and the button stays shut rather than sending a request to find out.
-  await page.getByLabel("Station name").fill("Elsewhere");
-  await page.getByLabel("Stream address").fill("mms://elsewhere.example.org/s");
+  await page.getByRole("button", { name: "Add station" }).click();
+  await form.getByLabel("Station name").fill("Elsewhere");
+  await form.getByLabel("Stream address").fill("mms://elsewhere.example.org/s");
   await expect(
-    page.getByText("An address must start with http:// or https://."),
+    form.getByText("An address must start with http:// or https://."),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Add station" }),
+    form.getByRole("button", { name: "Save station" }),
   ).toBeDisabled();
 
   await expectNoWcagViolations(page);
+  await form.getByRole("button", { name: "Cancel" }).click();
+  await expect(form).toHaveCount(0);
 
-  // Editing loads the station into the same form, and says what saving means:
-  // the page address is cleared because the form sends every field.
-  await page.getByRole("button", { name: "Edit" }).click();
-  await expect(page.getByLabel("Station name")).toHaveValue("Radio Nova");
-  await expect(page.getByLabel("Station page (optional)")).toHaveValue(
+  // Editing, from the card's menu, loads the station into the same form, and
+  // says what saving means: the page address is cleared because the form
+  // sends every field.
+  await listed.first().getByRole("button", { name: "Actions for Radio Nova" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  const editor = page.getByRole("dialog", { name: "Edit “Radio Nova”" });
+  await expect(editor.getByLabel("Station name")).toHaveValue("Radio Nova");
+  await expect(editor.getByLabel("Station page (optional)")).toHaveValue(
     "https://nova.example.org/",
   );
   await expect(
-    page.getByText(
+    editor.getByText(
       "Saving replaces every field, so an empty page address clears the stored one.",
     ),
   ).toBeVisible();
-  await page.getByLabel("Station name").fill("Radio Nova Classics");
-  await page.getByLabel("Station page (optional)").fill("");
-  await page.getByRole("button", { name: "Save station" }).click();
+  await editor.getByLabel("Station name").fill("Radio Nova Classics");
+  await editor.getByLabel("Station page (optional)").fill("");
+  await editor.getByRole("button", { name: "Save station" }).click();
 
   await expect(listed.first()).toContainText("Radio Nova Classics");
   // Cleared, which is the half a patch would have got wrong.
   await expect(page.getByRole("link", { name: "Station page" })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Delete" }).click();
+  // A delete is confirmed first, then goes.
+  page.once("dialog", (question) => void question.accept());
+  await listed
+    .first()
+    .getByRole("button", { name: "Actions for Radio Nova Classics" })
+    .click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
   await expect(listed).toHaveCount(0);
   await expect(
-    page.getByText("No stations yet. Add one above."),
+    page.getByText("No stations yet. Add one to keep it here."),
   ).toBeVisible();
 });
 
@@ -6036,10 +6052,12 @@ test("closes the form while a station is saving, and leaves listening alone", as
   page,
 }) => {
   await page.goto("/radio");
-  await page.getByLabel("Station name").fill("Radio Nova");
-  await page.getByLabel("Stream address").fill("https://nova.example.org/live");
+  const form = page.getByRole("dialog", { name: "Add a station" });
   await page.getByRole("button", { name: "Add station" }).click();
-  await expect(page.locator(".resource-list li")).toHaveCount(1);
+  await form.getByLabel("Station name").fill("Radio Nova");
+  await form.getByLabel("Stream address").fill("https://nova.example.org/live");
+  await form.getByRole("button", { name: "Save station" }).click();
+  await expect(page.locator(".station-grid li")).toHaveCount(1);
   expect(radioWrites).toEqual(["POST"]);
 
   // Held from here on, so only the second save waits.
@@ -6048,9 +6066,10 @@ test("closes the form while a station is saving, and leaves listening alone", as
     release = resolve;
   });
 
-  await page.getByLabel("Station name").fill("FIP");
-  await page.getByLabel("Stream address").fill("https://fip.example.org/live");
   await page.getByRole("button", { name: "Add station" }).click();
+  await form.getByLabel("Station name").fill("FIP");
+  await form.getByLabel("Stream address").fill("https://fip.example.org/live");
+  await form.getByRole("button", { name: "Save station" }).click();
 
   // Shut for the whole round trip: the button cannot be pressed again, and the
   // fields cannot be refilled under a save that is about to clear them.
@@ -6061,16 +6080,20 @@ test("closes the form while a station is saving, and leaves listening alone", as
   // the fields and disabled the button for the other reason. Held open, the
   // save cannot land, and removing the guard fails on this very line —
   // measured both ways.
-  await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
-  await expect(page.getByLabel("Station name")).toBeDisabled();
-  await expect(page.getByLabel("Stream address")).toBeDisabled();
-  // And no edit can begin, which is what made a save clear a form somebody
-  // else had just filled.
-  await expect(page.getByRole("button", { name: "Edit" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Delete" })).toBeDisabled();
+  await expect(form.getByRole("button", { name: "Save station" })).toBeDisabled();
+  await expect(form.getByLabel("Station name")).toBeDisabled();
+  await expect(form.getByLabel("Stream address")).toBeDisabled();
+  await expect(form.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  // And no edit or delete can begin, which is what made a save clear a form
+  // somebody else had just filled: the cards' menus are shut as well.
+  await expect(
+    page.locator(".station-grid li").first().locator(".action-menu-button"),
+  ).toBeDisabled();
   // Listening is the deliberate exception: it writes nothing, and a reader
   // waiting on a save has no reason to lose the station they are hearing.
-  await expect(page.getByRole("button", { name: "Listen" })).toBeEnabled();
+  await expect(
+    page.locator(".station-grid li").first().locator(".station-play"),
+  ).toBeEnabled();
 
   // The second click of an impatient double-click, dispatched for real rather
   // than waited for: `force` skips Playwright's own actionability check, so
@@ -6078,18 +6101,20 @@ test("closes the form while a station is saving, and leaves listening alone", as
   // Without the guard this click sends a second POST and the account ends up
   // with two identical stations from one gesture — which is what the count
   // below would then show.
-  await page
-    .getByRole("button", { name: "Add station" })
+  await form
+    .getByRole("button", { name: "Save station" })
     .click({ force: true });
 
   release();
 
-  await expect(page.locator(".resource-list li")).toHaveCount(2);
+  await expect(page.locator(".station-grid li")).toHaveCount(2);
   // One gesture, one station. Two POSTs in all, one per click.
   expect(radioWrites).toEqual(["POST", "POST"]);
-  // Open again, and empty, once the save has landed.
-  await expect(page.getByLabel("Station name")).toBeEnabled();
-  await expect(page.getByLabel("Station name")).toHaveValue("");
+  // Closed once the save has landed, and empty when it is opened again.
+  await expect(form).toHaveCount(0);
+  await page.getByRole("button", { name: "Add station" }).click();
+  await expect(form.getByLabel("Station name")).toBeEnabled();
+  await expect(form.getByLabel("Station name")).toHaveValue("");
 });
 
 /**
@@ -6238,7 +6263,7 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
   await expect.poll(async () => (await elements(page)).queue?.claimed).toBe(true);
 
   await navigateWithin(page, "Radio");
-  const station = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
+  const station = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
   await station.getByRole("button", { name: "Listen" }).click();
 
   await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
@@ -6346,35 +6371,39 @@ test("takes an image address for a station, and shows the image the server kept"
     route.fulfill({ contentType: "image/png", body: PIXEL }),
   );
   await page.goto("/radio");
-  await page.getByLabel("Station name").fill("Radio Nova");
-  await page.getByLabel("Stream address").fill(NOVA);
+  await page.getByRole("button", { name: "Add station" }).click();
+  const form = page.getByRole("dialog", { name: "Add a station" });
+  await form.getByLabel("Station name").fill("Radio Nova");
+  await form.getByLabel("Stream address").fill(NOVA);
   // Refused here first, as the server would, and the button stays shut.
-  await page.getByLabel("Station image (optional)").fill("ftp://logos.example.org/n.png");
+  await form.getByLabel("Station image (optional)").fill("ftp://logos.example.org/n.png");
   await expect(
-    page.getByText("An address must start with http:// or https://."),
+    form.getByText("An address must start with http:// or https://."),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add station" })).toBeDisabled();
-  await page
+  await expect(form.getByRole("button", { name: "Save station" })).toBeDisabled();
+  await form
     .getByLabel("Station image (optional)")
     .fill("https://logos.example.org/nova.png");
   await expect(
-    page.getByText("The server downloads it once, when you save", { exact: false }),
+    form.getByText("The server downloads it once, when you save", { exact: false }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Add station" }).click();
+  await form.getByRole("button", { name: "Save station" }).click();
 
-  const listed = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
-  await expect(listed.locator("img.resource-cover")).toBeVisible();
+  const listed = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
+  await expect(listed.locator("img.station-cover")).toBeVisible();
   expect(stationImages).toEqual(["https://logos.example.org/nova.png"]);
 
   // Edited, the form shows the address back and sends it again; cleared, it
   // sends `null` and the station keeps the symbol.
-  await listed.getByRole("button", { name: "Edit" }).click();
-  await expect(page.getByLabel("Station image (optional)")).toHaveValue(
+  await listed.getByRole("button", { name: "Actions for Radio Nova" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  const editor = page.getByRole("dialog", { name: "Edit “Radio Nova”" });
+  await expect(editor.getByLabel("Station image (optional)")).toHaveValue(
     "https://logos.example.org/nova.png",
   );
-  await page.getByLabel("Station image (optional)").fill("");
-  await page.getByRole("button", { name: "Save station" }).click();
-  await expect(listed.locator(".resource-cover.cover-fallback svg")).toBeVisible();
+  await editor.getByLabel("Station image (optional)").fill("");
+  await editor.getByRole("button", { name: "Save station" }).click();
+  await expect(listed.locator(".station-cover.cover-fallback svg")).toBeVisible();
   expect(stationImages).toEqual(["https://logos.example.org/nova.png", null]);
   await expectNoWcagViolations(page);
   expect(asked, "the browser never asks the image's own host").toEqual([]);
@@ -6400,8 +6429,8 @@ for (const theme of ["dark", "light"] as const) {
       return route.fulfill({ contentType: "image/png", body: PIXEL });
     });
     await page.goto("/radio");
-    const nova = page.locator(".resource-list li").filter({ hasText: "Radio Nova" });
-    await expect(nova.locator("img.resource-cover")).toBeVisible();
+    const nova = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
+    await expect(nova.locator("img.station-cover")).toBeVisible();
     await nova.getByRole("button", { name: "Listen" }).click();
 
     const bar = page.locator(".player");
@@ -6419,7 +6448,7 @@ for (const theme of ["dark", "light"] as const) {
     await expectNoWcagViolations(page);
 
     // A station without an image keeps the radio symbol.
-    const plain = page.locator(".resource-list li").filter({ hasText: "Radio Plain" });
+    const plain = page.locator(".station-grid li").filter({ hasText: "Radio Plain" });
     await plain.getByRole("button", { name: "Listen" }).click();
     await expect(bar.locator(".player-track strong")).toHaveText("Radio Plain");
     await expect(bar.locator(".player-cover.cover-fallback svg")).toBeVisible();
@@ -6635,10 +6664,11 @@ test("files tracks into folders from the menu and by dragging", async ({
 
   await page.goto("/folders");
   await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
-  const cards = page.getByRole("list", { name: "Folders" });
-  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
-  // WaveFlow's list, not a folder of the owner's, and it says so.
-  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("Automatic");
+  // WaveFlow's list, not a folder of the owner's: kept apart from them, and
+  // it says so.
+  const kept = page.getByRole("list", { name: "Kept by WaveFlow" });
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("Automatic");
 
   // A folder, and a second one refused for a name already taken.
   await page.getByRole("button", { name: "New folder" }).click();
@@ -6654,7 +6684,7 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.getByRole("button", { name: "Cancel" }).click();
 
   // From the menu: the unfiled tracks, the first one filed into Rock.
-  await cards.getByRole("link", { name: /To sort/ }).click();
+  await kept.getByRole("link", { name: /To sort/ }).click();
   await expect(page.getByRole("heading", { name: "To sort" })).toBeVisible();
   const rows = page.locator(".songs tbody tr");
   await expect(rows).toHaveCount(3);
@@ -6712,7 +6742,7 @@ test("files tracks into folders from the menu and by dragging", async ({
   await expect(page.getByRole("status")).toHaveText(
     "Folder deleted: 2 tracks are back in To sort.",
   );
-  await expect(cards.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
   await expectNoWcagViolations(page);
 });
 
@@ -6953,7 +6983,10 @@ test("closes a folder's form when another folder is opened", async ({ page }) =>
   await page.goto("/folders");
   await page.getByRole("button", { name: "New folder" }).click();
   await expect(page.getByLabel("Folder name")).toBeVisible();
-  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /To sort/ }).click();
+  await page
+    .getByRole("list", { name: "Kept by WaveFlow" })
+    .getByRole("link", { name: /To sort/ })
+    .click();
   await expect(page.getByRole("heading", { name: "To sort" })).toBeVisible();
   await expect(page.getByLabel("Folder name")).toHaveCount(0);
   expect(state.writes).toEqual([]);
@@ -7601,7 +7634,7 @@ test("keeps the folders and the folder picker readable in the light", async ({
   await serveFiledFolders(page, [song(1, "Hidden Place", 0, false)]);
   await chooseLightTheme(page);
   await page.goto("/folders");
-  const cards = page.getByRole("list", { name: "Folders" });
+  const cards = page.getByRole("list", { name: "Kept by WaveFlow" });
   await expect(cards.getByRole("link", { name: /To sort/ })).toBeVisible();
   await expectNoWcagViolations(page);
 
