@@ -126,6 +126,7 @@ pub async fn scan_once(
     owner: uuid::Uuid,
     library: LibraryRecord,
 ) -> uuid::Uuid {
+    let library_id = library.id;
     let id = state
         .scanner
         .trigger(library, Some(owner), "manual")
@@ -138,7 +139,12 @@ pub async fn scan_once(
             .await
             .unwrap()
             .unwrap();
-        if job.status == "completed" {
+        // Completed in the database is not yet done: the job writes its
+        // verdict while it still holds the library's lock, and lets go of it
+        // a moment later. A test that takes that lock next — a purge, a move —
+        // would find it held, so the scan is over once the library is no
+        // longer counted as scanning.
+        if job.status == "completed" && !state.scanner.is_scanning(library_id) {
             return id;
         }
         if job.status == "failed" {
