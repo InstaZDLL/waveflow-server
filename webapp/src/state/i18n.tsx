@@ -132,6 +132,8 @@ const en = {
   "trackMenu.forgetOffline": "Remove the offline copy",
   "trackMenu.downloadFailed": "The download could not start. Try again.",
   "trackMenu.dismiss": "Dismiss",
+  "trackMenu.goToAlbum": "Go to album",
+  "trackMenu.goToArtist": "Go to {name}",
   "trackMenu.properties": "Properties",
   "trackMenu.edit": "Edit tags",
   "properties.kicker": "Properties",
@@ -1269,6 +1271,8 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "trackMenu.downloadFailed":
     "Le téléchargement n’a pas pu démarrer. Réessayez.",
   "trackMenu.dismiss": "Fermer",
+  "trackMenu.goToAlbum": "Aller à l’album",
+  "trackMenu.goToArtist": "Aller à {name}",
   "trackMenu.properties": "Propriétés",
   "trackMenu.edit": "Corriger les tags",
   "properties.kicker": "Propriétés",

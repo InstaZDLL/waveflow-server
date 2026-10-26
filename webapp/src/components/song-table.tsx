@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 
 import { formatDuration, type Song, setFavorite, setRating } from "../api";
+import { creditedArtists } from "../lib/artist-credits";
 import { usePlayer } from "../player/player";
 import { useI18n } from "../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
@@ -11,6 +12,31 @@ import { Icon } from "./icons";
 import { useTrackMenu } from "./track-menu";
 
 const RATING_STARS = [1, 2, 3, 4, 5];
+
+/**
+ * A track's artists, each a link to its own page.
+ *
+ * A track credited to two artists ("Bleu Soleil, LUIZA") names two pages, so
+ * the structured list is what is linked, in tag order, rather than the display
+ * string. Where the list is empty, the primary credit still links if it has an
+ * id, and an artist the catalogue does not know stays plain text.
+ */
+function ArtistLinks({ song }: { song: Song }) {
+  const credited = creditedArtists(song);
+  if (credited.length === 0) return <>{song.artist}</>;
+  return (
+    <>
+      {credited.map((artist, index) => (
+        <span key={artist.id}>
+          {index > 0 ? ", " : null}
+          <Link to="/artists/$artistId" params={{ artistId: artist.id }}>
+            {artist.name}
+          </Link>
+        </span>
+      ))}
+    </>
+  );
+}
 
 /**
  * What a dragged row carries: the track ids, as JSON. A type of its own, so a
@@ -224,7 +250,9 @@ export function SongTable({
                   </button>
                 </td>
                 {variant === "default" ? (
-                  <td className="muted">{song.artist}</td>
+                  <td className="muted song-artists">
+                    <ArtistLinks song={song} />
+                  </td>
                 ) : null}
                 <td className="muted song-duration">
                   {formatDuration(song.duration_ms)}
