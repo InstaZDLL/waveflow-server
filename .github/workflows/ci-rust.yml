@@ -72,7 +72,7 @@ jobs:
           toolchain: stable
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # The suite boots a real MediaService, which refuses to start without
       # ffmpeg and ffprobe, so every integration test needs them present.
@@ -109,7 +109,7 @@ jobs:
           toolchain: stable
           components: clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # choco exits 0 even when the community feed answers 503, so a failed
       # install used to surface five minutes later as nineteen tests panicking
@@ -170,7 +170,7 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       # `check`, not `test`: this job answers whether the declared compiler can
       # build the crate, which is what the container needs. Behaviour is the
