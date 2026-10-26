@@ -1415,6 +1415,32 @@ button.danger {
   grid-template-columns: minmax(12rem, 1fr) auto auto;
 }
 
+/* A station or a channel with its image beside its name: the image the
+   server fetched into the artwork store, or the generic symbol. */
+.resource-with-cover {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.resource-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.resource-cover {
+  width: 3rem;
+  flex: 0 0 3rem;
+  border-radius: 0.5rem;
+}
+
+.podcast-cover {
+  width: 5rem;
+  border-radius: 0.75rem;
+}
+
 .empty-state,
 .error-state {
   min-height: 11rem;

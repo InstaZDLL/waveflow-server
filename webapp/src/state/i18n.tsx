@@ -384,6 +384,11 @@ const en = {
   "radio.name": "Station name",
   "radio.address": "Stream address",
   "radio.homepage": "Station page (optional)",
+  "radio.image": "Station image (optional)",
+  "radio.imageHint":
+    "The server downloads it once, when you save, and keeps it with the covers: your browser never contacts the image’s host.",
+  "radio.imageMissing":
+    "The image could not be fetched; save the station to try again.",
   "radio.add": "Add station",
   "radio.save": "Save station",
   "radio.edit": "Edit",
@@ -1520,6 +1525,11 @@ const fr: Record<TranslationKey, TranslationValue> = {
   "radio.name": "Nom de la station",
   "radio.address": "Adresse du flux",
   "radio.homepage": "Page de la station (facultatif)",
+  "radio.image": "Image de la station (facultatif)",
+  "radio.imageHint":
+    "Le serveur la télécharge une fois, quand vous l’enregistrez, et la garde avec les pochettes : votre navigateur ne contacte jamais l’hôte de l’image.",
+  "radio.imageMissing":
+    "L’image n’a pas pu être récupérée ; enregistrez la station pour réessayer.",
   "radio.add": "Ajouter la station",
   "radio.save": "Enregistrer la station",
   "radio.edit": "Modifier",

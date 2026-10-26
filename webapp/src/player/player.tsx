@@ -13,6 +13,7 @@ import {
 } from "react";
 import {
   artworkUrl,
+  cachedArtworkUrl,
   deleteBookmark,
   formatDuration,
   getQueue,
@@ -29,6 +30,7 @@ import { Artwork } from "../components/artwork";
 import { Icon } from "../components/icons";
 import {
   type Aside,
+  asideArtwork,
   asideMetadata,
   asideTransport,
   bookmarkWrite,
@@ -1286,14 +1288,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       navigator.mediaSession.playbackState = asidePlaying
         ? "playing"
         : "paused";
-      navigator.mediaSession.metadata = new MediaMetadata({
-        ...asideMetadata(aside, {
-          live: t("player.liveRadio"),
-          podcasts: t("nav.podcasts"),
-        }),
-        artwork: [],
+      const metadata = asideMetadata(aside, {
+        live: t("player.liveRadio"),
+        podcasts: t("nav.podcasts"),
       });
-      return;
+      // Shown at once, with the cover if it is already held — this runs again
+      // on every pause and play — and otherwise again once its object URL is
+      // ready: the system's controls should not wait on an image.
+      const cover = asideArtwork(aside);
+      const held = cachedArtworkUrl(cover);
+      navigator.mediaSession.metadata = new MediaMetadata({
+        ...metadata,
+        artwork: held ? [{ src: held }] : [],
+      });
+      if (held || !cover) return;
+      let cancelled = false;
+      void artworkUrl(cover).then((url) => {
+        if (cancelled || !url) return;
+        navigator.mediaSession.metadata = new MediaMetadata({
+          ...metadata,
+          artwork: [{ src: url }],
+        });
+      });
+      return () => {
+        cancelled = true;
+      };
     }
     navigator.mediaSession.playbackState = playing ? "playing" : "paused";
     if (!current) {
@@ -1594,9 +1613,15 @@ function AsideBar({ aside }: { aside: Aside }) {
     : t("player.play");
   return (
     <footer className="player player-with-aside" data-aside={aside.kind}>
-      <span className="cover player-cover cover-fallback" aria-hidden="true">
-        <Icon name={live ? "radio" : "podcasts"} size={26} />
-      </span>
+      {/* The station's image or the channel's cover, which the server
+          fetched into the artwork store; the generic symbol until it comes,
+          and for good when there is none. */}
+      <Artwork
+        artworkId={asideArtwork(aside)}
+        title={live ? aside.station.name : aside.episode.title}
+        className="player-cover"
+        placeholder={<Icon name={live ? "radio" : "podcasts"} size={26} />}
+      />
       <div className="player-track">
         <strong>{live ? aside.station.name : aside.episode.title}</strong>
         {live ? (

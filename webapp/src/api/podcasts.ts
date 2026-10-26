@@ -17,8 +17,14 @@ export type PodcastChannel = {
   title: string;
   description: string | null;
   site_url: string | null;
-  /** The feed's own cover address. The server does not fetch it. */
+  /**
+   * The cover address the feed names, to an account that may manage
+   * podcasts; `null` to everyone else, like `url`. Never loaded by the
+   * browser: the server fetches the cover and hands out `artwork_hash`.
+   */
   image_url: string | null;
+  /** The cover, in the artwork store; `null` until a fetch succeeds. */
+  artwork_hash: string | null;
   status: "completed" | "error";
   /** Why the last fetch failed, as a word: `unreached`, `http_404`, `invalid_feed`… */
   error: string | null;
@@ -40,6 +46,8 @@ export type PodcastEpisode = {
   id: string;
   channel_id: string;
   channel_title: string;
+  /** The channel's cover: an episode shows its channel's. */
+  artwork_hash: string | null;
   title: string;
   description: string | null;
   published_at: number | null;

@@ -72,6 +72,7 @@ type Episode = {
   id: string;
   channel_id: string;
   channel_title: string;
+  artwork_hash: string | null;
   title: string;
   description: string | null;
   published_at: number | null;
@@ -97,6 +98,7 @@ const episode = (id: string, title: string, extra: Partial<Episode> = {}): Episo
   id,
   channel_id: "channel-1",
   channel_title: "Night Shift",
+  artwork_hash: null,
   title,
   description: null,
   published_at: 1_704_448_800_000,
@@ -266,6 +268,7 @@ async function mockApi(page: Page) {
           description: "Talk after dark",
           site_url: null,
           image_url: null,
+          artwork_hash: null,
           status: "completed",
           error: null,
           created_at: 1,
@@ -659,6 +662,7 @@ const channelOf = (id: string, title: string, episodes: Episode[]) => ({
   description: null,
   site_url: null,
   image_url: null,
+  artwork_hash: null,
   status: "completed",
   error: null,
   created_at: 1,
@@ -746,6 +750,61 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
   await first.getByRole("button", { name: "Play First night" }).click();
   await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
   expect((await episodeElement(page, "ticket-episode-1"))?.currentTime).toBeGreaterThanOrEqual(12);
+});
+
+/** A one-pixel PNG, for the covers the artwork route is asked for. */
+const PIXEL = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+/**
+ * A channel's cover is the hash of the copy the server fetched, and the page
+ * reads it through the artwork route like any cover: beside the channel,
+ * above its episodes, and in the bar and the system's controls while one of
+ * them plays. A channel without one keeps the podcast symbol.
+ */
+test("shows a channel's cover in its list, above its episodes and in the bar", async ({
+  page,
+}) => {
+  const cover = "c".repeat(64);
+  let served = 0;
+  await page.route(`**/api/v2/artwork/${cover}`, (route) => {
+    served += 1;
+    return route.fulfill({ contentType: "image/png", body: PIXEL });
+  });
+  await recordPlayedElements(page);
+  channels = [
+    {
+      ...channelOf("channel-1", "Night Shift", [
+        { ...episode("episode-1", "First night", ready), artwork_hash: cover },
+      ]),
+      artwork_hash: cover,
+    },
+    channelOf("channel-2", "Day Shift", []),
+  ];
+  await page.goto("/podcasts");
+  const night = page.locator(".podcast-channels li").filter({ hasText: "Night Shift" });
+  const day = page.locator(".podcast-channels li").filter({ hasText: "Day Shift" });
+  await expect(night.locator("img.resource-cover")).toBeVisible();
+  await expect(day.locator(".resource-cover.cover-fallback svg")).toBeVisible();
+
+  await night.getByRole("button", { name: "Episodes" }).click();
+  await expect(page.locator(".podcast-episodes img.podcast-cover")).toBeVisible();
+  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  await first.getByRole("button", { name: "Play First night" }).click();
+
+  const bar = page.locator(".player");
+  await expect(bar.locator(".player-track strong")).toHaveText("First night");
+  await expect(bar.locator("img.player-cover")).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => navigator.mediaSession?.metadata?.artwork?.[0]?.src ?? ""),
+    )
+    .toMatch(/^blob:/);
+  // One request for the hash, however many places show it.
+  expect(served).toBe(1);
+  await expectNoWcagViolations(page);
 });
 
 test("keeps an episode playing when another channel is opened", async ({
@@ -876,6 +935,7 @@ test("offers a listener no podcast control it may not use", async ({ page }) => 
       description: null,
       site_url: null,
       image_url: null,
+      artwork_hash: null,
       status: "error",
       error: "http_500",
       created_at: 1,
