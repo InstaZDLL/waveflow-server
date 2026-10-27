@@ -12,10 +12,11 @@ use tokio::sync::{Mutex, Semaphore};
 
 use super::{
     attachment, secure_track_path,
-    stream::{parse_range, starts_at_the_first_byte},
-    transcode::{cache_key, prune_cache},
-    MediaInner, MediaService, OutputFormat,
+    stream::{asks_for_a_bounded_start, parse_range, starts_at_the_first_byte},
+    transcode::{cache_key, prune_cache, seek_cache_key},
+    MediaError, MediaInner, MediaService, OutputFormat,
 };
+use uuid::Uuid;
 
 /// A download's name in both forms, whatever it holds.
 ///
@@ -74,6 +75,21 @@ fn a_range_from_the_first_byte_opens_a_resource() {
     // A malformed end is not an open either.
     assert!(!starts_at_the_first_byte("bytes=0-1-2"));
     assert!(!starts_at_the_first_byte("bytes=0-invalid"));
+}
+
+#[test]
+fn only_a_bounded_range_from_the_first_byte_asks_for_a_length() {
+    // The iOS probe, and any span with an end, wants a total to be told.
+    assert!(asks_for_a_bounded_start("bytes=0-1"));
+    assert!(asks_for_a_bounded_start("bytes=0-1023"));
+    assert!(asks_for_a_bounded_start("bytes= 0-1 "));
+    // An open range asks for everything, which a live stream gives.
+    assert!(!asks_for_a_bounded_start("bytes=0-"));
+    assert!(!asks_for_a_bounded_start("bytes= 0- "));
+    // Whatever does not open the resource is not a probe of it either.
+    assert!(!asks_for_a_bounded_start("bytes=1-2"));
+    assert!(!asks_for_a_bounded_start("bytes=-3"));
+    assert!(!asks_for_a_bounded_start("bytes=0-1,4-5"));
 }
 
 #[tokio::test]
@@ -263,6 +279,56 @@ async fn a_seek_fills_the_cache_while_the_abandoned_play_still_holds_its_lock() 
     assert!(
         cache_path.exists(),
         "the fill must commit the whole transcode"
+    );
+}
+
+/// A seek's cache lock leaves the map with the request that made it,
+/// whether the encode was made or refused for want of a slot.
+///
+/// The key of a seek is one per offset, and an account chooses the offset to
+/// the millisecond: a lock kept for each would grow the map for as long as the
+/// server ran. The refusal matters most, since its entry is made before the
+/// slots are asked for, and a 429 costs the caller nothing.
+#[tokio::test]
+async fn a_seek_leaves_no_cache_lock_behind() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = crate::Config::for_data_dir(temp.path().join("data"));
+    config.transcode_global_limit = 2;
+    let media = MediaService::initialize(&config).await.unwrap();
+    let source = temp.path().join("track.wav");
+    silent_wav(&source, 2);
+    let encode = |offset_ms: u64| {
+        let key = seek_cache_key(
+            &cache_key("seek-lock", OutputFormat::Mp3, 96, None),
+            offset_ms,
+        );
+        let cache_path = media.inner.cache_dir.join(format!("{key}.mp3"));
+        media.transcode_into_cache(
+            Uuid::new_v4(),
+            source.clone(),
+            OutputFormat::Mp3,
+            96,
+            None,
+            offset_ms,
+            key,
+            cache_path,
+            Duration::from_secs(60),
+        )
+    };
+
+    encode(1_000).await.unwrap();
+    assert!(
+        media.inner.cache_locks.is_empty(),
+        "a seek encoded must leave no lock"
+    );
+
+    let _every_slot = Arc::clone(&media.inner.global)
+        .try_acquire_many_owned(2)
+        .unwrap();
+    assert!(matches!(encode(1_001).await, Err(MediaError::Busy)));
+    assert!(
+        media.inner.cache_locks.is_empty(),
+        "a seek refused must leave no lock"
     );
 }
 

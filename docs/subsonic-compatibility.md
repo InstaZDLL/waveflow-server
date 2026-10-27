@@ -403,6 +403,36 @@ trap catalogue the campaigns ran on held no unsynced lyrics, so no client in
 this table ever received one. To check in the next campaign: that the clients
 which show lyrics render a plain sheet.
 
+## Correction: a seek probed by iOS is answered with a range
+
+Found on 2026-10-27, in the third client campaign. Juliet 8 on iOS crashed when
+a lyrics line was tapped on a track transcoded to Opus. Tapping a line is a
+seek, and Juliet seeks with `timeOffset`, which `transcodeOffset` advertises.
+The proxy log shows what followed. Each tap sent three
+`stream?…&timeOffset=…` requests with `Range: bytes=0-1`. That is the probe
+AVFoundation sends before it plays anything. The server answered all three
+with the whole live transcode, as a 200 with no `Content-Length` and
+`Accept-Ranges: none`. Juliet never asked for the stream itself.
+
+A play from the start avoids this, because it fills the cache and every later
+request gets ranges. A seek had no cache entry of its own, so each probe started
+a new live transcode. Navidrome does not crash Juliet, because it caches a seek
+under a key that includes the offset.
+
+Now a seek requested with a bounded range from the first byte, such as
+`bytes=0-1`, is encoded whole into the cache first, under its own key. The
+probe then gets its two bytes and the total length as a 206. Every later range
+of that seek is served from the same file. A seek with no range, or with
+`bytes=0-` (browsers, Feishin), still streams live, so a listener hears it at
+once.
+
+`timeOffset` on the original, with no transcode, still returns error 10. That
+refusal is what Juliet falls back from: it then requests the whole file and
+seeks in it locally, and that worked in the same session. Ignoring the offset
+instead, as Navidrome does, would play the start of the track at a position the
+client believes is later. To check in the next campaign: a tap on a lyrics line
+in Juliet with Opus on.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist

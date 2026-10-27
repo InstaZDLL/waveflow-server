@@ -382,11 +382,19 @@ struct Seekable {
 
 impl Seekable {
     async fn new(global: usize, per_user: usize) -> Self {
+        Self::with_cache_budget(global, per_user, None).await
+    }
+
+    /// [`Self::new`], with the transcode cache held to `budget` bytes.
+    async fn with_cache_budget(global: usize, per_user: usize, budget: Option<u64>) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::for_data_dir(temp.path().join("data"));
         // Before `initialize`, which copies the ceilings into the service.
         config.transcode_global_limit = global;
         config.transcode_per_user_limit = per_user;
+        if let Some(budget) = budget {
+            config.transcode_cache_max_bytes = budget;
+        }
         let state = waveflow_server::initialize(&config).await.unwrap();
         // Nobody signs in, so the account only has to exist for the library to
         // belong to it.
@@ -520,6 +528,79 @@ async fn a_seek_on_the_first_play_leaves_the_next_play_cached() {
         seekable.cached().await,
         "the play after a seek must be a cached file"
     );
+}
+
+/// A seek probed by a bounded range is answered with that range, out of an
+/// encode of the seek kept under a key of its own.
+///
+/// iOS opens every resource with `bytes=0-1`, a seek included, and plays
+/// nothing until the answer says how long the whole is. A live transcode has no
+/// length, so the probe used to get the whole stream as a 200, and Juliet asked
+/// three times and crashed (the 2026-10-27 campaign, Opus with `timeOffset`).
+/// The size is checked against the encode's rate rather than trusted: MP3 at
+/// 96 kbps is 12 000 bytes a second, so the 90 seconds left after the offset
+/// fall well inside the band and the whole track's 180 would not.
+#[tokio::test]
+async fn a_seek_probed_by_a_bounded_range_is_answered_from_its_own_encode() {
+    let seekable = Seekable::new(4, 2).await;
+
+    let probe = seekable.stream(90_000, Some("bytes=0-1")).await.unwrap();
+    assert_eq!(probe.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(probe.headers()["accept-ranges"], "bytes");
+    let content_range = probe.headers()["content-range"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let total: u64 = content_range
+        .strip_prefix("bytes 0-1/")
+        .unwrap_or_else(|| panic!("not a two-byte answer: {content_range}"))
+        .parse()
+        .unwrap();
+    assert!(
+        (12_000 * 60..12_000 * 120).contains(&total),
+        "{total} bytes is not the 90 seconds after the offset"
+    );
+    assert_eq!(
+        probe.into_body().collect().await.unwrap().to_bytes().len(),
+        2
+    );
+
+    // What the player asks next: a range further in, answered from the same
+    // file, where a live transcode would refuse it.
+    let next = seekable.stream(90_000, Some("bytes=64-127")).await.unwrap();
+    assert_eq!(next.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        next.headers()["content-range"],
+        format!("bytes 64-127/{total}").as_str()
+    );
+    seekable.settle().await;
+
+    // A seek without a range is still a live stream: the listener hears it at
+    // once rather than after the encode.
+    let live = seekable.stream(30_000, None).await.unwrap();
+    assert_eq!(live.status(), StatusCode::OK);
+    assert_eq!(live.headers()["accept-ranges"], "none");
+    live.into_body().collect().await.unwrap();
+    seekable.settle().await;
+}
+
+/// A seek larger than the whole cache budget is still answered.
+///
+/// Committing it prunes the cache, and the file just committed is then the
+/// only one over the budget: pruned before it was opened, the probe would be a
+/// 404 for an encode that succeeded. It is opened before the pruning pass, so
+/// the answer reads it whatever the pass does with its name.
+#[tokio::test]
+async fn a_seek_larger_than_the_cache_is_answered_before_it_is_pruned() {
+    let seekable = Seekable::with_cache_budget(4, 2, Some(1)).await;
+
+    let probe = seekable.stream(90_000, Some("bytes=0-1")).await.unwrap();
+    assert_eq!(probe.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        probe.into_body().collect().await.unwrap().to_bytes().len(),
+        2
+    );
+    seekable.settle().await;
 }
 
 /// The fill never takes the last slot a live request could want. With two
