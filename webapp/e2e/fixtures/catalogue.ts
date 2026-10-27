@@ -350,7 +350,19 @@ export type Recipient = "listenbrainz" | "maloja" | "lastfm";
  */
 const NO_PUBLIC_URL = "browser_journey_needs_https";
 
-export const freshDestinations = () => [
+/**
+ * A row of the listing. `unavailable` is optional, as on the wire: inferred
+ * from the rows below, it was required on Last.fm's, and a test declaring
+ * Last.fm usable could not leave it out.
+ */
+type Destination = {
+  provider: Recipient;
+  destination: string;
+  available: boolean;
+  unavailable?: string;
+};
+
+export const freshDestinations = (): Destination[] => [
   { provider: "listenbrainz" as const, destination: "default", available: true },
   { provider: "maloja" as const, destination: "alice", available: true },
   { provider: "maloja" as const, destination: "bob", available: true },
