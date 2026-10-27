@@ -8,10 +8,14 @@
 # - Unit tests never sit inline in the code: `#[cfg(test)] mod tests;` names a
 #   `tests.rs` beside the module, and no file under `src/` opens `mod tests {`.
 #
-# Run from the repository root: `sh scripts/check-rust-layout.sh`. POSIX sh
-# and coreutils only, so it runs the same on a runner and on a laptop.
+# `sh scripts/check-rust-layout.sh`, from anywhere: it moves to the
+# repository root first, because run from a subfolder its `find` met no file
+# and it passed having measured nothing. POSIX sh and coreutils only, so it
+# runs the same on a runner and on a laptop.
 
 set -eu
+
+cd "$(dirname "$0")/.."
 
 SOURCE_LIMIT=800
 TEST_LIMIT=1000

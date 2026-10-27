@@ -11,10 +11,14 @@
 #   file it tests) stays under 1,000 lines, as does any file under
 #   `webapp/e2e/`, specs and fixtures alike.
 #
-# Run from the repository root: `sh scripts/check-webapp-layout.sh`. POSIX sh
-# and coreutils only, so it runs the same on a runner and on a laptop.
+# `sh scripts/check-webapp-layout.sh`, from anywhere: it moves to the
+# repository root first, because run from a subfolder its `find` met no file
+# and it passed having measured nothing. POSIX sh and coreutils only, so it
+# runs the same on a runner and on a laptop.
 
 set -eu
+
+cd "$(dirname "$0")/.."
 
 CODE_LIMIT=600
 STYLE_LIMIT=800
