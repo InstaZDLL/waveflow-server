@@ -23,7 +23,7 @@ use tokio::{
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
-use super::transcode::{cache_key, extension, fill_deadline, mime_for_format};
+use super::transcode::{cache_key, extension, fill_deadline, mime_for_format, seek_cache_key};
 use super::{
     bearer_principal, MediaError, MediaService, OutputFormat, StreamQuery, MEDIA_CACHE_CONTROL,
 };
@@ -113,6 +113,26 @@ impl MediaService {
             return serve_file(&cache_path, range, mime_for_format(query.format)).await;
         }
 
+        // A seek a client probed is kept under a key of its own (see
+        // `transcode_into_cache`), and once there it is a file like any other:
+        // every range of it is answered, not only the ones from the first byte.
+        let seek = (query.offset_ms > 0).then(|| {
+            let key = seek_cache_key(&key, query.offset_ms);
+            let path = self
+                .inner
+                .cache_dir
+                .join(format!("{key}.{}", extension(query.format)));
+            (key, path)
+        });
+        if let Some((_, seek_path)) = &seek {
+            if tokio::fs::try_exists(seek_path).await.unwrap_or(false) {
+                self.inner
+                    .cache_access
+                    .insert(seek_path.clone(), SystemTime::now());
+                return serve_file(seek_path, range, mime_for_format(query.format)).await;
+            }
+        }
+
         // A byte range has no stable meaning until a transcode is complete, so
         // seeking a live transcode goes through offset_ms instead. A range
         // that starts at the first byte is not a seek though: it is how every
@@ -124,9 +144,26 @@ impl MediaService {
             return Err(MediaError::RangeNotSatisfiable(None));
         }
 
-        if query.offset_ms > 0 {
-            let response = self
-                .stream_transcode(
+        if let Some((seek_key, seek_path)) = seek {
+            // A bounded range from the first byte asks how long the seek is,
+            // which a live transcode cannot say. Anything else — no range, or
+            // `bytes=0-` from a browser — is a listener who wants sound now.
+            let response = if range.is_some_and(asks_for_a_bounded_start) {
+                self.transcode_into_cache(
+                    user_id,
+                    source.clone(),
+                    query.format,
+                    bitrate,
+                    gain,
+                    query.offset_ms,
+                    seek_key,
+                    seek_path.clone(),
+                    fill_deadline(track.duration_ms),
+                )
+                .await?;
+                serve_file(&seek_path, range, mime_for_format(query.format)).await?
+            } else {
+                self.stream_transcode(
                     user_id,
                     source.clone(),
                     query.format,
@@ -135,7 +172,8 @@ impl MediaService {
                     query.offset_ms,
                     None,
                 )
-                .await?;
+                .await?
+            };
             // After the live stream has its slots, never before: the listener
             // waiting on this request comes first, and a fill that took the
             // last slot would be the reason they were answered 429.
@@ -623,7 +661,8 @@ async fn serve_partial(
 /// The answer to such a request is the whole stream rather than the bytes
 /// asked for, which HTTP allows: a server may always ignore `Range` and answer
 /// 200. Before the transcode exists there is no total length to put in a
-/// `Content-Range`, so a partial answer is not available to give.
+/// `Content-Range`, so a partial answer is not available to give — except to a
+/// seek, which is encoded whole first when [`asks_for_a_bounded_start`].
 pub(super) fn starts_at_the_first_byte(value: &str) -> bool {
     value.strip_prefix("bytes=").is_some_and(|spec| {
         // A multipart range is several ranges, and this answers with one body.
@@ -635,6 +674,13 @@ pub(super) fn starts_at_the_first_byte(value: &str) -> bool {
             // understands, so it is refused rather than read as an open.
             && (end.trim().is_empty() || end.trim().parse::<u64>().is_ok())
     })
+}
+
+/// Whether a `Range` header asks for a bounded span from the first byte —
+/// `bytes=0-1` above all, which asks for two bytes and the length of the whole.
+/// `bytes=0-` asks for everything and is satisfied by a live stream.
+pub(super) fn asks_for_a_bounded_start(value: &str) -> bool {
+    starts_at_the_first_byte(value) && value.trim_end().ends_with(|c: char| c.is_ascii_digit())
 }
 
 pub(super) fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {

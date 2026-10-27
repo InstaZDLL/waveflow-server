@@ -23,7 +23,7 @@ use bytes::Bytes;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
-    sync::{mpsc, Semaphore},
+    sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
@@ -143,17 +143,9 @@ impl MediaService {
             return;
         };
         drop(global.split(1));
-        let Ok(mut command) = self.transcode_command(&source, format, bitrate, gain, 0) else {
+        let Ok(command) = self.transcode_command(&source, format, bitrate, gain, 0) else {
             return;
         };
-        let staging = staging_path(&cache_path);
-        command
-            .arg("-y")
-            .arg(&staging)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
         let inner = Arc::clone(&self.inner);
         inner.active_transcodes.fetch_add(1, Ordering::Relaxed);
 
@@ -164,45 +156,85 @@ impl MediaService {
             let _active = ActiveGuard(&inner.active_transcodes);
             let _global = global;
             let _pending = pending;
-            let mut child = match command.spawn() {
-                Ok(child) => child,
-                Err(error) => {
-                    tracing::warn!(error = %error, "failed to spawn ffmpeg for a cache fill");
-                    return;
-                }
-            };
-            let finished = match tokio::time::timeout(deadline, child.wait()).await {
-                Ok(status) => status.is_ok_and(|status| status.success()),
-                // Killed and awaited before its staging file is removed: a file
-                // a live process still holds cannot be deleted on Windows.
-                Err(_) => {
-                    let _ = child.kill().await;
-                    false
-                }
-            };
-            if !finished {
-                tracing::warn!(
-                    path = %source.display(),
-                    "ffmpeg cache fill failed or ran past its deadline"
-                );
-                let _ = tokio::fs::remove_file(&staging).await;
-                return;
-            }
-            // A play from the start may have committed the same key meanwhile.
-            // Its file is as good as this one, and replacing a file a reader
-            // may be streaming from is not a write worth making.
-            if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
-                let _ = tokio::fs::remove_file(&staging).await;
-                return;
-            }
-            if let Err(error) = tokio::fs::rename(&staging, &cache_path).await {
-                tracing::warn!(error = %error, "transcode cache fill could not be committed");
-                let _ = tokio::fs::remove_file(&staging).await;
-                return;
-            }
-            inner.cache_access.insert(cache_path, SystemTime::now());
-            prune_cache(&inner).await;
+            encode_into_cache(&inner, command, &source, cache_path, deadline).await;
         });
+    }
+
+    /// Transcodes a seek into the cache before answering it, for a client that
+    /// asked for a bounded range of it.
+    ///
+    /// A live transcode has no length, so a request for the first two bytes of
+    /// a seek — the probe iOS sends before it plays anything, a seek included —
+    /// could only be answered with the whole stream, and AVFoundation does not
+    /// play a probe answered that way: Juliet asked three times and crashed (the
+    /// 2026-10-27 campaign, Opus with `timeOffset`). Encoded whole first, under
+    /// the seek's own key, the probe is answered with its two bytes and a total,
+    /// and the ranges the player reads next come out of the same file.
+    ///
+    /// **A listener is waiting on it**, so it takes the listener's slots, as a
+    /// live stream does, and is refused with 429 when there are none. **It
+    /// outlives the request**: a client that gives up before the encode ends
+    /// still finds it in the cache at its next probe. **It holds the key's lock
+    /// to the end**, so a burst of probes makes one encode, and the probes
+    /// behind the first are answered from its file.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn transcode_into_cache(
+        &self,
+        user_id: Uuid,
+        source: PathBuf,
+        format: OutputFormat,
+        bitrate: u32,
+        gain: Option<Gain>,
+        offset_ms: u64,
+        key: String,
+        cache_path: PathBuf,
+        deadline: Duration,
+    ) -> Result<(), MediaError> {
+        let lock = self
+            .inner
+            .cache_locks
+            .entry(key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let guard = lock.lock_owned().await;
+        if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+            return Ok(());
+        }
+        let (global, user) = self.listener_slots(user_id)?;
+        let command = self.transcode_command(&source, format, bitrate, gain, offset_ms)?;
+        let inner = Arc::clone(&self.inner);
+        inner.active_transcodes.fetch_add(1, Ordering::Relaxed);
+        let encode = tokio::spawn(async move {
+            // The slots and the lock drop before the count, as in a fill.
+            let _active = ActiveGuard(&inner.active_transcodes);
+            let _held = (global, user, guard);
+            encode_into_cache(&inner, command, &source, cache_path, deadline).await
+        });
+        match encode.await {
+            Ok(true) => Ok(()),
+            _ => Err(MediaError::Internal),
+        }
+    }
+
+    /// A slot on the server and one of the account's own, for a transcode a
+    /// listener is waiting on; `Busy` when either is spent.
+    fn listener_slots(
+        &self,
+        user_id: Uuid,
+    ) -> Result<(OwnedSemaphorePermit, OwnedSemaphorePermit), MediaError> {
+        let global = Arc::clone(&self.inner.global)
+            .try_acquire_owned()
+            .map_err(|_| MediaError::Busy)?;
+        let user_semaphore = self
+            .inner
+            .users
+            .entry(user_id)
+            .or_insert_with(|| Arc::new(Semaphore::new(self.inner.per_user_limit)))
+            .clone();
+        let user = user_semaphore
+            .try_acquire_owned()
+            .map_err(|_| MediaError::Busy)?;
+        Ok((global, user))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -216,18 +248,7 @@ impl MediaService {
         offset_ms: u64,
         cache: Option<(PathBuf, tokio::sync::OwnedMutexGuard<()>)>,
     ) -> Result<Response, MediaError> {
-        let global = Arc::clone(&self.inner.global)
-            .try_acquire_owned()
-            .map_err(|_| MediaError::Busy)?;
-        let user_semaphore = self
-            .inner
-            .users
-            .entry(user_id)
-            .or_insert_with(|| Arc::new(Semaphore::new(self.inner.per_user_limit)))
-            .clone();
-        let user = user_semaphore
-            .try_acquire_owned()
-            .map_err(|_| MediaError::Busy)?;
+        let (global, user) = self.listener_slots(user_id)?;
 
         let mut command = self.transcode_command(&source, format, bitrate, gain, offset_ms)?;
         command
@@ -360,6 +381,71 @@ impl MediaService {
     }
 }
 
+/// Runs a transcode `command` into `cache_path` through a staging file, and
+/// says whether the cache holds the encode afterwards.
+///
+/// Shared by the fill behind a seek and the encode of a seek a client probed,
+/// which differ in who waits on them and never in how a file reaches the cache.
+///
+/// **Bounded by `deadline`.** Past it, FFmpeg is killed and nothing it wrote is
+/// kept, so an encode that never finished cannot hold its slot and its key
+/// until the server restarts.
+async fn encode_into_cache(
+    inner: &MediaInner,
+    mut command: Command,
+    source: &Path,
+    cache_path: PathBuf,
+    deadline: Duration,
+) -> bool {
+    let staging = staging_path(&cache_path);
+    command
+        .arg("-y")
+        .arg(&staging)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to spawn ffmpeg for a cache fill");
+            return false;
+        }
+    };
+    let finished = match tokio::time::timeout(deadline, child.wait()).await {
+        Ok(status) => status.is_ok_and(|status| status.success()),
+        // Killed and awaited before its staging file is removed: a file
+        // a live process still holds cannot be deleted on Windows.
+        Err(_) => {
+            let _ = child.kill().await;
+            false
+        }
+    };
+    if !finished {
+        tracing::warn!(
+            path = %source.display(),
+            "ffmpeg cache fill failed or ran past its deadline"
+        );
+        let _ = tokio::fs::remove_file(&staging).await;
+        return false;
+    }
+    // A play from the start may have committed the same key meanwhile.
+    // Its file is as good as this one, and replacing a file a reader
+    // may be streaming from is not a write worth making.
+    if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+        let _ = tokio::fs::remove_file(&staging).await;
+        return true;
+    }
+    if let Err(error) = tokio::fs::rename(&staging, &cache_path).await {
+        tracing::warn!(error = %error, "transcode cache fill could not be committed");
+        let _ = tokio::fs::remove_file(&staging).await;
+        return false;
+    }
+    inner.cache_access.insert(cache_path, SystemTime::now());
+    prune_cache(inner).await;
+    true
+}
+
 /// Releases a key's claim on the cache fill however the fill ends, so one that
 /// failed or never started does not stop the next seek from asking again.
 struct PendingFill {
@@ -425,6 +511,15 @@ pub(super) fn cache_key(
     )
     .to_hex()
     .to_string()
+}
+
+/// The key of a transcode that starts `offset_ms` into the track whose whole
+/// encode is `key`. A seek has a cache entry of its own: no byte of the whole
+/// track's file is where a given second begins.
+pub(super) fn seek_cache_key(key: &str, offset_ms: u64) -> String {
+    blake3::hash(format!("{key}@{offset_ms}").as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 pub(super) fn extension(format: OutputFormat) -> &'static str {

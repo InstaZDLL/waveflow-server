@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, Semaphore};
 
 use super::{
     attachment, secure_track_path,
-    stream::{parse_range, starts_at_the_first_byte},
+    stream::{asks_for_a_bounded_start, parse_range, starts_at_the_first_byte},
     transcode::{cache_key, prune_cache},
     MediaInner, MediaService, OutputFormat,
 };
@@ -74,6 +74,21 @@ fn a_range_from_the_first_byte_opens_a_resource() {
     // A malformed end is not an open either.
     assert!(!starts_at_the_first_byte("bytes=0-1-2"));
     assert!(!starts_at_the_first_byte("bytes=0-invalid"));
+}
+
+#[test]
+fn only_a_bounded_range_from_the_first_byte_asks_for_a_length() {
+    // The iOS probe, and any span with an end, wants a total to be told.
+    assert!(asks_for_a_bounded_start("bytes=0-1"));
+    assert!(asks_for_a_bounded_start("bytes=0-1023"));
+    assert!(asks_for_a_bounded_start("bytes= 0-1 "));
+    // An open range asks for everything, which a live stream gives.
+    assert!(!asks_for_a_bounded_start("bytes=0-"));
+    assert!(!asks_for_a_bounded_start("bytes= 0- "));
+    // Whatever does not open the resource is not a probe of it either.
+    assert!(!asks_for_a_bounded_start("bytes=1-2"));
+    assert!(!asks_for_a_bounded_start("bytes=-3"));
+    assert!(!asks_for_a_bounded_start("bytes=0-1,4-5"));
 }
 
 #[tokio::test]

@@ -120,6 +120,112 @@ async fn a_format_the_facade_cannot_produce_falls_back_and_aac_is_produced() {
     assert!(bytes.starts_with(b"RIFF"));
 }
 
+/// `timeOffset` on a transcode, as Juliet sends it to seek (the
+/// `transcodeOffset` extension): the iOS probe of a seek is answered with its
+/// two bytes and the length of what follows the offset.
+///
+/// Before, the probe got the whole live stream as a 200 with no length, and
+/// Juliet crashed on a tap on a lyrics line (the 2026-10-27 campaign). The same
+/// seek without a range still streams live, and `timeOffset` on the original
+/// keeps its refusal, which is what Juliet falls back from.
+#[tokio::test]
+async fn a_time_offset_probe_is_answered_with_a_range_of_the_seek() {
+    let (_temp, config, state) = test_app().await;
+    let (owner, api_key) = subsonic_account(&state, "offset-owner").await;
+    let music = config.data_dir.join("offset-music");
+    std::fs::create_dir_all(&music).unwrap();
+    // Twenty seconds, so ten after the offset is a length worth measuring.
+    write_test_wav_of_len(&music.join("Offset.wav"), 8_000 * 20);
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Offsets",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    run_scan(
+        &state,
+        owner,
+        waveflow_server::storage::catalog::LibraryRecord {
+            id: library,
+            name: "Offsets".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let song = state
+        .services
+        .catalog_snapshot(owner, &[])
+        .await
+        .unwrap()
+        .songs[0]
+        .id;
+    let router = waveflow_server::app(&config, state.clone());
+    let stream = |extra: &'static str, range: Option<&'static str>| {
+        let router = router.clone();
+        let uri =
+            format!("/rest/stream.view?apiKey={api_key}&id={song}&v=1.16.1&c=Juliet&f=json{extra}");
+        async move {
+            let mut request = Request::get(uri);
+            if let Some(range) = range {
+                request = request.header("range", range);
+            }
+            router
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    let probe = stream(
+        "&format=opus&maxBitRate=128&timeOffset=10",
+        Some("bytes=0-1"),
+    )
+    .await;
+    assert_eq!(probe.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(probe.headers()["content-type"], "audio/ogg");
+    let content_range = probe.headers()["content-range"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        content_range.starts_with("bytes 0-1/"),
+        "not a two-byte answer: {content_range}"
+    );
+    let bytes = http_body_util::BodyExt::collect(probe.into_body())
+        .await
+        .unwrap()
+        .to_bytes();
+    assert_eq!(&bytes[..], b"Og");
+
+    let live = stream("&format=opus&maxBitRate=128&timeOffset=5", None).await;
+    assert_eq!(live.status(), StatusCode::OK);
+    assert_eq!(live.headers()["accept-ranges"], "none");
+    http_body_util::BodyExt::collect(live.into_body())
+        .await
+        .unwrap();
+
+    let original = stream("&timeOffset=10", Some("bytes=0-1")).await;
+    assert_eq!(original.status(), StatusCode::OK);
+    assert!(original.headers()["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("application/json"));
+    let refusal: serde_json::Value = serde_json::from_slice(
+        &http_body_util::BodyExt::collect(original.into_body())
+            .await
+            .unwrap()
+            .to_bytes(),
+    )
+    .unwrap();
+    assert_eq!(refusal["subsonic-response"]["error"]["code"], 10);
+}
+
 /// The mean volume FFmpeg measures in an encoded stream, in dB.
 fn mean_volume(bytes: &[u8], scratch: &std::path::Path) -> f64 {
     let path = scratch.join(format!("{}.mp3", Uuid::new_v4()));
