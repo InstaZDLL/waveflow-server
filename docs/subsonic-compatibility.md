@@ -387,6 +387,22 @@ downloaded episode through `streamId`, that a client which never sees
 `podcastRole="true"` keeps hiding its podcast screens, and that both show a
 channel's and an episode's `coverArt` through `getCoverArt`.
 
+## Correction: an unsynced lyrics line is an object in JSON
+
+Found on 2026-10-27, while preparing the third client campaign, before any
+client connected. In JSON, `getLyricsBySongId` sent the lines of an
+**unsynced** sheet as bare strings — `"line": ["…", "…"]` — where OpenSubsonic
+documents `line` as `{start?, value}` objects. Synced lines were right, because
+`start` made them objects; XML was right, because a line's text is its element
+text there. The cause was the JSON renderer's general rule that an element
+holding only text is a string (the documented shape of `moods`, `isrc` and
+`roles`), which an unsynced line, having no `start`, fell under.
+
+An unsynced line now renders as `{"value": "…"}`. No row below is affected: the
+trap catalogue the campaigns ran on held no unsynced lyrics, so no client in
+this table ever received one. To check in the next campaign: that the clients
+which show lyrics render a plain sheet.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist

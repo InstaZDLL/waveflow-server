@@ -299,6 +299,39 @@ async fn the_facade_serves_the_sheet_without_a_source() {
     assert_eq!(listener.fake.asked.load(Ordering::SeqCst), 1);
 }
 
+/// An unsynced line is an object with a `value`, as a synced one is.
+///
+/// OpenSubsonic's `line` is `{start?, value}`. The JSON renderer turns an
+/// element that holds only text into a bare string, which is right for
+/// `moods` or `isrc` and wrong here: a line with no `start` has nothing but its
+/// text, so a plain sheet went out as `"line": ["…"]`, which a client decoding
+/// the documented shape refuses whole. No campaign met it — the trap catalogue
+/// had no unsynced lyrics until 2026-10-27.
+#[tokio::test]
+async fn an_unsynced_line_is_an_object_with_a_value() {
+    let shelf = shelf().await;
+    let router = waveflow_server::app(&shelf.config, shelf.state.clone());
+    let api_key = subsonic_key(&shelf.state, shelf.owner).await;
+
+    let by_id = support::subsonic_json(
+        &router,
+        "getLyricsBySongId",
+        &api_key,
+        &format!("&id={}", shelf.embedded),
+    )
+    .await;
+    let sheets = by_id["subsonic-response"]["lyricsList"]["structuredLyrics"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list: {by_id}"));
+    assert_eq!(sheets.len(), 1, "{by_id}");
+    assert_eq!(sheets[0]["synced"], false, "{by_id}");
+    assert_eq!(
+        sheets[0]["line"],
+        serde_json::json!([{ "value": "We live on a mountain" }]),
+        "{by_id}"
+    );
+}
+
 /// Decision 4: a 404 and an instrumental are answers, cached; a miss for the
 /// short TTL, an instrumental for the long one, and neither is a sheet.
 #[tokio::test]
