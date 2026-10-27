@@ -46,14 +46,8 @@ impl Config {
         // Zero is a value here and not a refusal — "no expiry" is a choice an
         // operator may make — so it is read like the scan interval rather than
         // through `parse_positive_env`.
-        let api_token_ttl_secs = std::env::var("WAVEFLOW_API_TOKEN_TTL_SECS")
-            .unwrap_or_else(|_| "31536000".to_owned())
-            .parse::<u64>()
-            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_API_TOKEN_TTL_SECS: {error}"))?;
-        let scan_interval_secs = std::env::var("WAVEFLOW_SCAN_INTERVAL_SECS")
-            .unwrap_or_else(|_| "21600".to_owned())
-            .parse::<u64>()
-            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_SCAN_INTERVAL_SECS: {error}"))?;
+        let api_token_ttl_secs = parse_env::<u64>("WAVEFLOW_API_TOKEN_TTL_SECS", "31536000")?;
+        let scan_interval_secs = parse_env::<u64>("WAVEFLOW_SCAN_INTERVAL_SECS", "21600")?;
         let scan_parallelism = parse_positive_env(
             "WAVEFLOW_SCAN_PARALLELISM",
             std::thread::available_parallelism()
@@ -65,19 +59,12 @@ impl Config {
         let watch_delay =
             Duration::from_secs(parse_positive_env("WAVEFLOW_WATCH_DELAY_SECS", 10u64)?);
         // Zero is a setting, the default one: never purge on its own.
-        let unavailable_retention_days = std::env::var("WAVEFLOW_UNAVAILABLE_RETENTION_DAYS")
-            .unwrap_or_else(|_| "0".to_owned())
-            .parse::<u64>()
-            .map_err(|error| {
-                anyhow::anyhow!("invalid WAVEFLOW_UNAVAILABLE_RETENTION_DAYS: {error}")
-            })?;
+        let unavailable_retention_days =
+            parse_env::<u64>("WAVEFLOW_UNAVAILABLE_RETENTION_DAYS", "0")?;
         let unavailable_retention = (unavailable_retention_days > 0)
             .then(|| Duration::from_secs(unavailable_retention_days.saturating_mul(24 * 60 * 60)));
         // Zero is a setting too: no way back, as before.
-        let purge_grace_hours = std::env::var("WAVEFLOW_PURGE_GRACE_HOURS")
-            .unwrap_or_else(|_| "168".to_owned())
-            .parse::<u64>()
-            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_PURGE_GRACE_HOURS: {error}"))?;
+        let purge_grace_hours = parse_env::<u64>("WAVEFLOW_PURGE_GRACE_HOURS", "168")?;
         let purge_grace = Duration::from_secs(purge_grace_hours.saturating_mul(60 * 60));
         let link_roots = parse_link_roots(std::env::var_os("WAVEFLOW_LINK_ROOTS"))?;
         let subsonic_replay_gain = match std::env::var("WAVEFLOW_SUBSONIC_REPLAYGAIN") {
@@ -102,10 +89,7 @@ impl Config {
             parse_positive_env("WAVEFLOW_TRANSCODE_PER_USER_LIMIT", 2usize)?;
         // Zero is a setting here, not a mistake: it is how an operator turns the
         // analysis off, so this is not `parse_positive_env`.
-        let quality_parallelism = std::env::var("WAVEFLOW_QUALITY_PARALLELISM")
-            .unwrap_or_else(|_| "1".to_owned())
-            .parse::<usize>()
-            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_QUALITY_PARALLELISM: {error}"))?;
+        let quality_parallelism = parse_env::<usize>("WAVEFLOW_QUALITY_PARALLELISM", "1")?;
         let uploads = UploadLimits {
             max_file_bytes: parse_positive_env("WAVEFLOW_UPLOAD_MAX_FILE_BYTES", 1_073_741_824i64)?,
             library_quota_bytes: parse_positive_env(
@@ -259,10 +243,7 @@ impl Config {
         let setup_token = parse_setup_token(read_trimmed_env("WAVEFLOW_SETUP_TOKEN"))?;
         // Zero is a setting, not a mistake: an operator with backups of their
         // own turns the copies off with it.
-        let migration_backups = std::env::var("WAVEFLOW_MIGRATION_BACKUPS")
-            .unwrap_or_else(|_| "3".to_owned())
-            .parse::<usize>()
-            .map_err(|error| anyhow::anyhow!("invalid WAVEFLOW_MIGRATION_BACKUPS: {error}"))?;
+        let migration_backups = parse_env::<usize>("WAVEFLOW_MIGRATION_BACKUPS", "3")?;
 
         let allowed_origins = std::env::var("WAVEFLOW_ALLOWED_ORIGINS")
             .unwrap_or_default()
