@@ -23,7 +23,7 @@ TEST_LIMIT=1000
 # Files allowed past their limit, one path per line, each with its reason.
 #
 # webapp/e2e/smart-playlists-and-podcasts.spec.ts: 965 lines until biome first
-# formatted `e2e/`, 1,104 after, by layout alone. Its two subjects
+# formatted `e2e/`, 1,102 after, by layout alone. Its two subjects
 # share one mock whose state is module-level `let`s the tests reassign, and a
 # binding imported from another module cannot be reassigned; splitting it
 # means moving that state onto an object, as `e2e/fixtures/state.ts` does for
