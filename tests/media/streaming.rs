@@ -382,11 +382,19 @@ struct Seekable {
 
 impl Seekable {
     async fn new(global: usize, per_user: usize) -> Self {
+        Self::with_cache_budget(global, per_user, None).await
+    }
+
+    /// [`Self::new`], with the transcode cache held to `budget` bytes.
+    async fn with_cache_budget(global: usize, per_user: usize, budget: Option<u64>) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::for_data_dir(temp.path().join("data"));
         // Before `initialize`, which copies the ceilings into the service.
         config.transcode_global_limit = global;
         config.transcode_per_user_limit = per_user;
+        if let Some(budget) = budget {
+            config.transcode_cache_max_bytes = budget;
+        }
         let state = waveflow_server::initialize(&config).await.unwrap();
         // Nobody signs in, so the account only has to exist for the library to
         // belong to it.
@@ -573,6 +581,25 @@ async fn a_seek_probed_by_a_bounded_range_is_answered_from_its_own_encode() {
     assert_eq!(live.status(), StatusCode::OK);
     assert_eq!(live.headers()["accept-ranges"], "none");
     live.into_body().collect().await.unwrap();
+    seekable.settle().await;
+}
+
+/// A seek larger than the whole cache budget is still answered.
+///
+/// Committing it prunes the cache, and the file just committed is then the
+/// only one over the budget: pruned before it was opened, the probe would be a
+/// 404 for an encode that succeeded. It is opened before the pruning pass, so
+/// the answer reads it whatever the pass does with its name.
+#[tokio::test]
+async fn a_seek_larger_than_the_cache_is_answered_before_it_is_pruned() {
+    let seekable = Seekable::with_cache_budget(4, 2, Some(1)).await;
+
+    let probe = seekable.stream(90_000, Some("bytes=0-1")).await.unwrap();
+    assert_eq!(probe.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(
+        probe.into_body().collect().await.unwrap().to_bytes().len(),
+        2
+    );
     seekable.settle().await;
 }
 

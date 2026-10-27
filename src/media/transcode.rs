@@ -178,7 +178,11 @@ impl MediaService {
     /// to the end**, so a burst of probes makes one encode, and the probes
     /// behind the first are answered from its file. **The lock leaves the map
     /// with its last holder** ([`HeldKey`]): a seek's key is one of as many as
-    /// there are offsets, which the caller chooses to the millisecond.
+    /// there are offsets, which the caller chooses to the millisecond. **It
+    /// returns the file open**, opened before the pruning pass its commit
+    /// runs: a seek larger than the whole cache budget is the first file that
+    /// pass removes, and its probe would otherwise be a 404 for an encode that
+    /// succeeded.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn transcode_into_cache(
         &self,
@@ -191,7 +195,7 @@ impl MediaService {
         key: String,
         cache_path: PathBuf,
         deadline: Duration,
-    ) -> Result<(), MediaError> {
+    ) -> Result<tokio::fs::File, MediaError> {
         let lock = self
             .inner
             .cache_locks
@@ -203,8 +207,9 @@ impl MediaService {
             inner: Arc::clone(&self.inner),
             key,
         };
-        if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
-            return Ok(());
+        // Committed by the probe ahead of this one, which held the lock.
+        if let Ok(file) = tokio::fs::File::open(&cache_path).await {
+            return Ok(file);
         }
         let (global, user) = self.listener_slots(user_id)?;
         let command = self.transcode_command(&source, format, bitrate, gain, offset_ms)?;
@@ -217,7 +222,7 @@ impl MediaService {
             encode_into_cache(&inner, command, &source, cache_path, deadline).await
         });
         match encode.await {
-            Ok(true) => Ok(()),
+            Ok(Some(file)) => Ok(file),
             _ => Err(MediaError::Internal),
         }
     }
@@ -388,10 +393,13 @@ impl MediaService {
 }
 
 /// Runs a transcode `command` into `cache_path` through a staging file, and
-/// says whether the cache holds the encode afterwards.
+/// returns the cached encode open, or `None` when the cache does not hold it.
 ///
 /// Shared by the fill behind a seek and the encode of a seek a client probed,
 /// which differ in who waits on them and never in how a file reaches the cache.
+/// The file is opened before the pruning pass, which may remove its name: an
+/// encode larger than the budget is the first file that pass takes, and an
+/// open handle still reads it.
 ///
 /// **Bounded by `deadline`.** Past it, FFmpeg is killed and nothing it wrote is
 /// kept, so an encode that never finished cannot hold its slot and its key
@@ -402,7 +410,7 @@ async fn encode_into_cache(
     source: &Path,
     cache_path: PathBuf,
     deadline: Duration,
-) -> bool {
+) -> Option<tokio::fs::File> {
     let staging = staging_path(&cache_path);
     command
         .arg("-y")
@@ -415,7 +423,7 @@ async fn encode_into_cache(
         Ok(child) => child,
         Err(error) => {
             tracing::warn!(error = %error, "failed to spawn ffmpeg for a cache fill");
-            return false;
+            return None;
         }
     };
     let finished = match tokio::time::timeout(deadline, child.wait()).await {
@@ -433,23 +441,26 @@ async fn encode_into_cache(
             "ffmpeg cache fill failed or ran past its deadline"
         );
         let _ = tokio::fs::remove_file(&staging).await;
-        return false;
+        return None;
     }
     // A play from the start may have committed the same key meanwhile.
     // Its file is as good as this one, and replacing a file a reader
     // may be streaming from is not a write worth making.
-    if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+    if let Ok(existing) = tokio::fs::File::open(&cache_path).await {
         let _ = tokio::fs::remove_file(&staging).await;
-        return true;
+        return Some(existing);
     }
     if let Err(error) = tokio::fs::rename(&staging, &cache_path).await {
         tracing::warn!(error = %error, "transcode cache fill could not be committed");
         let _ = tokio::fs::remove_file(&staging).await;
-        return false;
+        return None;
     }
-    inner.cache_access.insert(cache_path, SystemTime::now());
+    inner
+        .cache_access
+        .insert(cache_path.clone(), SystemTime::now());
+    let encoded = tokio::fs::File::open(&cache_path).await.ok();
     prune_cache(inner).await;
-    true
+    encoded
 }
 
 /// A key's cache lock, held, whose entry leaves the map with its last holder.

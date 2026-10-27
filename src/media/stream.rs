@@ -149,19 +149,20 @@ impl MediaService {
             // which a live transcode cannot say. Anything else — no range, or
             // `bytes=0-` from a browser — is a listener who wants sound now.
             let response = if range.is_some_and(asks_for_a_bounded_start) {
-                self.transcode_into_cache(
-                    user_id,
-                    source.clone(),
-                    query.format,
-                    bitrate,
-                    gain,
-                    query.offset_ms,
-                    seek_key,
-                    seek_path.clone(),
-                    fill_deadline(track.duration_ms),
-                )
-                .await?;
-                serve_file(&seek_path, range, mime_for_format(query.format)).await?
+                let encoded = self
+                    .transcode_into_cache(
+                        user_id,
+                        source.clone(),
+                        query.format,
+                        bitrate,
+                        gain,
+                        query.offset_ms,
+                        seek_key,
+                        seek_path,
+                        fill_deadline(track.duration_ms),
+                    )
+                    .await?;
+                serve_opened(encoded, range, mime_for_format(query.format)).await?
             } else {
                 self.stream_transcode(
                     user_id,
@@ -586,6 +587,16 @@ pub(super) async fn serve_file(
     let file = tokio::fs::File::open(path)
         .await
         .map_err(|_| MediaError::NotFound)?;
+    serve_opened(file, range, mime).await
+}
+
+/// [`serve_file`] from a file already open: one the pruning pass may have
+/// unlinked since, which an open handle still reads.
+pub(super) async fn serve_opened(
+    file: tokio::fs::File,
+    range: Option<&str>,
+    mime: &'static str,
+) -> Result<Response, MediaError> {
     let size = file
         .metadata()
         .await
