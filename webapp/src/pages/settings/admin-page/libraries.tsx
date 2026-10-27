@@ -20,6 +20,13 @@ import {
 import { useReload, Waiting } from "../../../components/layout/page-shell";
 import { type TranslationKey, useI18n } from "../../../state/i18n";
 
+/** A membership role, named in the reader’s language rather than the wire’s. */
+const MEMBER_ROLE: Record<"owner" | "manager" | "listener", TranslationKey> = {
+  owner: "admin.roleOwner",
+  manager: "admin.roleManager",
+  listener: "admin.roleListener",
+};
+
 /**
  * Who may see one library, and in what standing.
  *
@@ -102,7 +109,9 @@ export function LibraryMembersPanel({
                 <li key={member.user_id}>
                   <div>
                     <strong>{member.username}</strong>
-                    <small className="muted">{member.role}</small>
+                    <small className="muted">
+                      {t(MEMBER_ROLE[member.role])}
+                    </small>
                   </div>
                   {member.role === "owner" ? (
                     <span className="muted">{t("admin.memberOwner")}</span>
@@ -120,8 +129,12 @@ export function LibraryMembersPanel({
                             )
                           }
                         >
-                          <option value="listener">listener</option>
-                          <option value="manager">manager</option>
+                          <option value="listener">
+                            {t("admin.roleListener")}
+                          </option>
+                          <option value="manager">
+                            {t("admin.roleManager")}
+                          </option>
                         </select>
                       </label>
                       <button

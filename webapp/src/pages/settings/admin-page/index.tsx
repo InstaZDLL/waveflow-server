@@ -208,7 +208,15 @@ export function AdminPage() {
               <div>
                 <strong>{user.username}</strong>
                 <span className="muted">
-                  {user.role} · {user.folder_ids.length} libraries
+                  {t(
+                    user.role === "admin"
+                      ? "admin.roleAdmin"
+                      : "admin.roleUser",
+                  )}{" "}
+                  ·{" "}
+                  {t("admin.accountLibraries", {
+                    count: user.folder_ids.length,
+                  })}
                 </span>
               </div>
               <button
