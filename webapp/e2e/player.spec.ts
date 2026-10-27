@@ -22,7 +22,10 @@ test.beforeEach(resetAndMockApi);
 test("ends the played wave under the progress thumb", async ({
   page,
 }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "the wave is drawn beside the rail");
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "the wave is drawn beside the rail",
+  );
   await page.goto("/");
   const progress = page.locator(".player-progress");
   await expect(progress).toBeVisible();
@@ -63,7 +66,9 @@ test("ends the played wave under the progress thumb", async ({
     });
   });
   for (const { played, waveEnd, thumbCentre, trackEnd } of measured) {
-    expect(Math.abs(waveEnd - thumbCentre), `at ${played}`).toBeLessThanOrEqual(1);
+    expect(Math.abs(waveEnd - thumbCentre), `at ${played}`).toBeLessThanOrEqual(
+      1,
+    );
     expect(waveEnd, `at ${played}`).toBeLessThanOrEqual(trackEnd);
   }
 });
@@ -88,7 +93,9 @@ test("carries shuffle and the three repeat states in the player bar", async ({
     // layout that came before dropped previous and next instead and kept only
     // play, which is the worse trade on a phone.
     await expect(shuffle).toBeHidden();
-    await expect(page.getByRole("button", { name: "Repeat: off" })).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Repeat: off" }),
+    ).toBeHidden();
     await expect(page.getByRole("button", { name: "Next" })).toBeVisible();
     return;
   }
@@ -171,9 +178,11 @@ test("shows queue artwork beside tracks without crowding times or actions", asyn
       ),
     )
     .toBe(true);
-  const timeEdges = await page.locator(".queue-duration").evaluateAll((times) =>
-    times.map((time) => Math.round(time.getBoundingClientRect().right)),
-  );
+  const timeEdges = await page
+    .locator(".queue-duration")
+    .evaluateAll((times) =>
+      times.map((time) => Math.round(time.getBoundingClientRect().right)),
+    );
   expect(new Set(timeEdges).size).toBe(1);
 
   await page.setViewportSize({ width: 320, height: 700 });
@@ -233,9 +242,11 @@ test("shows saved tracks with artwork and one aligned time column", async ({
       ),
     )
     .toBe(true);
-  const timeEdges = await page.locator(".bookmark-position").evaluateAll(
-    (times) => times.map((time) => Math.round(time.getBoundingClientRect().right)),
-  );
+  const timeEdges = await page
+    .locator(".bookmark-position")
+    .evaluateAll((times) =>
+      times.map((time) => Math.round(time.getBoundingClientRect().right)),
+    );
   expect(new Set(timeEdges).size).toBe(1);
   await expect(page.locator(".playing-bookmarks")).toHaveCSS(
     "background-color",
@@ -285,9 +296,7 @@ test("keeps the shuffle still when a track in it is favourited", async ({
   await expect(page.getByText("Army of Me")).toBeVisible();
   expect(drawn).toBe(1);
 
-  await page
-    .getByRole("button", { name: "Add favourite: Army of Me" })
-    .click();
+  await page.getByRole("button", { name: "Add favourite: Army of Me" }).click();
   // The button renames itself once the star is on, so the state is read from
   // the label rather than from a locator that no longer matches.
   await expect(
@@ -369,7 +378,9 @@ test("levels a track by its ReplayGain only once asked to, and remembers how", a
     };
   });
   const contexts = () =>
-    page.evaluate(() => (window as unknown as { __contexts: number }).__contexts);
+    page.evaluate(
+      () => (window as unknown as { __contexts: number }).__contexts,
+    );
   const gains = () =>
     page.evaluate(() => (window as unknown as { __gains: number[] }).__gains);
 
@@ -391,7 +402,9 @@ test("levels a track by its ReplayGain only once asked to, and remembers how", a
   await preamp.fill("3");
   await expect(playback.locator("output")).toHaveText("+3 dB");
   await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("waveflow.replayGain")))
+    .poll(() =>
+      page.evaluate(() => localStorage.getItem("waveflow.replayGain")),
+    )
     .toBe(JSON.stringify({ mode: "album", preampDb: 3 }));
   await expectNoWcagViolations(page);
   // Choosing it is not playing: still no graph.
@@ -441,10 +454,27 @@ test("keeps the playback settings and the discography readable in light", async 
   mock.artistExtra = {
     albums: [
       { ...albums[0], release_group: "album" },
-      { ...albums[1], id: "album-4", title: "Single Cut", release_group: "single" },
-      { ...albums[1], id: "album-5", title: "Best Of", release_group: "compilation" },
+      {
+        ...albums[1],
+        id: "album-4",
+        title: "Single Cut",
+        release_group: "single",
+      },
+      {
+        ...albums[1],
+        id: "album-5",
+        title: "Best Of",
+        release_group: "compilation",
+      },
     ],
-    appears_on: [{ ...albums[0], id: "album-9", title: "Guest Spot", artist: "Someone Else" }],
+    appears_on: [
+      {
+        ...albums[0],
+        id: "album-9",
+        title: "Guest Spot",
+        artist: "Someone Else",
+      },
+    ],
   };
   await page.goto("/artists/artist-1");
   await expect(page.locator(".artist-discography h3")).toHaveText([
@@ -474,7 +504,10 @@ test("leaves the element alone when the audio context will not run", async ({
       "waveflow.replayGain",
       JSON.stringify({ mode: "album", preampDb: 0 }),
     );
-    const record = window as unknown as { __contexts: number; __claims: number };
+    const record = window as unknown as {
+      __contexts: number;
+      __claims: number;
+    };
     record.__contexts = 0;
     record.__claims = 0;
     const Original = window.AudioContext;
@@ -500,14 +533,19 @@ test("leaves the element alone when the audio context will not run", async ({
   await expect(page.locator(".player-track strong")).toHaveText("Hidden Place");
   await expect
     .poll(() =>
-      page.evaluate(() => (window as unknown as { __contexts: number }).__contexts),
+      page.evaluate(
+        () => (window as unknown as { __contexts: number }).__contexts,
+      ),
     )
     .toBe(1);
   // A second gesture asks the same candidate again rather than making another.
   await page.locator(".album-songs .song-title").nth(1).click();
   await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
   const seen = await page.evaluate(() => {
-    const record = window as unknown as { __contexts: number; __claims: number };
+    const record = window as unknown as {
+      __contexts: number;
+      __claims: number;
+    };
     return { contexts: record.__contexts, claims: record.__claims };
   });
   expect(seen).toEqual({ contexts: 1, claims: 0 });
@@ -526,7 +564,10 @@ for (const kind of ["running", "pending"] as const) {
   test(`closes the ${kind} audio context when the listener signs out`, async ({
     page,
   }, testInfo) => {
-    test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
+    test.skip(
+      testInfo.project.name !== "desktop",
+      "signs out from the sidebar",
+    );
     await page.addInitScript((pending) => {
       localStorage.setItem(
         "waveflow.replayGain",
@@ -616,17 +657,22 @@ test("stops the music when the listener signs out with ReplayGain off", async ({
   const audio = silentWav(60);
   await page.route("**/api/v2/tracks/*/stream-ticket", (route) =>
     route.fulfill({
-      json: { url: "/api/v2/stream/ticket-e2e", expires_at: Date.now() + 60_000 },
+      json: {
+        url: "/api/v2/stream/ticket-e2e",
+        expires_at: Date.now() + 60_000,
+      },
     }),
   );
   await page.route("**/api/v2/stream/*", (route) =>
     route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
   );
   const playing = () =>
-    page.evaluate(() =>
-      [
-        ...(window as unknown as { __played: Set<HTMLMediaElement> }).__played,
-      ].filter((element) => !element.paused).length,
+    page.evaluate(
+      () =>
+        [
+          ...(window as unknown as { __played: Set<HTMLMediaElement> })
+            .__played,
+        ].filter((element) => !element.paused).length,
     );
 
   await page.goto("/albums/album-2");
@@ -637,7 +683,8 @@ test("stops the music when the listener signs out with ReplayGain off", async ({
     .poll(() =>
       page.evaluate(() =>
         [
-          ...(window as unknown as { __played: Set<HTMLMediaElement> }).__played,
+          ...(window as unknown as { __played: Set<HTMLMediaElement> })
+            .__played,
         ].some((element) => !element.paused && element.currentTime > 0),
       ),
     )

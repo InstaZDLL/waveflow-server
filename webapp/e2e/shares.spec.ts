@@ -155,7 +155,8 @@ test("does not send a queue longer than a share holds", async ({ page }) => {
   );
   const created: string[] = [];
   await page.route("**/api/v2/shares", async (route) => {
-    if (route.request().method() === "POST") created.push(route.request().url());
+    if (route.request().method() === "POST")
+      created.push(route.request().url());
     await route.fulfill({ json: [] });
   });
   await page.goto("/shares");
@@ -199,7 +200,9 @@ test("a share page falls back to a plain square when a cover will not load", asy
     route.fulfill({ status: 404, body: "" }),
   );
   await page.goto("/share/wfs_broken");
-  await expect(page.getByRole("heading", { name: "Broken cover" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Broken cover" }),
+  ).toBeVisible();
   await expect(page.locator("img.share-track-cover")).toHaveCount(0);
   await expect(page.locator("span.share-track-cover")).toHaveCount(1);
 });

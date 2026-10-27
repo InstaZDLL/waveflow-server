@@ -130,7 +130,11 @@ function stationFrom(id: string, draft: Record<string, unknown>): Station {
 
 async function mockApi(page: Page) {
   await page.context().addCookies([
-    { name: "waveflow-csrf", value: "e2e-csrf", url: "http://127.0.0.1:4173" },
+    {
+      name: "waveflow-csrf",
+      value: "e2e-csrf",
+      url: "http://127.0.0.1:4173",
+    },
   ]);
   await page.route("**/api/v2/**", async (route) => {
     const request = route.request();
@@ -198,7 +202,9 @@ async function mockApi(page: Page) {
         json: {
           enabled: true,
           can_manage: canManage,
-          channels: channels.map(({ episodes: _episodes, ...listed }) => listed),
+          channels: channels.map(
+            ({ episodes: _episodes, ...listed }) => listed,
+          ),
         },
       });
       return;
@@ -258,8 +264,12 @@ test("adds a station in a dialog, and edits and deletes it from its card's menu"
   page,
 }) => {
   await page.goto("/radio");
-  await expect(page.getByRole("heading", { name: "Radio", exact: true })).toBeVisible();
-  await expect(page.getByText("No stations yet. Add one to keep it here.")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Radio", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No stations yet. Add one to keep it here."),
+  ).toBeVisible();
 
   const opener = page.getByRole("button", { name: "Add station" });
   await opener.click();
@@ -271,9 +281,15 @@ test("adds a station in a dialog, and edits and deletes it from its card's menu"
   await expect(
     dialog.getByText("An address must start with http:// or https://."),
   ).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Save station" })).toBeDisabled();
-  await dialog.getByLabel("Stream address").fill("https://nova.example.org/live");
-  await dialog.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  await expect(
+    dialog.getByRole("button", { name: "Save station" }),
+  ).toBeDisabled();
+  await dialog
+    .getByLabel("Stream address")
+    .fill("https://nova.example.org/live");
+  await dialog
+    .getByLabel("Station page (optional)")
+    .fill("https://nova.example.org/");
   await expect(dialog.getByLabel("Station image (optional)")).toBeVisible();
   await expectNoWcagViolations(page);
   await dialog.getByRole("button", { name: "Save station" }).click();
@@ -285,11 +301,12 @@ test("adds a station in a dialog, and edits and deletes it from its card's menu"
   const grid = page.getByRole("list", { name: "Stations" });
   const card = grid.getByRole("listitem").filter({ hasText: "Radio Nova" });
   await expect(card).toHaveCount(1);
-  await expect(card.getByRole("button", { name: "Listen to Radio Nova" })).toBeVisible();
-  await expect(card.getByRole("link", { name: "Station page" })).toHaveAttribute(
-    "href",
-    "https://nova.example.org/",
-  );
+  await expect(
+    card.getByRole("button", { name: "Listen to Radio Nova" }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("link", { name: "Station page" }),
+  ).toHaveAttribute("href", "https://nova.example.org/");
   // No delete button sits on the card any more: it is in the menu.
   await expect(card.getByRole("button", { name: "Delete" })).toHaveCount(0);
   await expectNoWcagViolations(page);
@@ -323,21 +340,29 @@ test("adds a station in a dialog, and edits and deletes it from its card's menu"
   expect(radioWrites).toEqual(["POST", "PUT station-1"]);
 
   // A delete is asked first; declined, nothing is sent.
-  const renamed = grid.getByRole("listitem").filter({ hasText: "Radio Nova Classics" });
+  const renamed = grid
+    .getByRole("listitem")
+    .filter({ hasText: "Radio Nova Classics" });
   page.once("dialog", (question) => {
     expect(question.message()).toContain("Radio Nova Classics");
     void question.dismiss();
   });
-  await renamed.getByRole("button", { name: "Actions for Radio Nova Classics" }).click();
+  await renamed
+    .getByRole("button", { name: "Actions for Radio Nova Classics" })
+    .click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
   await expect(grid.getByRole("listitem")).toHaveCount(1);
   expect(radioWrites).toEqual(["POST", "PUT station-1"]);
 
   // Confirmed, it goes.
   page.once("dialog", (question) => void question.accept());
-  await renamed.getByRole("button", { name: "Actions for Radio Nova Classics" }).click();
+  await renamed
+    .getByRole("button", { name: "Actions for Radio Nova Classics" })
+    .click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
-  await expect(page.getByText("No stations yet. Add one to keep it here.")).toBeVisible();
+  await expect(
+    page.getByText("No stations yet. Add one to keep it here."),
+  ).toBeVisible();
   expect(radioWrites).toEqual(["POST", "PUT station-1", "DELETE station-1"]);
 });
 
@@ -345,7 +370,9 @@ test("adds a station in a dialog, and edits and deletes it from its card's menu"
  * The dialog cannot be put away while it saves: Escape would otherwise close
  * the form under a request that is about to report into it.
  */
-test("holds the station dialog open while its save is in flight", async ({ page }) => {
+test("holds the station dialog open while its save is in flight", async ({
+  page,
+}) => {
   let release = () => {};
   radioGate = new Promise<void>((resolve) => {
     release = resolve;
@@ -354,7 +381,9 @@ test("holds the station dialog open while its save is in flight", async ({ page 
   await page.getByRole("button", { name: "Add station" }).click();
   const dialog = page.getByRole("dialog", { name: "Add a station" });
   await dialog.getByLabel("Station name").fill("FIP");
-  await dialog.getByLabel("Stream address").fill("https://fip.example.org/live");
+  await dialog
+    .getByLabel("Stream address")
+    .fill("https://fip.example.org/live");
   await dialog.getByRole("button", { name: "Save station" }).click();
   await expect.poll(() => radioWrites).toEqual(["POST"]);
 
@@ -395,7 +424,9 @@ test("explains an empty podcasts page to a reader, with nothing to press", async
   canManage = false;
   await page.goto("/podcasts");
   const empty = page.locator(".empty-state");
-  await expect(empty).toContainText("every account on this server can listen to them");
+  await expect(empty).toContainText(
+    "every account on this server can listen to them",
+  );
   await expect(empty.getByRole("button")).toHaveCount(0);
   await expect(page.getByLabel("Feed address")).toHaveCount(0);
   await expectNoWcagViolations(page);
@@ -406,10 +437,14 @@ test("explains an empty podcasts page to a reader, with nothing to press", async
  * only the folders that were made: so it is drawn apart from them, under a
  * heading of its own that says what it is.
  */
-test("draws To sort apart from the folders the header counts", async ({ page }) => {
+test("draws To sort apart from the folders the header counts", async ({
+  page,
+}) => {
   folders = [{ id: "folder-1", parent_id: null, name: "Jazz", track_count: 4 }];
   await page.goto("/folders");
-  await expect(page.getByText("1 folder created in this library")).toBeVisible();
+  await expect(
+    page.getByText("1 folder created in this library"),
+  ).toBeVisible();
   const made = page.getByRole("list", { name: "Folders" });
   await expect(made.getByRole("link")).toHaveCount(1);
   await expect(made.getByRole("link", { name: /Jazz/ })).toBeVisible();
@@ -419,9 +454,11 @@ test("draws To sort apart from the folders the header counts", async ({ page }) 
   await expect(kept).toContainText(
     "it is not counted among the folders above, and it cannot be renamed, moved or deleted",
   );
-  const tray = kept.getByRole("list", { name: "Kept by WaveFlow" }).getByRole("link", {
-    name: /To sort/,
-  });
+  const tray = kept
+    .getByRole("list", { name: "Kept by WaveFlow" })
+    .getByRole("link", {
+      name: /To sort/,
+    });
   await expect(tray).toContainText("12 tracks");
   await expect(tray).toContainText("Automatic");
   await expectNoWcagViolations(page);
@@ -430,24 +467,37 @@ test("draws To sort apart from the folders the header counts", async ({ page }) 
   await expect(page.getByRole("heading", { name: "To sort" })).toBeVisible();
 });
 
-test("says no folder was made yet, and still offers To sort", async ({ page }) => {
+test("says no folder was made yet, and still offers To sort", async ({
+  page,
+}) => {
   await page.goto("/folders");
-  await expect(page.getByText("0 folders created in this library")).toBeVisible();
+  await expect(
+    page.getByText("0 folders created in this library"),
+  ).toBeVisible();
   await expect(
     page.getByText("No folder has been created in this library yet."),
   ).toBeVisible();
   await expect(page.getByRole("list", { name: "Folders" })).toHaveCount(0);
   await expect(
-    page.getByRole("list", { name: "Kept by WaveFlow" }).getByRole("link", { name: /To sort/ }),
+    page
+      .getByRole("list", { name: "Kept by WaveFlow" })
+      .getByRole("link", { name: /To sort/ }),
   ).toBeVisible();
 });
 
-const WORKSPACE_PAGES = ["/radio", "/podcasts", "/folders", "/maintenance/quality"];
+const WORKSPACE_PAGES = [
+  "/radio",
+  "/podcasts",
+  "/folders",
+  "/maintenance/quality",
+];
 
 async function mainWidth(page: Page, path: string) {
   await page.goto(path);
   await expect(page.locator("main h2").first()).toBeVisible();
-  return page.locator("main").evaluate((main) => main.getBoundingClientRect().width);
+  return page
+    .locator("main")
+    .evaluate((main) => main.getBoundingClientRect().width);
 }
 
 /**
@@ -459,7 +509,12 @@ test("gives the workspace pages more of a wide window, and not the editorial one
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "a wide window");
   await page.setViewportSize({ width: 2560, height: 1440 });
-  stations = [stationFrom("station-1", { name: "Radio Nova", stream_url: "https://nova.example.org/live" })];
+  stations = [
+    stationFrom("station-1", {
+      name: "Radio Nova",
+      stream_url: "https://nova.example.org/live",
+    }),
+  ];
   const editorial = await mainWidth(page, "/");
   // 105rem, the contained column.
   expect(editorial).toBe(1680);
@@ -482,17 +537,23 @@ test("keeps the workspace pages inside a phone and a short window", async ({
   stations = [
     stationFrom("station-1", {
       name: "A station whose name is far too long to fit on one card",
-      stream_url: "https://a-very-long-host-name.example.org/a/very/long/stream/path.mp3",
+      stream_url:
+        "https://a-very-long-host-name.example.org/a/very/long/stream/path.mp3",
       homepage_url: "https://example.org/",
     }),
-    stationFrom("station-2", { name: "FIP", stream_url: "https://fip.example.org/live" }),
+    stationFrom("station-2", {
+      name: "FIP",
+      stream_url: "https://fip.example.org/live",
+    }),
   ];
   folders = [{ id: "folder-1", parent_id: null, name: "Jazz", track_count: 4 }];
   for (const path of WORKSPACE_PAGES) {
     await page.goto(path);
     await expect(page.locator("main h2").first()).toBeVisible();
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
     );
     expect(overflow, path).toBe(0);
     if (testInfo.project.name === "mobile") {
@@ -503,7 +564,9 @@ test("keeps the workspace pages inside a phone and a short window", async ({
     }
   }
   await page.goto("/radio");
-  await expect(page.getByRole("list", { name: "Stations" }).getByRole("listitem")).toHaveCount(2);
+  await expect(
+    page.getByRole("list", { name: "Stations" }).getByRole("listitem"),
+  ).toHaveCount(2);
   await expectNoWcagViolations(page);
 });
 
@@ -550,11 +613,18 @@ for (const [width, height] of [
     twoShows();
     await page.goto("/podcasts");
     const panel = page.locator("#podcast-panel");
-    await expect(panel.getByRole("heading", { name: "Night Shift" })).toBeVisible();
+    await expect(
+      panel.getByRole("heading", { name: "Night Shift" }),
+    ).toBeVisible();
     await expect(panel).toContainText("Second night");
-    expect(await besideTheList(page)).toMatchObject({ right: true, overlap: true });
+    expect(await besideTheList(page)).toMatchObject({
+      right: true,
+      overlap: true,
+    });
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
     );
     expect(overflow).toBe(0);
 
@@ -565,22 +635,31 @@ for (const [width, height] of [
       .getByRole("button", { name: "Episodes" });
     await day.click();
     await expect(page).toHaveURL(/[?&]channel=channel-2/);
-    await expect(panel.getByRole("heading", { name: "Day Shift" })).toBeVisible();
+    await expect(
+      panel.getByRole("heading", { name: "Day Shift" }),
+    ).toBeVisible();
     await expect(panel).toContainText("First day");
     await expect(panel).not.toContainText("First night");
     await expect(day).toBeFocused();
     await expect(day).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByRole("status").filter({ hasText: "Showing" })).toHaveText(
-      "Showing the episodes of Day Shift.",
-    );
-    expect(await besideTheList(page)).toMatchObject({ right: true, overlap: true });
+    await expect(
+      page.getByRole("status").filter({ hasText: "Showing" }),
+    ).toHaveText("Showing the episodes of Day Shift.");
+    expect(await besideTheList(page)).toMatchObject({
+      right: true,
+      overlap: true,
+    });
     await expectNoWcagViolations(page);
 
     // Back returns to the first show; a reload keeps the one named.
     await page.goBack();
-    await expect(panel.getByRole("heading", { name: "Night Shift" })).toBeVisible();
+    await expect(
+      panel.getByRole("heading", { name: "Night Shift" }),
+    ).toBeVisible();
     await page.goto("/podcasts?channel=channel-2");
-    await expect(panel.getByRole("heading", { name: "Day Shift" })).toBeVisible();
+    await expect(
+      panel.getByRole("heading", { name: "Day Shift" }),
+    ).toBeVisible();
   });
 }
 
@@ -592,7 +671,9 @@ test("opens the first show when the one in the address is gone", async ({
   twoShows();
   await page.goto("/podcasts?channel=channel-gone");
   await expect(
-    page.locator("#podcast-panel").getByRole("heading", { name: "Night Shift" }),
+    page
+      .locator("#podcast-panel")
+      .getByRole("heading", { name: "Night Shift" }),
   ).toBeVisible();
 });
 
@@ -634,7 +715,9 @@ test("scrolls a long feed inside its panel, leaving the shows in reach", async (
 });
 
 /** On a phone the episodes stay under the list, opened and closed on request. */
-test("stacks the episodes under the shows on a phone", async ({ page }, testInfo) => {
+test("stacks the episodes under the shows on a phone", async ({
+  page,
+}, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "a phone");
   twoShows();
   await page.goto("/podcasts");
@@ -660,8 +743,14 @@ test("leaves a card's menu by Tab from its button, not from the page's end", asy
   page,
 }) => {
   stations = [
-    stationFrom("station-1", { name: "Radio Nova", stream_url: "https://nova.example.org/live" }),
-    stationFrom("station-2", { name: "FIP", stream_url: "https://fip.example.org/live" }),
+    stationFrom("station-1", {
+      name: "Radio Nova",
+      stream_url: "https://nova.example.org/live",
+    }),
+    stationFrom("station-2", {
+      name: "FIP",
+      stream_url: "https://fip.example.org/live",
+    }),
   ];
   await page.goto("/radio");
   const more = page.getByRole("button", { name: "Actions for Radio Nova" });
@@ -672,12 +761,16 @@ test("leaves a card's menu by Tab from its button, not from the page's end", asy
   await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(menu).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Listen to FIP" })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Listen to FIP" }),
+  ).toBeFocused();
 
   await more.focus();
   await page.keyboard.press("Enter");
   await expect(menu.getByRole("menuitem", { name: "Edit" })).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(menu).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Listen to Radio Nova" })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Listen to Radio Nova" }),
+  ).toBeFocused();
 });

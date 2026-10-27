@@ -187,7 +187,9 @@ test("centres a sheet that lands after the head has moved", async ({
     page.getByRole("listitem").filter({ hasText: "late line 20" }),
   ).toHaveAttribute("aria-current", "true");
   // The line the head is on is in view, which is the whole claim.
-  await expect.poll(() => column.evaluate((list) => list.scrollTop)).toBeGreaterThan(0);
+  await expect
+    .poll(() => column.evaluate((list) => list.scrollTop))
+    .toBeGreaterThan(0);
 });
 
 /**
@@ -363,9 +365,7 @@ test("opens the immersive view, and Back leaves the view and not the screen", as
 
   // The close button takes the same route out.
   await page.getByRole("link", { name: "Immersive" }).click();
-  await page
-    .getByRole("button", { name: "Leave the immersive view" })
-    .click();
+  await page.getByRole("button", { name: "Leave the immersive view" }).click();
   await expect(page.locator("dialog.immersive")).toHaveCount(0);
   await expect(page).toHaveURL(/\/playing$/);
 });

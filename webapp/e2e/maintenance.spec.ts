@@ -18,8 +18,16 @@ test.beforeEach(resetAndMockApi);
  * answer, so these tests need none of the lists served.
  */
 const MAINTENANCE_SECTIONS = [
-  { link: "Needs attention", path: "/maintenance/attention", heading: "Needs attention" },
-  { link: "Missing files", path: "/maintenance/missing", heading: "Missing files" },
+  {
+    link: "Needs attention",
+    path: "/maintenance/attention",
+    heading: "Needs attention",
+  },
+  {
+    link: "Missing files",
+    path: "/maintenance/missing",
+    heading: "Missing files",
+  },
   { link: "Quality", path: "/maintenance/quality", heading: "Quality" },
 ];
 
@@ -66,12 +74,15 @@ test("opens every section of Maintenance from its menu", async ({
   );
   if (testInfo.project.name === "desktop") {
     // The rail's entry stays current in every section.
-    await expect(
-      page.locator(".sidebar a[data-status='active']"),
-    ).toHaveText(["Maintenance"]);
+    await expect(page.locator(".sidebar a[data-status='active']")).toHaveText([
+      "Maintenance",
+    ]);
   }
 
-  for (const section of [...MAINTENANCE_SECTIONS.slice(1), MAINTENANCE_SECTIONS[0]]) {
+  for (const section of [
+    ...MAINTENANCE_SECTIONS.slice(1),
+    MAINTENANCE_SECTIONS[0],
+  ]) {
     await menu.getByRole("link", { name: section.link, exact: true }).click();
     await expect(page).toHaveURL((url) => url.pathname === section.path);
     await expect(
@@ -85,7 +96,9 @@ test("opens every section of Maintenance from its menu", async ({
 
   // Back to the section opened before the last.
   await page.goBack();
-  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/maintenance/quality",
+  );
   await expect(
     page.getByRole("heading", { name: "Quality", exact: true }),
   ).toBeVisible();
@@ -100,13 +113,24 @@ test("lands every old address on its section of Maintenance", async ({
   page,
 }) => {
   for (const [address, path, search, heading] of [
-    ["/attention?category=missing_year", "/maintenance/attention", "category=missing_year", "Needs attention"],
+    [
+      "/attention?category=missing_year",
+      "/maintenance/attention",
+      "category=missing_year",
+      "Needs attention",
+    ],
     ["/missing", "/maintenance/missing", "", "Missing files"],
-    ["/quality?verdict=upsampled", "/maintenance/quality", "verdict=upsampled", "Quality"],
+    [
+      "/quality?verdict=upsampled",
+      "/maintenance/quality",
+      "verdict=upsampled",
+      "Quality",
+    ],
   ]) {
     await page.goto(address);
     await expect(page).toHaveURL(
-      (url) => url.pathname === path && url.search === (search ? `?${search}` : ""),
+      (url) =>
+        url.pathname === path && url.search === (search ? `?${search}` : ""),
     );
     await expect(
       page.getByRole("heading", { name: heading, exact: true }),
@@ -116,7 +140,9 @@ test("lands every old address on its section of Maintenance", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   await page.goto("/quality");
-  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/maintenance/quality",
+  );
   await page.goBack();
   await expect(page).toHaveURL((url) => url.pathname === "/");
 });
@@ -134,9 +160,13 @@ test("shows a listener only the Maintenance sections theirs to use", async ({
       json: { ...session, user: { ...session.user, role: "user" } },
     }),
   );
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   await page.goto("/maintenance");
-  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/quality");
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/maintenance/quality",
+  );
   await expect(
     page.getByRole("heading", { name: "Quality", exact: true }),
   ).toBeVisible();
@@ -154,9 +184,13 @@ test("shows a listener only the Maintenance sections theirs to use", async ({
 test("shows an administrator listening in a library the missing files", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   await page.goto("/maintenance");
-  await expect(page).toHaveURL((url) => url.pathname === "/maintenance/missing");
+  await expect(page).toHaveURL(
+    (url) => url.pathname === "/maintenance/missing",
+  );
   await expect(
     page
       .getByRole("navigation", { name: "Maintenance sections" })
@@ -186,7 +220,10 @@ for (const section of MAINTENANCE_SECTIONS) {
 test("lists the missing files and purges only what was chosen", async ({
   page,
 }) => {
-  mock.missingTracks = [missingTrack(1, "First light"), missingTrack(2, "Second wind")];
+  mock.missingTracks = [
+    missingTrack(1, "First light"),
+    missingTrack(2, "Second wind"),
+  ];
   await page.goto("/missing");
 
   await expect(
@@ -238,7 +275,9 @@ test("keeps the missing files from a listener", async ({ page }) => {
       json: { ...session, user: { ...session.user, role: "user" } },
     }),
   );
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   mock.missingTracks = [missingTrack(1, "First light")];
   await page.goto("/missing");
   await expect(
@@ -258,7 +297,9 @@ test("keeps the missing files from a listener", async ({ page }) => {
 test("shows the missing files to an administrator who only listens", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   mock.missingTracks = [missingTrack(1, "First light")];
   await page.goto("/missing");
   await expect(page.getByText("Gone/1 First light.flac")).toBeVisible();
@@ -273,7 +314,10 @@ test("shows the missing files to an administrator who only listens", async ({
  * says until when it can come back, and restoring it puts it back.
  */
 test("takes a purge back while the server still keeps it", async ({ page }) => {
-  mock.missingTracks = [missingTrack(1, "First light"), missingTrack(2, "Second wind")];
+  mock.missingTracks = [
+    missingTrack(1, "First light"),
+    missingTrack(2, "Second wind"),
+  ];
   await page.goto("/missing");
   await page.getByRole("checkbox", { name: "Select First light" }).check();
   await page.getByRole("button", { name: "Purge the selected (1)" }).click();

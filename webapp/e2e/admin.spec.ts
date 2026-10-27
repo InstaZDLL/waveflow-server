@@ -77,9 +77,7 @@ test("says a token list failed instead of calling it empty", async ({
 }) => {
   mock.tokensFail = true;
   await page.goto("/admin");
-  await page
-    .getByRole("button", { name: "API tokens for listener" })
-    .click();
+  await page.getByRole("button", { name: "API tokens for listener" }).click();
 
   // Scoped to the panel: the player bar raises an alert of its own here, its
   // stream being mocked away.
@@ -179,9 +177,9 @@ test("lists who may see a library, once its panel is opened", async ({
   await expect(
     page.getByRole("combobox", { name: "Role: listener" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("combobox", { name: "Role: guest" }),
-  ).toHaveValue("listener");
+  await expect(page.getByRole("combobox", { name: "Role: guest" })).toHaveValue(
+    "listener",
+  );
 });
 
 /**

@@ -37,8 +37,12 @@ export async function serveArtistImages(page: Page) {
     ...(state.portrait || state.banner
       ? {
           image_choice: {
-            ...(state.portrait ? { portrait: { source: "upload", set_at: 1 } } : {}),
-            ...(state.banner ? { banner: { source: "upload", set_at: 1 } } : {}),
+            ...(state.portrait
+              ? { portrait: { source: "upload", set_at: 1 } }
+              : {}),
+            ...(state.banner
+              ? { banner: { source: "upload", set_at: 1 } }
+              : {}),
           },
         }
       : {}),

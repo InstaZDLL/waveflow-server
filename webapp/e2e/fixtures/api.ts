@@ -13,16 +13,16 @@ import {
   freshDestinations,
   freshUncertain,
   freshUploadSession,
-  genres,
   genreSongs,
+  genres,
   history,
   imageHash,
   importReport,
   library,
   linkState,
   type Offer,
-  playlists,
   PURGE_GRACE_MS,
+  playlists,
   type Recipient,
   session,
   song,
@@ -112,7 +112,10 @@ async function mockAuthenticatedApi(page: Page) {
     }
     // RFC-021: a library as an administrator manages it, and its missing
     // tracks with their purge.
-    if (url.pathname.endsWith("/settings") && url.pathname.includes("/libraries/")) {
+    if (
+      url.pathname.endsWith("/settings") &&
+      url.pathname.includes("/libraries/")
+    ) {
       const id = url.pathname.split("/")[4];
       const found = mock.libraries.find((entry) => entry.id === id);
       await route.fulfill({
@@ -137,7 +140,9 @@ async function mockAuthenticatedApi(page: Page) {
       const taken = mock.missingTracks.filter(
         (entry) => "all" in asked || asked.track_ids.includes(entry.id),
       );
-      mock.missingTracks = mock.missingTracks.filter((entry) => !taken.includes(entry));
+      mock.missingTracks = mock.missingTracks.filter(
+        (entry) => !taken.includes(entry),
+      );
       mock.purgedTracks = [
         ...mock.purgedTracks,
         ...taken.map((entry) => ({
@@ -159,7 +164,9 @@ async function mockAuthenticatedApi(page: Page) {
       const back = mock.purgedTracks.filter(
         (entry) => "all" in asked || asked.track_ids.includes(entry.id),
       );
-      mock.purgedTracks = mock.purgedTracks.filter((entry) => !back.includes(entry));
+      mock.purgedTracks = mock.purgedTracks.filter(
+        (entry) => !back.includes(entry),
+      );
       mock.missingTracks = [
         ...mock.missingTracks,
         ...back.map((entry) => ({
@@ -336,7 +343,9 @@ async function mockAuthenticatedApi(page: Page) {
     if (url.pathname.startsWith("/api/v2/api-tokens/")) {
       const id = url.pathname.split("/").pop();
       mock.ownClients = mock.ownClients.map((client) =>
-        client.id === id ? { ...client, revoked_at: 1_700_950_000_000 } : client,
+        client.id === id
+          ? { ...client, revoked_at: 1_700_950_000_000 }
+          : client,
       );
       await route.fulfill({ status: 204, body: "" });
       return;
@@ -488,7 +497,10 @@ async function mockAuthenticatedApi(page: Page) {
       mock.uploadCommits.push("upload-1");
       await route.fulfill({
         status: 201,
-        json: { track_id: "song-uploaded", full_hash: mock.uploadOffers[0]?.full_hash },
+        json: {
+          track_id: "song-uploaded",
+          full_hash: mock.uploadOffers[0]?.full_hash,
+        },
       });
       return;
     }
@@ -587,7 +599,8 @@ async function mockAuthenticatedApi(page: Page) {
         // What the server does with it: a key present replaces its correction,
         // null removes it, and a list that is removed goes back to the file.
         Object.assign(mock.correctable.tracked.overrides, body);
-        if (typeof body.title === "string") mock.correctable.song.title = body.title;
+        if (typeof body.title === "string")
+          mock.correctable.song.title = body.title;
         if (body.artists === null) mock.correctable.song.artists = fileArtists;
       }
       await route.fulfill({ json: mock.correctable.song });
@@ -595,7 +608,9 @@ async function mockAuthenticatedApi(page: Page) {
     }
     if (url.pathname.startsWith("/api/v2/tracks/")) {
       const id = url.pathname.split("/")[4];
-      await route.fulfill({ json: { ...song(1, `Track ${id}`, 0, false), id } });
+      await route.fulfill({
+        json: { ...song(1, `Track ${id}`, 0, false), id },
+      });
       return;
     }
     // RFC-024: the statistics and the mixes, as the server shapes them.
@@ -626,7 +641,10 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({
         json: {
           ...found,
-          songs: [song(1, "Hidden Place", 0, false), song(2, "Cocoon", 0, false)],
+          songs: [
+            song(1, "Hidden Place", 0, false),
+            song(2, "Cocoon", 0, false),
+          ],
         },
       });
       return;
@@ -742,7 +760,10 @@ async function mockAuthenticatedApi(page: Page) {
       await route.fulfill({ json: sorted });
       return;
     }
-    if (url.pathname === "/api/v2/shares" && route.request().method() === "GET") {
+    if (
+      url.pathname === "/api/v2/shares" &&
+      route.request().method() === "GET"
+    ) {
       // None yet. Answered so that the Shares section of Settings draws as a
       // page rather than as its failure when the hub's tests walk through it.
       await route.fulfill({ json: [] });
@@ -772,7 +793,10 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.radioWrites = [];
   mock.stationImages = [];
   mock.radioGate = Promise.resolve();
-  mock.artistPlayed = [song(2, "Cocoon", 0, false), song(1, "Hidden Place", 5, true)];
+  mock.artistPlayed = [
+    song(2, "Cocoon", 0, false),
+    song(1, "Hidden Place", 5, true),
+  ];
   mock.topSongAsks = [];
   mock.artistAsks = 0;
   mock.artistExtra = {};
@@ -792,7 +816,10 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.clientGate = Promise.resolve();
   // An account the operator has granted one, because that is the state the
   // panel is about: it rotates and switches off, and never creates.
-  mock.ownSubsonicCredential = { created_at: 1_700_000_000_000, updated_at: 1_700_000_000_000 };
+  mock.ownSubsonicCredential = {
+    created_at: 1_700_000_000_000,
+    updated_at: 1_700_000_000_000,
+  };
   mock.scanFails = false;
   mock.scanDrops = false;
   mock.corrections = [];

@@ -43,7 +43,9 @@ test("an artist page shows this account's most played, and no heading without a 
   // A screenful, not the discography.
   expect(mock.topSongAsks).toEqual(["10"]);
   // And the albums are still what the page is.
-  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open the album: Vespertine" }),
+  ).toBeVisible();
 
   await expectNoWcagViolations(page);
 
@@ -53,7 +55,9 @@ test("an artist page shows this account's most played, and no heading without a 
   await expect(
     page.getByRole("heading", { name: "Björk", level: 2 }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open the album: Vespertine" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Most played here" }),
   ).toHaveCount(0);
@@ -112,7 +116,9 @@ test("an artist page shows what the server learned, and where each part came fro
   await expect(page.getByRole("heading", { name: "About" })).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.getByText("An Icelandic singer and songwriter.").first()).toBeVisible();
+  await expect(
+    page.getByText("An Icelandic singer and songwriter.").first(),
+  ).toBeVisible();
   await expect(page.getByText(/^Biography from Last\.fm, /)).toBeVisible();
   await expect(page.getByText(/^Portrait from Deezer, /)).toBeVisible();
   await expect(page.locator(".artist-hero img.artist-portrait")).toBeVisible();
@@ -131,9 +137,16 @@ test("an artist page shows what the server learned, and where each part came fro
 test("an artist nobody knows shows no enrichment and is not asked again", async ({
   page,
 }) => {
-  mock.enrichmentOf = () => ({ state: "none", bio: null, image: null, similar: null });
+  mock.enrichmentOf = () => ({
+    state: "none",
+    bio: null,
+    image: null,
+    similar: null,
+  });
   await page.goto("/artists/artist-1");
-  await expect(page.getByRole("link", { name: "Open the album: Vespertine" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open the album: Vespertine" }),
+  ).toBeVisible();
   await page.waitForTimeout(4_000);
   await expect(page.getByRole("heading", { name: "About" })).toHaveCount(0);
   await expect(page.getByText("Looking this artist up")).toHaveCount(0);
@@ -150,9 +163,16 @@ test("a pending artist whose server keeps failing is asked a bounded number of t
 }) => {
   test.setTimeout(45_000);
   mock.artistFailsAfterFirst = true;
-  mock.enrichmentOf = () => ({ state: "pending", bio: null, image: null, similar: null });
+  mock.enrichmentOf = () => ({
+    state: "pending",
+    bio: null,
+    image: null,
+    similar: null,
+  });
   await page.goto("/artists/artist-1");
-  await expect(page.getByRole("heading", { name: "Björk", level: 2 })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Björk", level: 2 }),
+  ).toBeVisible();
   await expect.poll(() => mock.artistAsks, { timeout: 30_000 }).toBe(6);
   await page.waitForTimeout(5_000);
   expect(mock.artistAsks).toBe(6);
@@ -172,9 +192,15 @@ test("changes an artist's banner and portrait from the artist page", async ({
   const hero = page.locator(".artist-hero");
   // The actions sit behind one button in the header's corner.
   let menu = await openImageMenu(page);
-  await expect(menu.getByRole("menuitem", { name: "Change portrait" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "Change banner" })).toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: "No banner" })).toHaveCount(0);
+  await expect(
+    menu.getByRole("menuitem", { name: "Change portrait" }),
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Change banner" }),
+  ).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "No banner" })).toHaveCount(
+    0,
+  );
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   // With no banner, the portrait is the backdrop, blurred.
@@ -188,7 +214,9 @@ test("changes an artist's banner and portrait from the artist page", async ({
   await expect(hero.getByRole("status")).toHaveText("Banner changed.");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
   await expect(hero.locator(".artist-hero-ambient")).toHaveCount(0);
-  expect(state.writes).toEqual([{ method: "PUT", kind: "banner", bytes: png.length }]);
+  expect(state.writes).toEqual([
+    { method: "PUT", kind: "banner", bytes: png.length },
+  ]);
   await expectNoWcagViolations(page);
 
   await hero.getByLabel("Change portrait").setInputFiles({
@@ -206,7 +234,9 @@ test("changes an artist's banner and portrait from the artist page", async ({
     mimeType: "image/png",
     buffer: Buffer.from("not an image"),
   });
-  await expect(hero.getByRole("alert")).toHaveText("Choose a JPEG, PNG or WebP image.");
+  await expect(hero.getByRole("alert")).toHaveText(
+    "Choose a JPEG, PNG or WebP image.",
+  );
 
   // Back to automatic: no banner, and the fetched portrait again.
   menu = await openImageMenu(page);
@@ -215,7 +245,9 @@ test("changes an artist's banner and portrait from the artist page", async ({
   await expect(hero.locator("img.artist-banner")).toHaveCount(0);
   menu = await openImageMenu(page);
   await menu.getByRole("menuitem", { name: "Automatic portrait" }).click();
-  await expect(hero.getByRole("status")).toHaveText("Back to the automatic portrait.");
+  await expect(hero.getByRole("status")).toHaveText(
+    "Back to the automatic portrait.",
+  );
   await expect(hero.getByText("Portrait chosen by hand")).toHaveCount(0);
   expect(state.writes.slice(-2)).toEqual([
     { method: "DELETE", kind: "banner", bytes: 0 },
@@ -227,16 +259,22 @@ test("changes an artist's banner and portrait from the artist page", async ({
 test("shows a listener the artist's banner with nothing to change", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   const { state } = await serveArtistImages(page);
   state.banner = "c".repeat(64);
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
   // Not even the button the actions sit behind.
-  await expect(hero.getByRole("button", { name: "Edit images" })).toHaveCount(0);
+  await expect(hero.getByRole("button", { name: "Edit images" })).toHaveCount(
+    0,
+  );
   await expect(hero.getByRole("button", { name: /Change/ })).toHaveCount(0);
-  await expect(hero.getByRole("button", { name: "Search Deezer" })).toHaveCount(0);
+  await expect(hero.getByRole("button", { name: "Search Deezer" })).toHaveCount(
+    0,
+  );
 });
 
 /**
@@ -312,45 +350,67 @@ test("chooses an artist's portrait from a Deezer search", async ({ page }) => {
   const thirdParty: string[] = [];
   let refuseNext = false;
   page.on("request", (request) => {
-    if (/deezer\.com|dzcdn\.net/.test(request.url())) thirdParty.push(request.url());
+    if (/deezer\.com|dzcdn\.net/.test(request.url()))
+      thirdParty.push(request.url());
   });
-  await page.route("**/api/v2/artists/artist-1/image/candidates?*", async (route) => {
-    const query = new URL(route.request().url()).searchParams.get("q") ?? "";
-    searches.push(query);
-    if (refuseNext) {
-      refuseNext = false;
-      await route.fulfill({ status: 429, json: { code: "too_many_requests" } });
-      return;
-    }
-    await route.fulfill({
-      json:
-        query === "Nobody"
-          ? []
-          : [
-              { deezer_id: 76, name: "Björk", fans: 1500000, artwork_hash: "d".repeat(64) },
-              { deezer_id: 77, name: "Björk Tribute", fans: 1, artwork_hash: "e".repeat(64) },
-            ],
-    });
-  });
-  await page.route("**/api/v2/artists/artist-1/image/portrait/deezer", async (route) => {
-    picks.push(route.request().postDataJSON());
-    state.portrait = "d".repeat(64);
-    await route.fulfill({
-      json: {
-        ...artistDetail,
-        library_id: "library-1",
-        artwork_hash: state.portrait,
-        image_choice: { portrait: { source: "deezer", set_at: 1 } },
-      },
-    });
-  });
+  await page.route(
+    "**/api/v2/artists/artist-1/image/candidates?*",
+    async (route) => {
+      const query = new URL(route.request().url()).searchParams.get("q") ?? "";
+      searches.push(query);
+      if (refuseNext) {
+        refuseNext = false;
+        await route.fulfill({
+          status: 429,
+          json: { code: "too_many_requests" },
+        });
+        return;
+      }
+      await route.fulfill({
+        json:
+          query === "Nobody"
+            ? []
+            : [
+                {
+                  deezer_id: 76,
+                  name: "Björk",
+                  fans: 1500000,
+                  artwork_hash: "d".repeat(64),
+                },
+                {
+                  deezer_id: 77,
+                  name: "Björk Tribute",
+                  fans: 1,
+                  artwork_hash: "e".repeat(64),
+                },
+              ],
+      });
+    },
+  );
+  await page.route(
+    "**/api/v2/artists/artist-1/image/portrait/deezer",
+    async (route) => {
+      picks.push(route.request().postDataJSON());
+      state.portrait = "d".repeat(64);
+      await route.fulfill({
+        json: {
+          ...artistDetail,
+          library_id: "library-1",
+          artwork_hash: state.portrait,
+          image_choice: { portrait: { source: "deezer", set_at: 1 } },
+        },
+      });
+    },
+  );
 
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
   await (await openImageMenu(page))
     .getByRole("menuitem", { name: "Search Deezer" })
     .click();
-  const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
+  const picker = page.getByRole("dialog", {
+    name: "Choose a portrait from Deezer",
+  });
   await expect(picker).toBeVisible();
   const results = picker.getByRole("list", { name: "Deezer artists" });
   await expect(results.getByRole("button")).toHaveCount(2);
@@ -389,7 +449,12 @@ test("keeps the artist hero and the Deezer picker readable in the light", async 
   await page.route("**/api/v2/artists/artist-1/image/candidates?*", (route) =>
     route.fulfill({
       json: [
-        { deezer_id: 76, name: "Björk", fans: 1500000, artwork_hash: "d".repeat(64) },
+        {
+          deezer_id: 76,
+          name: "Björk",
+          fans: 1500000,
+          artwork_hash: "d".repeat(64),
+        },
       ],
     }),
   );
@@ -404,7 +469,9 @@ test("keeps the artist hero and the Deezer picker readable in the light", async 
   await (await openImageMenu(page))
     .getByRole("menuitem", { name: "Search Deezer" })
     .click();
-  const picker = page.getByRole("dialog", { name: "Choose a portrait from Deezer" });
+  const picker = page.getByRole("dialog", {
+    name: "Choose a portrait from Deezer",
+  });
   await expect(picker.getByText("1500000 fans")).toBeVisible();
   await expectNoWcagViolations(page);
   await picker.getByRole("button", { name: "Close" }).click();
@@ -454,7 +521,9 @@ for (const { theme, banner, portrait } of [
     ).toBeVisible();
     await page.evaluate(() =>
       Promise.all(
-        document.getAnimations().map((animation) => animation.finished.catch(() => undefined)),
+        document
+          .getAnimations()
+          .map((animation) => animation.finished.catch(() => undefined)),
       ),
     );
 
@@ -470,18 +539,25 @@ for (const { theme, banner, portrait } of [
     }
     // And no other source line beside it, left unmeasured.
     await expect(hero.locator(".artist-source")).toHaveCount(1);
-    expect(await lowestContrast(page, name), "the name").toBeGreaterThanOrEqual(3);
+    expect(await lowestContrast(page, name), "the name").toBeGreaterThanOrEqual(
+      3,
+    );
     for (const [label, text] of [
       ["the kicker", kicker],
       ["the count", count],
       ["the source", source],
     ] as const) {
-      expect(await lowestContrast(page, text), label).toBeGreaterThanOrEqual(4.5);
+      expect(await lowestContrast(page, text), label).toBeGreaterThanOrEqual(
+        4.5,
+      );
     }
     // Every button over the picture is measured. The image actions sit
     // behind one menu button now, which is required, so the loop below
     // cannot pass over an empty list.
-    const trigger = hero.getByRole("button", { name: "Edit images", exact: true });
+    const trigger = hero.getByRole("button", {
+      name: "Edit images",
+      exact: true,
+    });
     await expect(trigger).toHaveCount(1);
     await expect(trigger).toBeVisible();
     const overPicture = await hero.locator(".artist-image-button").all();
@@ -490,6 +566,7 @@ for (const { theme, banner, portrait } of [
       if (!(await button.isVisible())) continue;
       expect(
         await lowestContrast(page, button, true),
+        // biome-ignore lint/performance/useDomNodeTextContent: a Playwright locator, not a DOM node.
         `the button “${await button.innerText()}”`,
       ).toBeGreaterThanOrEqual(4.5);
     }
@@ -507,6 +584,7 @@ for (const { theme, banner, portrait } of [
     for (const entry of await menu.getByRole("menuitem").all()) {
       expect(
         await lowestContrast(page, entry.locator("span")),
+        // biome-ignore lint/performance/useDomNodeTextContent: a Playwright locator, not a DOM node.
         `the menu entry “${await entry.innerText()}”`,
       ).toBeGreaterThanOrEqual(4.5);
     }
@@ -523,7 +601,12 @@ test("an artist page files its records by type, and lists what it appears on", a
 }) => {
   mock.artistExtra = {
     albums: [
-      { ...albums[1], id: "album-3", title: "Vespertine Live", release_group: "live" },
+      {
+        ...albums[1],
+        id: "album-3",
+        title: "Vespertine Live",
+        release_group: "live",
+      },
       { ...albums[0], release_group: "album" },
       { ...albums[1], release_group: "album" },
     ],
@@ -548,7 +631,9 @@ test("an artist page files its records by type, and lists what it appears on", a
     "Appears on",
   ]);
   const appearances = page.getByRole("region", { name: "Appears on" });
-  await expect(appearances.getByText("Guest Spot", { exact: true })).toBeVisible();
+  await expect(
+    appearances.getByText("Guest Spot", { exact: true }),
+  ).toBeVisible();
   await expect(appearances.getByText("Someone Else")).toBeVisible();
   // Filed under its own section, and nowhere else.
   await expect(
@@ -570,6 +655,8 @@ test("an artist page from a server without release groups keeps one section", as
   await page.goto("/artists/artist-1");
   await expect(page.locator(".artist-discography h3")).toHaveText(["Albums"]);
   await expect(
-    page.getByRole("region", { name: "Albums" }).getByText("Vespertine", { exact: true }),
+    page
+      .getByRole("region", { name: "Albums" })
+      .getByText("Vespertine", { exact: true }),
   ).toBeVisible();
 });

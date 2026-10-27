@@ -26,10 +26,10 @@ test("offers each instance by name, and says why one cannot be linked", async ({
   ).toBeVisible();
   // Two instances of one recipient, each named. A screen keyed on the
   // recipient would show "Maloja" once and hide whichever it linked second.
-  await expect(page.getByText('Maloja — instance “alice”')).toBeVisible();
-  await expect(page.getByText('Maloja — instance “bob”')).toBeVisible();
+  await expect(page.getByText("Maloja — instance “alice”")).toBeVisible();
+  await expect(page.getByText("Maloja — instance “bob”")).toBeVisible();
   await expect(
-    page.getByText('ListenBrainz — instance “default”'),
+    page.getByText("ListenBrainz — instance “default”"),
   ).toBeVisible();
 
   // Declared and unusable is a real shape, and the reason is published so the
@@ -100,10 +100,10 @@ test("links one instance by its key, and leaves the other alone", async ({
   page,
 }) => {
   await page.goto("/settings/scrobbling");
-  await expect(page.getByText('Maloja — instance “alice”')).toBeVisible();
+  await expect(page.getByText("Maloja — instance “alice”")).toBeVisible();
 
   await page
-    .getByLabel('API key: Maloja — instance “alice”')
+    .getByLabel("API key: Maloja — instance “alice”")
     .fill("alice-api-key");
   await page
     .locator(".scrobble-row", { hasText: "alice" })
@@ -111,7 +111,7 @@ test("links one instance by its key, and leaves the other alone", async ({
     .click();
 
   await expect(
-    page.getByRole("button", { name: 'Unlink: Maloja — instance “alice”' }),
+    page.getByRole("button", { name: "Unlink: Maloja — instance “alice”" }),
   ).toBeVisible();
   expect(mock.scrobbleWrites).toEqual([
     {
@@ -122,7 +122,7 @@ test("links one instance by its key, and leaves the other alone", async ({
   ]);
   // The pair names the resource: bob is untouched and still offers its field.
   await expect(
-    page.getByLabel('API key: Maloja — instance “bob”'),
+    page.getByLabel("API key: Maloja — instance “bob”"),
   ).toBeVisible();
 
   // The queue behind the link is a state and four counters, never an echo of
@@ -228,7 +228,11 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
   // instance name alone withdraws both, which is the fault the unique index
   // on `(user_id, provider, destination)` was rebuilt to make impossible.
   mock.destinations = [
-    { provider: "listenbrainz" as const, destination: "default", available: true },
+    {
+      provider: "listenbrainz" as const,
+      destination: "default",
+      available: true,
+    },
     { provider: "maloja" as const, destination: "default", available: true },
   ];
   mock.scrobbleLinks = [
@@ -239,15 +243,15 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
   await page.goto("/settings/scrobbling");
   await page
     .getByRole("button", {
-      name: 'Unlink: ListenBrainz — instance “default”',
+      name: "Unlink: ListenBrainz — instance “default”",
     })
     .click();
 
   await expect(
-    page.getByRole("button", { name: 'Unlink: Maloja — instance “default”' }),
+    page.getByRole("button", { name: "Unlink: Maloja — instance “default”" }),
   ).toBeVisible();
   await expect(
-    page.getByLabel('API key: ListenBrainz — instance “default”'),
+    page.getByLabel("API key: ListenBrainz — instance “default”"),
   ).toBeVisible();
   expect(mock.scrobbleWrites).toEqual([
     { method: "DELETE", path: "/api/v2/scrobble-links/listenbrainz/default" },

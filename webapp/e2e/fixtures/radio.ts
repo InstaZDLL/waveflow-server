@@ -24,7 +24,10 @@ export async function navigateWithin(page: Page, name: string) {
     return;
   }
   await bar.getByRole("button", { name: "More" }).click();
-  await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("link", { name, exact: true })
+    .click();
 }
 
 export const NOVA = "https://nova.example.org/live";

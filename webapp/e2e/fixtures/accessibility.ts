@@ -54,10 +54,18 @@ export function chooseLightTheme(page: Page) {
  * rounded ends and its ring, which are not behind the text: the corners of
  * its box show the picture it sits on.
  */
-export async function lowestContrast(page: Page, target: Locator, pill = false) {
+export async function lowestContrast(
+  page: Page,
+  target: Locator,
+  pill = false,
+) {
   const colour = await target.evaluate((element) => {
     const { color } = getComputedStyle(element);
-    (element as HTMLElement).style.setProperty("color", "transparent", "important");
+    (element as HTMLElement).style.setProperty(
+      "color",
+      "transparent",
+      "important",
+    );
     return color;
   });
   const box = await target.boundingBox();
@@ -93,7 +101,9 @@ export async function lowestContrast(page: Page, target: Locator, pill = false) 
         return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
       };
       const luminance = (red: number, green: number, blue: number) =>
-        0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue);
+        0.2126 * channel(red) +
+        0.7152 * channel(green) +
+        0.0722 * channel(blue);
       let lowest = Number.POSITIVE_INFINITY;
       for (let index = 0; index < data.length; index += 4) {
         const [br, bg, bb] = [data[index], data[index + 1], data[index + 2]];

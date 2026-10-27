@@ -35,8 +35,12 @@ test("files tracks into folders from the menu and by dragging", async ({
   // WaveFlow's list, not a folder of the owner's: kept apart from them, and
   // it says so.
   const kept = page.getByRole("list", { name: "Kept by WaveFlow" });
-  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
-  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("Automatic");
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText(
+    "3 tracks",
+  );
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText(
+    "Automatic",
+  );
 
   // A folder, and a second one refused for a name already taken.
   await page.getByRole("button", { name: "New folder" }).click();
@@ -47,7 +51,9 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.getByLabel("Folder name").fill("ROCK");
   await page.getByRole("button", { name: "Create" }).click();
   await expect(
-    page.getByRole("alert").filter({ hasText: "A folder of that name is already here." }),
+    page
+      .getByRole("alert")
+      .filter({ hasText: "A folder of that name is already here." }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
 
@@ -59,7 +65,9 @@ test("files tracks into folders from the menu and by dragging", async ({
   await rows.first().locator("button.song-title").focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Move to folder…" }).click();
-  const picker = page.getByRole("dialog", { name: "Move “Hidden Place” to a folder" });
+  const picker = page.getByRole("dialog", {
+    name: "Move “Hidden Place” to a folder",
+  });
   await expect(picker).toBeVisible();
   await expectNoWcagViolations(page);
   await picker.getByRole("button", { name: "Rock" }).click();
@@ -84,7 +92,9 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.goto("/folders?folder=folder-1");
   await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
   await expect(rows).toHaveCount(2);
-  await expect(page.getByText("Folders that exist only in WaveFlow", { exact: false })).toHaveCount(0);
+  await expect(
+    page.getByText("Folders that exist only in WaveFlow", { exact: false }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "New folder" }).click();
   await page.getByLabel("Folder name").fill("Indie");
   await page.getByRole("button", { name: "Create" }).click();
@@ -92,8 +102,14 @@ test("files tracks into folders from the menu and by dragging", async ({
   if (testInfo.project.name === "desktop") {
     await rows
       .filter({ hasText: "Cocoon" })
-      .dragTo(page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }));
-    await expect(page.getByRole("status")).toHaveText("1 track filed in Indie.");
+      .dragTo(
+        page
+          .getByRole("list", { name: "Folders" })
+          .getByRole("link", { name: /Indie/ }),
+      );
+    await expect(page.getByRole("status")).toHaveText(
+      "1 track filed in Indie.",
+    );
     await expect(rows).toHaveCount(1);
   } else {
     state.placed.set("song-2", "folder-2");
@@ -103,20 +119,28 @@ test("files tracks into folders from the menu and by dragging", async ({
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByLabel("New name").fill("Rock & Roll");
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("heading", { name: "Rock & Roll" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Rock & Roll" }),
+  ).toBeVisible();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(page.getByRole("heading", { name: "Folders" })).toBeVisible();
   await expect(page.getByRole("status")).toHaveText(
     "Folder deleted: 2 tracks are back in To sort.",
   );
-  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText("3 tracks");
+  await expect(kept.getByRole("link", { name: /To sort/ })).toContainText(
+    "3 tracks",
+  );
   await expectNoWcagViolations(page);
 });
 
 /** A listener walks the filed tree and is offered nothing that writes. */
-test("shows a listener the filed tree with nothing to change", async ({ page }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+test("shows a listener the filed tree with nothing to change", async ({
+  page,
+}) => {
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   const songs = [song(1, "Hidden Place", 0, false)];
   const state = await serveFiledFolders(page, songs);
   state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
@@ -127,12 +151,21 @@ test("shows a listener the filed tree with nothing to change", async ({ page }) 
     await expect(page.getByRole("button", { name })).toHaveCount(0);
   }
   // A reader is told what Unfiled is, not how to file, and rows do not drag.
-  await expect(page.getByText("WaveFlow keeps this list itself", { exact: false })).toBeVisible();
-  await expect(page.locator(".songs tbody tr").first()).not.toHaveAttribute("draggable", "true");
+  await expect(
+    page.getByText("WaveFlow keeps this list itself", { exact: false }),
+  ).toBeVisible();
+  await expect(page.locator(".songs tbody tr").first()).not.toHaveAttribute(
+    "draggable",
+    "true",
+  );
   await page.locator(".songs tbody tr button.song-title").first().focus();
   await page.keyboard.press("Shift+F10");
-  await expect(page.getByRole("menuitem", { name: "Properties" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Move to folder…" })).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Properties" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Move to folder…" }),
+  ).toHaveCount(0);
 });
 
 /**
@@ -142,12 +175,16 @@ test("shows a listener the filed tree with nothing to change", async ({ page }) 
 test("files a received track into the folder the upload started from", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   const state = await serveFiledFolders(page, []);
   state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
 
   await page.goto("/upload?folder=folder-1");
-  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await expect(
+    page.getByText("Received files go into the folder Rock."),
+  ).toBeVisible();
   await page.getByLabel("Choose audio files").setInputFiles({
     name: "Army of Me.flac",
     mimeType: "audio/flac",
@@ -171,7 +208,9 @@ test("files a received track into the folder the upload started from", async ({
 test("keeps a received track when filing it fails, and says so", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   const state = await serveFiledFolders(page, []);
   state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
   await page.route("**/api/v2/libraries/library-1/placements", (route) =>
@@ -179,13 +218,17 @@ test("keeps a received track when filing it fails, and says so", async ({
   );
 
   await page.goto("/upload?folder=folder-1");
-  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await expect(
+    page.getByText("Received files go into the folder Rock."),
+  ).toBeVisible();
   await page.getByLabel("Choose audio files").setInputFiles({
     name: "Army of Me.flac",
     mimeType: "audio/flac",
     buffer: Buffer.from(Array.from({ length: 20 }, (_, i) => i)),
   });
-  await expect(page.getByText("Added to the library, in To sort")).toBeVisible();
+  await expect(
+    page.getByText("Added to the library, in To sort"),
+  ).toBeVisible();
   expect(mock.uploadCommits).toEqual(["upload-1"]);
 });
 
@@ -197,7 +240,9 @@ test("keeps a received track when filing it fails, and says so", async ({
 test("waits for the folder before taking files, and says when it is gone", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -244,7 +289,9 @@ test("offers no tracks at the root after visiting the unfiled ones", async ({
  * "missing", and no file is taken until a reading works.
  */
 test("takes no file while the folder cannot be checked", async ({ page }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   let answers = 0;
   await page.route("**/api/v2/libraries/library-1/folders", (route) => {
     answers += 1;
@@ -252,7 +299,9 @@ test("takes no file while the folder cannot be checked", async ({ page }) => {
       ? route.fulfill({ status: 500, json: { error: "boom" } })
       : route.fulfill({
           json: {
-            folders: [{ id: "folder-1", parent_id: null, name: "Rock", track_count: 0 }],
+            folders: [
+              { id: "folder-1", parent_id: null, name: "Rock", track_count: 0 },
+            ],
             unfiled_track_count: 0,
           },
         });
@@ -264,10 +313,14 @@ test("takes no file while the folder cannot be checked", async ({ page }) => {
   });
   await expect(unchecked).toBeVisible();
   await expect(page.getByLabel("Choose audio files")).toBeDisabled();
-  await expect(page.getByText("cannot be found", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("cannot be found", { exact: false })).toHaveCount(
+    0,
+  );
 
   await unchecked.getByRole("button", { name: "Check again" }).click();
-  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await expect(
+    page.getByText("Received files go into the folder Rock."),
+  ).toBeVisible();
   await expect(page.getByLabel("Choose audio files")).toBeEnabled();
 });
 
@@ -279,14 +332,18 @@ test("takes no file while the folder cannot be checked", async ({ page }) => {
 test("goes back from the upload screen to the folder it was opened for", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   const state = await serveFiledFolders(page, []);
   state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
   const back = page.getByRole("button", { name: "Back", exact: true });
 
   await page.goto("/folders?folder=folder-1");
   await page.getByRole("link", { name: "Upload here" }).click();
-  await expect(page.getByText("Received files go into the folder Rock.")).toBeVisible();
+  await expect(
+    page.getByText("Received files go into the folder Rock."),
+  ).toBeVisible();
   await back.click();
   await expect(page.getByRole("heading", { name: "Rock" })).toBeVisible();
 
@@ -305,7 +362,9 @@ test("goes back from the upload screen to the folder it was opened for", async (
  * the folder navigated to with the old one's name, and a "new folder" opened
  * at the root would create one from Unfiled.
  */
-test("closes a folder's form when another folder is opened", async ({ page }) => {
+test("closes a folder's form when another folder is opened", async ({
+  page,
+}) => {
   const state = await serveFiledFolders(page, []);
   state.folders.push(
     { id: "folder-1", parent_id: null, name: "Rock" },
@@ -315,7 +374,10 @@ test("closes a folder's form when another folder is opened", async ({ page }) =>
   await page.goto("/folders?folder=folder-1");
   await page.getByRole("button", { name: "Rename" }).click();
   await expect(page.getByLabel("New name")).toHaveValue("Rock");
-  await page.getByRole("list", { name: "Folders" }).getByRole("link", { name: /Indie/ }).click();
+  await page
+    .getByRole("list", { name: "Folders" })
+    .getByRole("link", { name: /Indie/ })
+    .click();
   await expect(page.getByRole("heading", { name: "Indie" })).toBeVisible();
   await expect(page.getByLabel("New name")).toHaveCount(0);
   await page.getByRole("button", { name: "Rename" }).click();
@@ -344,7 +406,11 @@ test("keeps the folders and the folder picker readable in the light", async ({
   await expectNoWcagViolations(page);
 
   await cards.getByRole("link", { name: /To sort/ }).click();
-  await page.locator(".songs tbody tr").first().locator("button.song-title").focus();
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
   await page.keyboard.press("Shift+F10");
   await page.getByRole("menuitem", { name: "Move to folder…" }).click();
   await expect(

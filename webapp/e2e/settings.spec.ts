@@ -42,7 +42,9 @@ test("gathers the account's places behind one Settings entry", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the rail is desktop-only");
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   const sidebar = page.locator(".sidebar");
@@ -51,8 +53,13 @@ test("gathers the account's places behind one Settings entry", async ({
   // arrives proves nothing.
   await expect(sidebar.locator('a[href="/maintenance"]')).toHaveCount(1);
 
-  await expect(sidebar.locator('.nav-group[data-group="account"]')).toHaveCount(0);
-  await expect(sidebar.locator(".nav-label")).toHaveText(["Library", "Listening"]);
+  await expect(sidebar.locator('.nav-group[data-group="account"]')).toHaveCount(
+    0,
+  );
+  await expect(sidebar.locator(".nav-label")).toHaveText([
+    "Library",
+    "Listening",
+  ]);
   const settings = sidebar.getByRole("link", { name: "Settings" });
   await expect(settings).toHaveCount(1);
   await expect(page.locator(".sidebar-footer").getByRole("link")).toHaveText([
@@ -89,7 +96,9 @@ test("gathers the account's places behind one Settings entry", async ({
 test("opens every section of Settings from its menu", async ({
   page,
 }, testInfo) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   if (testInfo.project.name === "mobile") {
@@ -97,9 +106,15 @@ test("opens every section of Settings from its menu", async ({
       .locator(".mobile-navigation")
       .getByRole("button", { name: "More" })
       .click();
-    await page.getByRole("dialog").getByRole("link", { name: "Settings" }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("link", { name: "Settings" })
+      .click();
   } else {
-    await page.locator(".sidebar").getByRole("link", { name: "Settings" }).click();
+    await page
+      .locator(".sidebar")
+      .getByRole("link", { name: "Settings" })
+      .click();
   }
 
   const menu = page.getByRole("navigation", { name: "Settings sections" });
@@ -127,7 +142,9 @@ test("opens every section of Settings from its menu", async ({
   if (testInfo.project.name === "mobile") {
     // A list two to a row, not a strip running off the side of the phone.
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(1);
     const columns = await menu.evaluate(
@@ -153,7 +170,9 @@ test("opens every section of Settings from its menu", async ({
  * landing on an address that would only send them forward again.
  */
 test("lands every old address on its section of Settings", async ({ page }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   for (const [address, path, heading] of [
     ["/settings", "/settings", "Account"],
     ["/settings/scrobbling", "/settings/scrobbling", "External scrobbling"],
@@ -199,7 +218,11 @@ test("hides Admin and Upload from the Settings menu of an account without them",
     }),
   );
   mock.libraries = [
-    { ...library("library-1", "Ma musique"), accepts_uploads: true, role: "listener" },
+    {
+      ...library("library-1", "Ma musique"),
+      accepts_uploads: true,
+      role: "listener",
+    },
   ];
   await page.goto("/settings");
   await expect(
@@ -226,7 +249,9 @@ for (const section of SETTINGS_SECTIONS) {
   test(`keeps the Settings menu readable in the light on ${section.link}`, async ({
     page,
   }) => {
-    mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+    mock.libraries = [
+      { ...library("library-1", "Ma musique"), accepts_uploads: true },
+    ];
     await chooseLightTheme(page);
     await page.goto(section.path);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
@@ -270,9 +295,7 @@ test("shows the clients that can read the library, and revokes one", async ({
   await expect(clients.getByRole("listitem")).toHaveCount(1);
   await expect(clients.getByText("the kitchen speaker")).toBeVisible();
   await expect(clients.getByText("a laptop that is gone")).toHaveCount(0);
-  await expect(
-    clients.getByText("a tablet whose year ran out"),
-  ).toHaveCount(0);
+  await expect(clients.getByText("a tablet whose year ran out")).toHaveCount(0);
 
   // Registering one shows the secret, once, and the list follows.
   await clients.getByLabel("What it is for").fill("my phone");
@@ -370,9 +393,9 @@ test("changes the Subsonic password, then switches it off", async ({
     ),
   ).toBeVisible();
   await expect(subsonic.getByLabel("New password")).toHaveCount(0);
-  await expect(
-    subsonic.getByRole("button", { name: "Change it" }),
-  ).toHaveCount(0);
+  await expect(subsonic.getByRole("button", { name: "Change it" })).toHaveCount(
+    0,
+  );
 });
 
 /**

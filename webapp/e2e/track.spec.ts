@@ -77,7 +77,9 @@ test("opens a track's properties from its context menu", async ({ page }) => {
   for (let press = 0; press < 6; press += 1) {
     await page.keyboard.press("ArrowDown");
   }
-  await expect(menu.getByRole("menuitem", { name: "Properties" })).toBeFocused();
+  await expect(
+    menu.getByRole("menuitem", { name: "Properties" }),
+  ).toBeFocused();
   await page.keyboard.press("Enter");
 
   const panel = page.getByRole("dialog", { name: "Army Of Me" });
@@ -296,8 +298,7 @@ test("downloads a track from its context menu", async ({ page }) => {
   await expect
     .poll(() =>
       page.evaluate(
-        () =>
-          (window as unknown as { __saved: unknown[] }).__saved,
+        () => (window as unknown as { __saved: unknown[] }).__saved,
       ),
     )
     .toEqual([{ href: "/api/v2/stream/ticket-9?download=1", download: "" }]);
@@ -392,7 +393,9 @@ test("offers a tag correction only to an owner or a manager", async ({
   await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
   await expect(links).toHaveCount(3);
 
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   await page.reload();
   await expect(page.getByRole("heading", { name: "Vespertine" })).toBeVisible();
   // The row's own marks cell, where the link would be. Once its rating is in
@@ -446,13 +449,22 @@ test("keeps an album, the player bar and a track's properties readable in the li
   );
   await page.route("**/api/v2/tracks/song-9", (route) =>
     route.fulfill({
-      json: { ...mock.correctable.song, relative_path: "Björk/Post/09 Army Of Me.flac" },
+      json: {
+        ...mock.correctable.song,
+        relative_path: "Björk/Post/09 Army Of Me.flac",
+      },
     }),
   );
   await page.goto("/songs");
-  await page.locator(".songs tbody tr").first().locator("button.song-title").focus();
+  await page
+    .locator(".songs tbody tr")
+    .first()
+    .locator("button.song-title")
+    .focus();
   await page.keyboard.press("Shift+F10");
-  await expect(page.getByRole("menu", { name: "Actions for Army Of Me" })).toBeVisible();
+  await expect(
+    page.getByRole("menu", { name: "Actions for Army Of Me" }),
+  ).toBeVisible();
   await expectNoWcagViolations(page);
   await page.getByRole("menuitem", { name: "Properties" }).click();
   await expect(page.getByRole("dialog", { name: "Army Of Me" })).toBeVisible();

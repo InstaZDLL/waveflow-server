@@ -77,7 +77,9 @@ test("keeps a track for offline, by its id, and plays it from the offline page",
   await page
     .getByRole("button", { name: "Remove the offline copy of Army Of Me" })
     .click();
-  await expect(page.getByText("Nothing is kept yet.", { exact: false })).toBeVisible();
+  await expect(
+    page.getByText("Nothing is kept yet.", { exact: false }),
+  ).toBeVisible();
   await expect.poll(stored).toEqual([]);
 });
 
@@ -102,7 +104,9 @@ test("a sign-out deletes the tracks kept for offline", async ({
   );
   await page.goto("/offline");
   await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(
+    0,
+  );
   await expect(page.getByLabel("Offline player")).toHaveCount(0);
 });
 
@@ -126,7 +130,9 @@ test("another account signing in sees none of the tracks kept offline", async ({
   await expect.poll(() => keptPaths(page)).toEqual([]);
   await page.goto("/offline");
   await expect(page.getByText(/Nothing is kept yet/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Army Of Me/ })).toHaveCount(
+    0,
+  );
 });
 
 /**
@@ -178,7 +184,9 @@ test("keeps playing the same kept track when another is forgotten", async ({
   await page
     .getByRole("button", { name: "Remove the offline copy of First kept" })
     .click();
-  await expect(page.getByRole("button", { name: /^First kept/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^First kept/ })).toHaveCount(
+    0,
+  );
   await expect(
     page.getByRole("listitem").filter({ hasText: "Second kept" }),
   ).toHaveAttribute("aria-current", "true");

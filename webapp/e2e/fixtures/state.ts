@@ -7,10 +7,10 @@ import {
   freshUncertain,
   freshUploadSession,
   library,
-  linkState,
-  missingTrack,
+  type linkState,
+  type missingTrack,
   type Offer,
-  song,
+  type song,
 } from "./catalogue";
 
 /**
@@ -31,7 +31,9 @@ class MockState {
   restoreAsks: unknown[] = [];
 
   /** Replaced by the scoping test; one library elsewhere, so no picker appears. */
-  libraries: Array<ReturnType<typeof library>> = [library("library-1", "Ma musique")];
+  libraries: Array<ReturnType<typeof library>> = [
+    library("library-1", "Ma musique"),
+  ];
 
   /** Flipped by the two tests that check a failure is shown as one. */
   membersFail = false;
@@ -204,8 +206,7 @@ class MockState {
   /** The loop the mock holds for each track, as bytes. Absent is none. */
   canvases = new Map<string, number[]>();
   /** Every placement and removal the mock received, in order. */
-  canvasWrites: Array<{ method: string; track: string; bytes?: number[] }> =
-    [];
+  canvasWrites: Array<{ method: string; track: string; bytes?: number[] }> = [];
   /** Set by a test to refuse the next placement with this status. */
   refuseCanvasWith: number | null = null;
   /**

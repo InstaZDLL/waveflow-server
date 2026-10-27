@@ -10,8 +10,8 @@ import { resetAndMockApi } from "./fixtures/api";
 import { PIXEL, silentWav } from "./fixtures/media";
 import {
   elements,
-  navigateWithin,
   NOVA,
+  navigateWithin,
   serveStationAndQueue,
 } from "./fixtures/radio";
 import { mock } from "./fixtures/state";
@@ -42,7 +42,9 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
   const form = page.getByRole("dialog", { name: "Add a station" });
   await form.getByLabel("Station name").fill("Radio Nova");
   await form.getByLabel("Stream address").fill("https://nova.example.org/live");
-  await form.getByLabel("Station page (optional)").fill("https://nova.example.org/");
+  await form
+    .getByLabel("Station page (optional)")
+    .fill("https://nova.example.org/");
   await form.getByRole("button", { name: "Save station" }).click();
   await expect(form).toHaveCount(0);
 
@@ -73,7 +75,10 @@ test("keeps a list of radio stations, replacing rather than patching", async ({
   // Editing, from the card's menu, loads the station into the same form, and
   // says what saving means: the page address is cleared because the form
   // sends every field.
-  await listed.first().getByRole("button", { name: "Actions for Radio Nova" }).click();
+  await listed
+    .first()
+    .getByRole("button", { name: "Actions for Radio Nova" })
+    .click();
   await page.getByRole("menuitem", { name: "Edit" }).click();
   const editor = page.getByRole("dialog", { name: "Edit “Radio Nova”" });
   await expect(editor.getByLabel("Station name")).toHaveValue("Radio Nova");
@@ -153,7 +158,9 @@ test("closes the form while a station is saving, and leaves listening alone", as
   // the fields and disabled the button for the other reason. Held open, the
   // save cannot land, and removing the guard fails on this very line —
   // measured both ways.
-  await expect(form.getByRole("button", { name: "Save station" })).toBeDisabled();
+  await expect(
+    form.getByRole("button", { name: "Save station" }),
+  ).toBeDisabled();
   await expect(form.getByLabel("Station name")).toBeDisabled();
   await expect(form.getByLabel("Stream address")).toBeDisabled();
   await expect(form.getByRole("button", { name: "Cancel" })).toBeDisabled();
@@ -212,10 +219,14 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
   const bar = page.locator(".player");
   await expect(bar.locator(".player-track strong")).toHaveText("Hidden Place");
   // The graph is built, and holds the queue's element.
-  await expect.poll(async () => (await elements(page)).queue?.claimed).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).queue?.claimed)
+    .toBe(true);
 
   await navigateWithin(page, "Radio");
-  const station = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
+  const station = page
+    .locator(".station-grid li")
+    .filter({ hasText: "Radio Nova" });
   await station.getByRole("button", { name: "Listen" }).click();
 
   await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
@@ -225,7 +236,11 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
     .poll(async () => (await elements(page)).station?.time ?? 0)
     .toBeGreaterThan(0.2);
   const playing = await elements(page);
-  expect(playing.station).toMatchObject({ paused: false, source: NOVA, claimed: false });
+  expect(playing.station).toMatchObject({
+    paused: false,
+    source: NOVA,
+    claimed: false,
+  });
   // Its own element: the queue's is paused under it, still the graph's, and
   // still holding its track.
   expect(playing.queue).toMatchObject({ paused: true, claimed: true });
@@ -233,7 +248,9 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
   // A station has nothing to seek in and nothing to go to next.
   await expect(bar.getByRole("slider", { name: "Seek" })).toHaveCount(0);
   await expect(bar.getByRole("button", { name: "Next track" })).toHaveCount(0);
-  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(
+    0,
+  );
   await expect(bar.getByRole("button", { name: "Shuffle" })).toHaveCount(0);
   await expectNoWcagViolations(page);
 
@@ -241,7 +258,8 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
   await navigateWithin(page, "Albums");
   await expect(page.locator(".grid li").first()).toBeVisible();
   await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
-  await expect(bar.locator(".live-badge")).toHaveText("Live");  const before = (await elements(page)).station?.time ?? 0;
+  await expect(bar.locator(".live-badge")).toHaveText("Live");
+  const before = (await elements(page)).station?.time ?? 0;
   await expect
     .poll(async () => (await elements(page)).station?.time ?? 0)
     .toBeGreaterThan(before);
@@ -249,7 +267,9 @@ test("carries a live station in the bar across pages, off the ReplayGain graph",
 
   // The bar is the stop button now.
   await bar.getByRole("button", { name: "Stop the station" }).click();
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(true);
   await expect(bar.getByRole("button", { name: "Play" })).toBeVisible();
   await expect(bar.locator(".player-track strong")).toHaveText("Radio Nova");
 });
@@ -270,7 +290,9 @@ test("pauses the queue under a station, keeps it, and gives it back to a track",
   await navigateWithin(page, "Radio");
   await page.getByRole("button", { name: "Listen" }).click();
   await expect(bar.locator(".live-badge")).toHaveText("Live");
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(false);
   expect((await elements(page)).queue?.paused).toBe(true);
 
   // Paused, not cleared: the queue is all there.
@@ -284,10 +306,15 @@ test("pauses the queue under a station, keeps it, and gives it back to a track",
   await rows.filter({ hasText: "Cocoon" }).locator(".queue-track").click();
   await expect(bar.locator(".player-track strong")).toHaveText("Cocoon");
   await expect(bar.locator(".live-badge")).toHaveCount(0);
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(true);
   await expect
     .poll(async () => (await elements(page)).queue)
-    .toMatchObject({ paused: false, source: expect.stringContaining("ticket-song-2") });
+    .toMatchObject({
+      paused: false,
+      source: expect.stringContaining("ticket-song-2"),
+    });
   // And the radio page no longer calls the station playing.
   await navigateWithin(page, "Radio");
   await expect(page.getByRole("button", { name: "Listen" })).toBeVisible();
@@ -318,20 +345,28 @@ test("takes an image address for a station, and shows the image the server kept"
   await form.getByLabel("Station name").fill("Radio Nova");
   await form.getByLabel("Stream address").fill(NOVA);
   // Refused here first, as the server would, and the button stays shut.
-  await form.getByLabel("Station image (optional)").fill("ftp://logos.example.org/n.png");
+  await form
+    .getByLabel("Station image (optional)")
+    .fill("ftp://logos.example.org/n.png");
   await expect(
     form.getByText("An address must start with http:// or https://."),
   ).toBeVisible();
-  await expect(form.getByRole("button", { name: "Save station" })).toBeDisabled();
+  await expect(
+    form.getByRole("button", { name: "Save station" }),
+  ).toBeDisabled();
   await form
     .getByLabel("Station image (optional)")
     .fill("https://logos.example.org/nova.png");
   await expect(
-    form.getByText("The server downloads it once, when you save", { exact: false }),
+    form.getByText("The server downloads it once, when you save", {
+      exact: false,
+    }),
   ).toBeVisible();
   await form.getByRole("button", { name: "Save station" }).click();
 
-  const listed = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
+  const listed = page
+    .locator(".station-grid li")
+    .filter({ hasText: "Radio Nova" });
   await expect(listed.locator("img.station-cover")).toBeVisible();
   expect(mock.stationImages).toEqual(["https://logos.example.org/nova.png"]);
 
@@ -345,8 +380,13 @@ test("takes an image address for a station, and shows the image the server kept"
   );
   await editor.getByLabel("Station image (optional)").fill("");
   await editor.getByRole("button", { name: "Save station" }).click();
-  await expect(listed.locator(".station-cover.cover-fallback svg")).toBeVisible();
-  expect(mock.stationImages).toEqual(["https://logos.example.org/nova.png", null]);
+  await expect(
+    listed.locator(".station-cover.cover-fallback svg"),
+  ).toBeVisible();
+  expect(mock.stationImages).toEqual([
+    "https://logos.example.org/nova.png",
+    null,
+  ]);
   await expectNoWcagViolations(page);
   expect(asked, "the browser never asks the image's own host").toEqual([]);
 });
@@ -358,7 +398,11 @@ for (const theme of ["dark", "light"] as const) {
     if (theme === "light") await chooseLightTheme(page);
     await serveStationAndQueue(page);
     mock.stations = [
-      { ...mock.stations[0], image_url: "https://logos.example.org/nova.png", artwork_hash: "station-art-nova" },
+      {
+        ...mock.stations[0],
+        image_url: "https://logos.example.org/nova.png",
+        artwork_hash: "station-art-nova",
+      },
       {
         ...mock.stations[0],
         id: "station-2",
@@ -371,7 +415,9 @@ for (const theme of ["dark", "light"] as const) {
       return route.fulfill({ contentType: "image/png", body: PIXEL });
     });
     await page.goto("/radio");
-    const nova = page.locator(".station-grid li").filter({ hasText: "Radio Nova" });
+    const nova = page
+      .locator(".station-grid li")
+      .filter({ hasText: "Radio Nova" });
     await expect(nova.locator("img.station-cover")).toBeVisible();
     await nova.getByRole("button", { name: "Listen" }).click();
 
@@ -390,14 +436,18 @@ for (const theme of ["dark", "light"] as const) {
     await expectNoWcagViolations(page);
 
     // A station without an image keeps the radio symbol.
-    const plain = page.locator(".station-grid li").filter({ hasText: "Radio Plain" });
+    const plain = page
+      .locator(".station-grid li")
+      .filter({ hasText: "Radio Plain" });
     await plain.getByRole("button", { name: "Listen" }).click();
     await expect(bar.locator(".player-track strong")).toHaveText("Radio Plain");
     await expect(bar.locator(".player-cover.cover-fallback svg")).toBeVisible();
     await expect(bar.locator("img.player-cover")).toHaveCount(0);
     await expect
       .poll(() =>
-        page.evaluate(() => navigator.mediaSession?.metadata?.artwork?.length ?? 0),
+        page.evaluate(
+          () => navigator.mediaSession?.metadata?.artwork?.length ?? 0,
+        ),
       )
       .toBe(0);
   });
@@ -417,10 +467,14 @@ test("keeps a live station readable in the light, and closes back to the queue",
   await page.getByRole("button", { name: "Listen" }).click();
   const bar = page.locator(".player");
   await expect(bar.locator(".live-badge")).toHaveText("Live");
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(false);
   await expectNoWcagViolations(page);
   await bar.getByRole("button", { name: "Stop and close" }).click();
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(true);
   // The saved queue's track, still where the listener left it.
   await expect(bar.locator(".player-track strong")).toHaveText("Hidden Place");
   await expect(bar.getByRole("button", { name: "Play" })).toBeVisible();
@@ -444,7 +498,10 @@ for (const from of ["page", "bar"] as const) {
       asked += 1;
       return asked === 1
         ? route.fulfill({ status: 404, body: "" })
-        : route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } });
+        : route.fulfill({
+            body: audio,
+            headers: { "content-type": "audio/wav" },
+          });
     });
     await page.goto("/radio");
     await page.getByRole("button", { name: "Listen" }).click();
@@ -452,7 +509,9 @@ for (const from of ["page", "bar"] as const) {
       page.getByText("That station could not be played.", { exact: false }),
     ).toBeVisible();
     const bar = page.locator(".player");
-    await expect(bar.getByRole("alert")).toHaveText("This station could not be played.");
+    await expect(bar.getByRole("alert")).toHaveText(
+      "This station could not be played.",
+    );
     expect(asked).toBe(1);
 
     if (from === "page") {
@@ -466,7 +525,9 @@ for (const from of ["page", "bar"] as const) {
       .toBeGreaterThan(0.2);
     expect((await elements(page)).station?.paused).toBe(false);
     await expect(bar.getByRole("alert")).toHaveCount(0);
-    await expect(bar.getByRole("button", { name: "Stop the station" })).toBeVisible();
+    await expect(
+      bar.getByRole("button", { name: "Stop the station" }),
+    ).toBeVisible();
   });
 }
 
@@ -481,10 +542,14 @@ test("stops a live station when the listener signs out", async ({
   await serveStationAndQueue(page);
   await page.goto("/radio");
   await page.getByRole("button", { name: "Listen" }).click();
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(false);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(false);
   // Dispatched rather than clicked, as in the cache test: the sidebar's
   // footer sits under the fixed player bar at this viewport.
   await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page).toHaveURL(/\/login$/);
-  await expect.poll(async () => (await elements(page)).station?.paused).toBe(true);
+  await expect
+    .poll(async () => (await elements(page)).station?.paused)
+    .toBe(true);
 });

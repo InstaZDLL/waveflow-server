@@ -128,7 +128,9 @@ test("reloads the credits when a decision is refused", async ({ page }) => {
 test("asks nothing of the server for a listener's library", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   const state = await serveAttention(page);
   await page.goto("/attention");
   await expect(
@@ -177,7 +179,9 @@ test("splits a joined artist from its page, after a confirming click", async ({
   ]);
 
   // A listener is offered nothing.
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   await page.goto("/artists/artist-joined");
   await expect(
     page.getByRole("heading", { name: "Ashreveal, Ashish Swargiary" }),
@@ -191,7 +195,9 @@ test("keeps Needs attention readable in the light", async ({ page }) => {
   await serveAttention(page);
   await chooseLightTheme(page);
   await page.goto("/attention");
-  await expect(page.getByText("Ashreveal, Ashish Swargiary").first()).toBeVisible();
+  await expect(
+    page.getByText("Ashreveal, Ashish Swargiary").first(),
+  ).toBeVisible();
   await expectNoWcagViolations(page);
 });
 
@@ -215,7 +221,9 @@ for (const theme of [
     }, theme);
     await page.goto("/attention");
     await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
-    await expect(page.getByText("Ashreveal, Ashish Swargiary").first()).toBeVisible();
+    await expect(
+      page.getByText("Ashreveal, Ashish Swargiary").first(),
+    ).toBeVisible();
     await expectNoWcagViolations(page);
   });
 }
