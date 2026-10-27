@@ -193,10 +193,13 @@ async fn a_time_offset_probe_is_answered_with_a_range_of_the_seek() {
         .to_str()
         .unwrap()
         .to_owned();
-    assert!(
-        content_range.starts_with("bytes 0-1/"),
-        "not a two-byte answer: {content_range}"
-    );
+    // The length is what the probe is for: a total that is only the two bytes
+    // sent would tell the player there is nothing to play.
+    let total: u64 = content_range
+        .strip_prefix("bytes 0-1/")
+        .and_then(|total| total.parse().ok())
+        .unwrap_or_else(|| panic!("not a two-byte answer with a length: {content_range}"));
+    assert!(total > 2, "{total} bytes is no seek to play");
     let bytes = http_body_util::BodyExt::collect(probe.into_body())
         .await
         .unwrap()
