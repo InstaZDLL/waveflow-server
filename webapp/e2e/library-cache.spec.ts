@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 
 import { resetAndMockApi } from "./fixtures/api";
 import { albums, session, track } from "./fixtures/catalogue";
+import { onPhoneNavigation } from "./fixtures/navigation";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -31,7 +32,7 @@ test("keeps the current tab visible while the next tab loads", async ({
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-  const mobile = await page.locator(".mobile-navigation").isVisible();
+  const mobile = await onPhoneNavigation(page);
   const genresLink = mobile
     ? page.locator('.more-sheet a[href="/genres"]')
     : page.locator(".primary-navigation").getByRole("link", { name: "Genres" });
@@ -76,7 +77,7 @@ test("shows the next tab with its wait when the answer is slow", async ({
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-  const mobile = await page.locator(".mobile-navigation").isVisible();
+  const mobile = await onPhoneNavigation(page);
   if (mobile) {
     await page
       .locator(".mobile-navigation")
@@ -102,7 +103,7 @@ test("shows the next tab with its wait when the answer is slow", async ({
 test("takes the current tab back to its plain address", async ({ page }) => {
   await page.goto("/playing?view=lyrics");
   await expect(page).toHaveURL(/\/playing\?view=lyrics$/);
-  const navigation = (await page.locator(".mobile-navigation").isVisible())
+  const navigation = (await onPhoneNavigation(page))
     ? page.locator(".mobile-navigation")
     : page.locator(".primary-navigation");
   await navigation.getByRole("link", { name: "Now playing" }).click();
@@ -128,7 +129,7 @@ test("draws the random tab once when switching to it", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-  if (await page.locator(".mobile-navigation").isVisible()) {
+  if (await onPhoneNavigation(page)) {
     await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
     await page.locator('.more-sheet a[href="/random"]').click();
   } else {
@@ -170,7 +171,7 @@ test("leaves a tab switch behind when the visitor moves on while it loads", asyn
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
-  const mobile = await page.locator(".mobile-navigation").isVisible();
+  const mobile = await onPhoneNavigation(page);
   if (mobile) {
     await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
   }

@@ -3,6 +3,7 @@
 import type { Page } from "@playwright/test";
 
 import { silentWav } from "./media";
+import { onPhoneNavigation } from "./navigation";
 import { mock } from "./state";
 
 /**
@@ -12,7 +13,7 @@ import { mock } from "./state";
  */
 export async function navigateWithin(page: Page, name: string) {
   const sidebar = page.locator(".sidebar");
-  if (await sidebar.isVisible()) {
+  if (!(await onPhoneNavigation(page))) {
     await sidebar.getByRole("link", { name, exact: true }).click();
     return;
   }
