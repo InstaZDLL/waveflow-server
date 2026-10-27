@@ -1,5 +1,8 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+
+import { expectNoWcagViolations } from "./fixtures/accessibility";
+import { albums, session } from "./fixtures/catalogue";
+import { PIXEL } from "./fixtures/media";
 
 /**
  * The editorial pass over four screens: the playing screen in two columns,
@@ -10,12 +13,6 @@ import { expect, type Page, test } from "@playwright/test";
  * same session, the same `Library` shape, the same lyrics envelope — and kept
  * to the routes these screens read. Anything else answers 404, as there.
  */
-
-const session = {
-  access_token: "e2e-access-token",
-  user: { id: "user-1", username: "listener", role: "admin" },
-  device_id: "device-1",
-};
 
 const library = (role: "owner" | "manager" | "listener") => ({
   id: "library-1",
@@ -28,31 +25,6 @@ const library = (role: "owner" | "manager" | "listener") => ({
   accepts_canvas: false,
   follow_links: false,
 });
-
-const albums = [
-  {
-    id: "album-1",
-    library_id: "library-1",
-    title: "Post",
-    artist: "Björk",
-    artist_id: "artist-1",
-    artwork_hash: null,
-    year: 1995,
-    starred_at: null,
-    user_rating: null,
-  },
-  {
-    id: "album-2",
-    library_id: "library-1",
-    title: "Vespertine",
-    artist: "Björk",
-    artist_id: "artist-1",
-    artwork_hash: null,
-    year: 2001,
-    starred_at: null,
-    user_rating: null,
-  },
-];
 
 const song = (index: number, title: string) => ({
   id: `song-${index}`,
@@ -115,29 +87,6 @@ const longSheet = (): Sheet[] => [
   },
 ];
 
-const png = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64",
-);
-
-async function expectNoWcagViolations(page: Page) {
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter(
-          (animation) =>
-            animation.effect?.getComputedTiming().endTime !== Infinity,
-        )
-        .map((animation) => animation.finished.catch(() => undefined)),
-    ),
-  );
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
-}
-
 async function mockApi(page: Page) {
   await page.context().addCookies([
     {
@@ -162,7 +111,7 @@ async function mockApi(page: Page) {
       });
     }
     if (path.startsWith("/api/v2/artwork/")) {
-      return route.fulfill({ contentType: "image/png", body: png });
+      return route.fulfill({ contentType: "image/png", body: PIXEL });
     }
     if (
       path === "/api/v2/bookmarks" ||

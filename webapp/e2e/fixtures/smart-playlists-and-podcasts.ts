@@ -2,6 +2,9 @@
 
 import type { Page } from "@playwright/test";
 
+import { session } from "./catalogue";
+import { silentWav } from "./media";
+
 /**
  * Smart playlists and podcasts (RFC-025), against a mock that keeps what it is
  * sent: an editor that saved nothing, or a download that changed nothing,
@@ -11,12 +14,6 @@ import type { Page } from "@playwright/test";
  * `PodcastOverview`, `PodcastChannelItem` — not from the client's
  * declarations of them.
  */
-
-const session = {
-  access_token: "e2e-access-token",
-  user: { id: "user-1", username: "listener", role: "admin" },
-  device_id: "device-1",
-};
 
 export const LIBRARY_ID = "2740f393-e84e-488a-8a67-745deb23399a";
 
@@ -132,26 +129,6 @@ class SmartAndPodcastState {
 
 /** The one instance, shared by the mock and every test in a worker. */
 export const state = new SmartAndPodcastState();
-
-/** One second of silence, as a WAV the browser can play. */
-function silence(): Buffer {
-  const samples = 8000 * 30;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + samples, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(8000, 24);
-  header.writeUInt32LE(8000, 28);
-  header.writeUInt16LE(1, 32);
-  header.writeUInt16LE(8, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(samples, 40);
-  return Buffer.concat([header, Buffer.alloc(samples, 128)]);
-}
 
 function listed(playlist: (typeof state.smart)[number]) {
   const { songs: _songs, ...rest } = playlist;
@@ -364,7 +341,7 @@ async function mockApi(page: Page) {
       await route.fulfill({
         status: 200,
         headers: { "content-type": "audio/wav", "accept-ranges": "bytes" },
-        body: silence(),
+        body: silentWav(30),
       });
       return;
     }

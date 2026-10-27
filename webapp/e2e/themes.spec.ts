@@ -3,6 +3,8 @@ import { expect, type Page, test } from "@playwright/test";
 
 import { themeSurfaces } from "../src/styles/design-tokens/apply";
 import { THEME_PRESETS } from "../src/styles/design-tokens/themes";
+import { albums, library, session } from "./fixtures/catalogue";
+import { silentWav } from "./fixtures/media";
 
 /**
  * The theme picker and the fourteen presets it offers, against a mock
@@ -12,49 +14,6 @@ import { THEME_PRESETS } from "../src/styles/design-tokens/themes";
  * The roster is read from the catalogue itself rather than copied here, so a
  * preset added to `THEME_PRESETS` is audited without anyone remembering to.
  */
-
-const session = {
-  access_token: "e2e-access-token",
-  user: { id: "user-1", username: "listener", role: "admin" },
-  device_id: "device-1",
-};
-
-const library = {
-  id: "library-1",
-  name: "Ma musique",
-  visibility: "private",
-  role: "owner",
-  last_scan_started_at: null,
-  last_scan_completed_at: null,
-  accepts_uploads: false,
-  accepts_canvas: false,
-  follow_links: false,
-};
-
-const albums = [
-  {
-    id: "album-1",
-    library_id: "library-1",
-    title: "Post",
-    artist: "Björk",
-    artist_id: "artist-1",
-    artwork_hash: null,
-    year: 1995,
-    starred_at: null,
-    user_rating: null,
-  },
-  {
-    id: "album-2",
-    library_id: "library-1",
-    title: "Vespertine",
-    artist: "Björk",
-    artist_id: "artist-1",
-    artwork_hash: null,
-    year: 2001,
-    starred_at: null,
-    user_rating: null,
-  },
-];
 
 const song = (
   index: number,
@@ -91,26 +50,6 @@ const songs = [
   song(3, "Undo", 2, false),
 ];
 
-/** Thirty seconds of silence, as a WAV the browser can load. */
-function silence(): Buffer {
-  const samples = 8000 * 30;
-  const header = Buffer.alloc(44);
-  header.write("RIFF", 0);
-  header.writeUInt32LE(36 + samples, 4);
-  header.write("WAVE", 8);
-  header.write("fmt ", 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(8000, 24);
-  header.writeUInt32LE(8000, 28);
-  header.writeUInt16LE(1, 32);
-  header.writeUInt16LE(8, 34);
-  header.write("data", 36);
-  header.writeUInt32LE(samples, 40);
-  return Buffer.concat([header, Buffer.alloc(samples, 128)]);
-}
-
 async function mockApi(page: Page) {
   await page.context().addCookies([
     {
@@ -123,7 +62,7 @@ async function mockApi(page: Page) {
     const path = new URL(route.request().url()).pathname;
     const answers: Record<string, unknown> = {
       "/api/v2/web/auth/refresh": session,
-      "/api/v2/libraries": [library],
+      "/api/v2/libraries": [library("library-1", "Ma musique")],
       "/api/v2/albums": albums,
       "/api/v2/albums/album-2": { ...albums[1], songs },
       // A queue the server remembers, so the play bar is drawn on every
@@ -163,7 +102,7 @@ async function mockApi(page: Page) {
     }
     if (path.startsWith("/api/v2/stream/")) {
       await route.fulfill({
-        body: silence(),
+        body: silentWav(30),
         headers: { "content-type": "audio/wav" },
       });
       return;

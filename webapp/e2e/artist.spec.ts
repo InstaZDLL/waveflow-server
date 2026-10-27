@@ -10,6 +10,7 @@ import {
 import { resetAndMockApi } from "./fixtures/api";
 import { openImageMenu, serveArtistImages } from "./fixtures/artist-images";
 import { albums, artistDetail, library } from "./fixtures/catalogue";
+import { PIXEL } from "./fixtures/media";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -101,12 +102,8 @@ test("an artist page shows what the server learned, and where each part came fro
         };
   // Only the portrait's hash answers with an image: the artist row names
   // none, so the hero can show it only through `enrichment.image`.
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
   await page.route(`**/api/v2/artwork/${"a".repeat(64)}`, async (route) => {
-    await route.fulfill({ contentType: "image/png", body: png });
+    await route.fulfill({ contentType: "image/png", body: PIXEL });
   });
 
   await page.goto("/artists/artist-1");

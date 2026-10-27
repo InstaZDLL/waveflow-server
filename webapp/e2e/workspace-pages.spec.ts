@@ -1,5 +1,7 @@
-import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+
+import { expectNoWcagViolations } from "./fixtures/accessibility";
+import { session } from "./fixtures/catalogue";
 
 /**
  * The workspace pages: Radio, Podcasts, Folders and the Maintenance hub, which
@@ -9,12 +11,6 @@ import { expect, type Page, test } from "@playwright/test";
  * a delete that deleted nothing, or an edit that saved nothing, would
  * otherwise pass against a fixed answer.
  */
-
-const session = {
-  access_token: "e2e-access-token",
-  user: { id: "user-1", username: "listener", role: "admin" },
-  device_id: "device-1",
-};
 
 const LIBRARY_ID = "2740f393-e84e-488a-8a67-745deb23399a";
 
@@ -96,24 +92,6 @@ let folders: Array<{
   name: string;
   track_count: number;
 }> = [];
-
-async function expectNoWcagViolations(page: Page) {
-  await page.evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter(
-          (animation) =>
-            animation.effect?.getComputedTiming().endTime !== Infinity,
-        )
-        .map((animation) => animation.finished.catch(() => undefined)),
-    ),
-  );
-  const results = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
-    .analyze();
-  expect(results.violations).toEqual([]);
-}
 
 function stationFrom(id: string, draft: Record<string, unknown>): Station {
   return {

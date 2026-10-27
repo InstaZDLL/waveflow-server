@@ -3,7 +3,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import { expectNoWcagViolations } from "./fixtures/accessibility";
-import { onPhoneNavigation } from "./fixtures/navigation";
+import { PIXEL } from "./fixtures/media";
+import { navigateWithin } from "./fixtures/radio";
 import {
   type Episode,
   episode,
@@ -87,30 +88,6 @@ function episodeElement(page: Page, ticket: string) {
       ? { paused: element.paused, currentTime: element.currentTime }
       : null;
   }, ticket);
-}
-
-/**
- * Moves within the client, as a click on its navigation does — never by
- * loading a page, which would start the player over and prove nothing about
- * what survives a navigation.
- */
-async function navigateWithin(page: Page, name: string) {
-  const sidebar = page.locator(".sidebar");
-  if (!(await onPhoneNavigation(page))) {
-    await sidebar.getByRole("link", { name, exact: true }).click();
-    return;
-  }
-  const bar = page.locator(".mobile-navigation");
-  const direct = bar.getByRole("link", { name, exact: true });
-  if (await direct.count()) {
-    await direct.click();
-    return;
-  }
-  await bar.getByRole("button", { name: "More" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("link", { name, exact: true })
-    .click();
 }
 
 const ready = { status: "completed" as const, suffix: "wav", size: 8044 };
@@ -230,12 +207,6 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
     (await episodeElement(page, "ticket-episode-1"))?.currentTime,
   ).toBeGreaterThanOrEqual(12);
 });
-
-/** A one-pixel PNG, for the covers the artwork route is asked for. */
-const PIXEL = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-  "base64",
-);
 
 /**
  * A channel's cover is the hash of the copy the server fetched, and the page
