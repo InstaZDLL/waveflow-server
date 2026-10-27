@@ -16,11 +16,13 @@ on:
     branches: [main]
     paths:
       - "webapp/**"
+      - "scripts/check-webapp-layout.sh"
       - ".github/workflows/ci-web.yml"
   pull_request:
     branches: [main]
     paths:
       - "webapp/**"
+      - "scripts/check-webapp-layout.sh"
       - ".github/workflows/ci-web.yml"
 
 permissions:
@@ -53,6 +55,15 @@ jobs:
           # rest of the repo's checkout posture (rust matrix +
           # codeql).
           persist-credentials: false
+
+      # The shape the restructuring gave the client: no code file past 600
+      # lines, no stylesheet past 800, no test, spec or fixture past 1,000.
+      # The limits and any allowed exception live in the script, with why.
+      # It reads the tree from the repository root, so it steps out of the
+      # job's default `webapp/`.
+      - name: Webapp layout
+        working-directory: .
+        run: sh scripts/check-webapp-layout.sh
 
       - name: Install Bun
         # Pinned to the v2.2.0 commit SHA. `pull_request` runs with a
