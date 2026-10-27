@@ -60,17 +60,27 @@ check_size() {
     fi
 }
 
-for file in $(find webapp/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) | sort); do
+# One path per line, read whole: a `for` over `$(find)` would split a name
+# with a space in it into pieces that name no file, and the file itself would
+# go unmeasured. Fed by a here-document rather than a pipe, so the loop runs
+# in this shell and what it sets in `failed` survives it.
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
     case "$file" in
         *.test.ts | *.test.tsx) check_size "$file" "$TEST_LIMIT" ;;
         *.css) check_size "$file" "$STYLE_LIMIT" ;;
         *) check_size "$file" "$CODE_LIMIT" ;;
     esac
-done
+done <<EOF
+$(find webapp/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name '*.css' \) | sort)
+EOF
 
-for file in $(find webapp/e2e -type f | sort); do
+while IFS= read -r file; do
+    [ -n "$file" ] || continue
     check_size "$file" "$TEST_LIMIT"
-done
+done <<EOF
+$(find webapp/e2e -type f | sort)
+EOF
 
 if [ "$failed" -ne 0 ]; then
     exit 1
