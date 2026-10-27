@@ -1,6 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 
+import { onPhoneNavigation } from "./fixtures/navigation";
+
 /**
  * Smart playlists and podcasts (RFC-025), against a mock that keeps what it is
  * sent: an editor that saved nothing, or a download that changed nothing,
@@ -646,7 +648,7 @@ function episodeElement(page: Page, ticket: string) {
  */
 async function navigateWithin(page: Page, name: string) {
   const sidebar = page.locator(".sidebar");
-  if (await sidebar.isVisible()) {
+  if (!(await onPhoneNavigation(page))) {
     await sidebar.getByRole("link", { name, exact: true }).click();
     return;
   }
