@@ -37,7 +37,7 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
                 .collect(),
         );
     }
-    if node.attrs.is_empty() && node.children.is_empty() {
+    if node.attrs.is_empty() && node.children.is_empty() && !json_text_object(parent, &node.name) {
         if let Some(text) = &node.text {
             return Value::String(text.clone());
         }
@@ -113,6 +113,17 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
 /// Elements the OpenSubsonic specification types as a JSON array rather than an
 /// object. They must serialise as `[]` when empty; an empty object breaks
 /// strictly typed clients that decode the field into a list.
+/// Elements whose text is a `value` key even when they carry nothing else.
+///
+/// An element holding only text renders as a bare string, which is the
+/// documented shape of `moods`, `isrc` or `roles`. A lyrics line is
+/// `{start?, value}` instead, and an unsynced one has no `start`: rendered by
+/// the general rule it went out as a string, and a client decoding the
+/// documented object refused the whole sheet.
+pub(super) fn json_text_object(parent: &str, name: &str) -> bool {
+    matches!((parent, name), ("structuredLyrics", "line"))
+}
+
 pub(super) fn json_array_node(name: &str) -> bool {
     matches!(name, "openSubsonicExtensions")
 }
