@@ -31,7 +31,7 @@ TEST_LIMIT=1000
 # tests, owed its own pull request, not a formatting pass; remove this entry
 # with it.
 ALLOWLIST="
-webapp/e2e/smart-playlists-and-podcasts.spec.ts
+webapp/e2e/podcasts.spec.ts
 "
 
 failed=0
