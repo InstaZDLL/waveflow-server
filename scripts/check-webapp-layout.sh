@@ -68,7 +68,7 @@ for file in $(find webapp/src -type f \( -name '*.ts' -o -name '*.tsx' -o -name 
     esac
 done
 
-for file in $(find webapp/e2e -type f -name '*.ts' | sort); do
+for file in $(find webapp/e2e -type f | sort); do
     check_size "$file" "$TEST_LIMIT"
 done
 
