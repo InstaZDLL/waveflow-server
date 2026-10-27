@@ -21,17 +21,7 @@ STYLE_LIMIT=800
 TEST_LIMIT=1000
 
 # Files allowed past their limit, one path per line, each with its reason.
-#
-# webapp/e2e/smart-playlists-and-podcasts.spec.ts: 965 lines until biome first
-# formatted `e2e/`, 1,102 after, by layout alone. Its two subjects
-# share one mock whose state is module-level `let`s the tests reassign, and a
-# binding imported from another module cannot be reassigned; splitting it
-# means moving that state onto an object, as `e2e/fixtures/state.ts` does for
-# the rest, and rewriting every read and write of it. That is a change to the
-# tests, owed its own pull request, not a formatting pass; remove this entry
-# with it.
 ALLOWLIST="
-webapp/e2e/podcasts.spec.ts
 "
 
 failed=0
