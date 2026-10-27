@@ -89,8 +89,6 @@ export function useQueueElement({
     const element = audio.current;
     const onTime = () => setPosition(element.currentTime);
     const onDuration = () => setDuration(element.duration || 0);
-    // Stop on the last track rather than stepping past it: an out-of-range
-    // index empties `current` and the player bar vanishes mid-listen.
     const onEnd = () => {
       // Decided out here rather than inside a `setIndex` updater: React may
       // call an updater more than once, and this one rewound and restarted the
