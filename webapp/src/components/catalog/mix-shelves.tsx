@@ -2,15 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { getMix, type MixSummary, type Song } from "../api";
-import { mixesQuery } from "../api/queries";
-import { mixTitle } from "../lib/mixes";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
-import { useLocalDay } from "../state/local-day";
-import { Artwork } from "./artwork";
-import { Icon } from "./icons";
+import { getMix, type MixSummary, type Song } from "../../api";
+import { mixesQuery } from "../../api/queries";
+import { mixTitle } from "../../lib/mixes";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
+import { useLocalDay } from "../../state/local-day";
+import { Artwork } from "../artwork/artwork";
+import { Icon } from "../layout/icons";
 
 /**
  * A mix's cover: four of its sleeves in a square where it has four, the one

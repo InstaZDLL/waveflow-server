@@ -1,4 +1,4 @@
-import { useI18n } from "../state/i18n";
+import { useI18n } from "../../state/i18n";
 
 /**
  * Text filter shared by the browse pages. It narrows what is already loaded

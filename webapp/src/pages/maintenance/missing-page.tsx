@@ -6,11 +6,11 @@ import {
   currentUser,
   purgeUnavailableTracks,
   restorePurgedTracks,
-} from "../api";
-import { purgedTracksQuery, unavailableTracksQuery } from "../api/queries";
-import { Loading, PageHeader } from "../components/page-shell";
-import { useI18n } from "../state/i18n";
-import { mayManageMissing, useLibraryScope } from "../state/library-scope";
+} from "../../api";
+import { purgedTracksQuery, unavailableTracksQuery } from "../../api/queries";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
+import { mayManageMissing, useLibraryScope } from "../../state/library-scope";
 
 /** How long a purge waits for its second click, as Split does. */
 const CONFIRM_MS = 4000;

@@ -1,10 +1,10 @@
 import { useMemo } from "react";
 
-import { formatDuration } from "../api";
-import { Artwork } from "../components/artwork";
-import { EmptyState, PageHeader } from "../components/page-shell";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+import { formatDuration } from "../../api";
+import { Artwork } from "../../components/artwork/artwork";
+import { EmptyState, PageHeader } from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 export function QueuePage() {
   const player = usePlayer();

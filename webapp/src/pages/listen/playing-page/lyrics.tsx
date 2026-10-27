@@ -8,12 +8,12 @@ import {
   type LyricsLine,
   type Song,
   type StructuredLyrics,
-} from "../../api";
-import { lyricsQuery } from "../../api/queries";
-import { usePrefersReducedMotion } from "../../components/canvas";
-import { EmptyState } from "../../components/page-shell";
-import { usePlayer, usePlayerProgress } from "../../player/player";
-import { useI18n } from "../../state/i18n";
+} from "../../../api";
+import { lyricsQuery } from "../../../api/queries";
+import { usePrefersReducedMotion } from "../../../components/artwork/canvas";
+import { EmptyState } from "../../../components/layout/page-shell";
+import { usePlayer, usePlayerProgress } from "../../../player/player";
+import { useI18n } from "../../../state/i18n";
 
 /**
  * The line a synced lyric sheet is on at `seconds`. Lines carry their own start

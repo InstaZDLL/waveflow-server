@@ -1,13 +1,13 @@
 import { type CSSProperties, useId } from "react";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { useThemePreference } from "../state/preferences";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { useThemePreference } from "../../state/preferences";
 import {
   findTheme,
   THEME_PRESETS,
   type ThemeMode,
   type ThemePreset,
   themeSurfaces,
-} from "../styles/design-tokens";
+} from "../../styles/design-tokens";
 
 const MODES: ReadonlyArray<{ mode: ThemeMode; label: TranslationKey }> = [
   { mode: "light", label: "preferences.themeLight" },

@@ -12,20 +12,20 @@ import {
   refreshPodcasts,
   subscribePodcast,
   unsubscribePodcast,
-} from "../api";
-import { podcastChannelQuery, podcastsQuery } from "../api/queries";
-import { Artwork } from "../components/artwork";
-import { Icon } from "../components/icons";
+} from "../../api";
+import { podcastChannelQuery, podcastsQuery } from "../../api/queries";
+import { Artwork } from "../../components/artwork/artwork";
+import { Icon } from "../../components/layout/icons";
 import {
   EmptyState,
   Loading,
   PageHeader,
   useReload,
-} from "../components/page-shell";
-import { resumeSeconds } from "../lib/aside";
-import { onMediaChange } from "../lib/media-query";
-import { usePlayer } from "../player/player";
-import { type TranslationKey, useI18n } from "../state/i18n";
+} from "../../components/layout/page-shell";
+import { resumeSeconds } from "../../lib/aside";
+import { onMediaChange } from "../../lib/media-query";
+import { usePlayer } from "../../player/player";
+import { type TranslationKey, useI18n } from "../../state/i18n";
 
 const statusKey = (status: PodcastEpisode["status"]) =>
   `podcasts.status.${status}` as TranslationKey;

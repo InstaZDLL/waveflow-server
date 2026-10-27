@@ -1,8 +1,8 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
-import { currentUser } from "../api";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { mayUploadTo, useLibraryScope } from "../state/library-scope";
+import { currentUser } from "../../api";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { mayUploadTo, useLibraryScope } from "../../state/library-scope";
 
 /**
  * Settings, as one place with sections.

@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { artworkUrl, cachedArtworkUrl } from "../api";
+import { artworkUrl, cachedArtworkUrl } from "../../api";
 
 type ArtworkProps = {
   artworkId: string | null;

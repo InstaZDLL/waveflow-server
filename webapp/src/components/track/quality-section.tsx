@@ -6,16 +6,16 @@ import {
   type QualityVerdict,
   type Song,
   spectrogramUrl,
-} from "../api";
-import { trackQualityQuery } from "../api/queries";
+} from "../../api";
+import { trackQualityQuery } from "../../api/queries";
 import {
   frequencyX,
   highsStop,
   spectrumGridlines,
   spectrumPath,
   verdictTone,
-} from "../lib/quality";
-import { type TranslationKey, useI18n } from "../state/i18n";
+} from "../../lib/quality";
+import { type TranslationKey, useI18n } from "../../state/i18n";
 
 /** The chart's box, in SVG units. */
 const WIDTH = 480;

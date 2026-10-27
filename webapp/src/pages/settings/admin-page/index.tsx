@@ -10,10 +10,14 @@ import {
   setUserDisabled,
   startScan,
   type User,
-} from "../../api";
-import { administrationQuery } from "../../api/queries";
-import { Loading, PageHeader, useReload } from "../../components/page-shell";
-import { useI18n } from "../../state/i18n";
+} from "../../../api";
+import { administrationQuery } from "../../../api/queries";
+import {
+  Loading,
+  PageHeader,
+  useReload,
+} from "../../../components/layout/page-shell";
+import { useI18n } from "../../../state/i18n";
 import { NowPlayingPanel, ScanProgress } from "./activity";
 import { ApiTokensPanel, CredentialForm } from "./credentials";
 import { LibraryMembersPanel, LibrarySettingsPanel } from "./libraries";

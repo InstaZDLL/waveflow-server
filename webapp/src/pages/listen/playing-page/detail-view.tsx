@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 
-import type { Song } from "../../api";
-import { Artwork } from "../../components/artwork";
-import { CanvasStage } from "../../components/canvas";
-import { FileQuality } from "../../components/file-quality";
-import { useI18n } from "../../state/i18n";
+import type { Song } from "../../../api";
+import { Artwork } from "../../../components/artwork/artwork";
+import { CanvasStage } from "../../../components/artwork/canvas";
+import { FileQuality } from "../../../components/track/file-quality";
+import { useI18n } from "../../../state/i18n";
 import { type LyricSheet, LyricsStrip, useLyricSheet } from "./lyrics";
 
 /**

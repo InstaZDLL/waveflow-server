@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { folderOutline, isWithin } from "../api";
-import { filedTreeQuery } from "../api/queries";
-import { useI18n } from "../state/i18n";
-import { Icon } from "./icons";
+import { folderOutline, isWithin } from "../../api";
+import { filedTreeQuery } from "../../api/queries";
+import { useI18n } from "../../state/i18n";
+import { Icon } from "../layout/icons";
 
 /**
  * Choose a filed folder (RFC-012 decision 2): the keyboard's way to file a

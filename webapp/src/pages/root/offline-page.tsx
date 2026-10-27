@@ -1,8 +1,8 @@
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { formatDuration } from "../api";
-import { Waiting } from "../components/page-shell";
+import { formatDuration } from "../../api";
+import { Waiting } from "../../components/layout/page-shell";
 import {
   forgetOffline,
   type KeptSong,
@@ -10,8 +10,8 @@ import {
   offlineSource,
   offlineSupported,
   onOfflineChange,
-} from "../lib/offline";
-import { useI18n } from "../state/i18n";
+} from "../../lib/offline";
+import { useI18n } from "../../state/i18n";
 
 /**
  * The tracks kept for offline listening (RFC-022), and a player for them.

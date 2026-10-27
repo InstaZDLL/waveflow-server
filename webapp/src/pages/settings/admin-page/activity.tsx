@@ -3,9 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { type ScanJob, watchScan } from "../../api";
-import { nowPlayingQuery } from "../../api/queries";
-import { type TranslationKey, useI18n } from "../../state/i18n";
+import { type ScanJob, watchScan } from "../../../api";
+import { nowPlayingQuery } from "../../../api/queries";
+import { type TranslationKey, useI18n } from "../../../state/i18n";
 
 /**
  * The statuses `scan_job.status` holds. Looked up rather than cast: an unknown

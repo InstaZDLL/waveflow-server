@@ -3,12 +3,12 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useLayoutEffect, useRef } from "react";
 
-import { formatDuration, type Song } from "../../api";
-import { Artwork } from "../../components/artwork";
-import { CanvasStage } from "../../components/canvas";
-import { Icon } from "../../components/icons";
-import { usePlayer, usePlayerProgress } from "../../player/player";
-import { useI18n } from "../../state/i18n";
+import { formatDuration, type Song } from "../../../api";
+import { Artwork } from "../../../components/artwork/artwork";
+import { CanvasStage } from "../../../components/artwork/canvas";
+import { Icon } from "../../../components/layout/icons";
+import { usePlayer, usePlayerProgress } from "../../../player/player";
+import { useI18n } from "../../../state/i18n";
 
 /**
  * The artwork, and the canvas where there is one, over everything else.

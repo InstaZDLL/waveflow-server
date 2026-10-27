@@ -1,7 +1,7 @@
 import { useState } from "react";
 
-import { authorize, isAllowedRedirect } from "../api";
-import { useI18n } from "../state/i18n";
+import { authorize, isAllowedRedirect } from "../../api";
+import { useI18n } from "../../state/i18n";
 
 /**
  * Consent screen for the native Authorization Code + PKCE flow.

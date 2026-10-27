@@ -1,7 +1,7 @@
-import type { Song } from "../api";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { Icon } from "./icons";
+import type { Song } from "../../api";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { Icon } from "../layout/icons";
 
 /** Plays a set of songs, or adds them to the queue, from a page header. */
 export function PlaySetActions({ songs }: { songs: Song[] }) {

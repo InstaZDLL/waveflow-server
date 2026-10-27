@@ -2,12 +2,16 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
-import { genresQuery } from "../api/queries";
-import { FilterField } from "../components/filter-field";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { matches, normalizeFilter } from "../lib/filter";
-import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
+import { genresQuery } from "../../api/queries";
+import { FilterField } from "../../components/layout/filter-field";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { matches, normalizeFilter } from "../../lib/filter";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
 
 export function GenresPage() {
   const { t } = useI18n();

@@ -2,7 +2,7 @@
 import { Link } from "@tanstack/react-router";
 import type { MouseEvent, RefObject } from "react";
 
-import { Icon } from "../components/icons";
+import { Icon } from "../components/layout/icons";
 import { useI18n } from "../state/i18n";
 import type { NavigationTarget, navigation } from "./navigation-entries";
 

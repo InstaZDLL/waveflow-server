@@ -1,13 +1,13 @@
 import { Link, Navigate, Outlet } from "@tanstack/react-router";
 
-import { currentUser, type Library } from "../api";
-import { PageHeader } from "../components/page-shell";
-import { type TranslationKey, useI18n } from "../state/i18n";
+import { currentUser, type Library } from "../../api";
+import { PageHeader } from "../../components/layout/page-shell";
+import { type TranslationKey, useI18n } from "../../state/i18n";
 import {
   mayCorrectTracks,
   mayManageMissing,
   useLibraryScope,
-} from "../state/library-scope";
+} from "../../state/library-scope";
 
 /**
  * Maintenance: the pages that put the library right rather than play it.

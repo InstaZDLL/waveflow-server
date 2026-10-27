@@ -11,14 +11,14 @@ import {
   setLibraryMember,
   type User,
   updateLibrary,
-} from "../../api";
+} from "../../../api";
 import {
   administrationQuery,
   libraryMembersQuery,
   librarySettingsQuery,
-} from "../../api/queries";
-import { useReload, Waiting } from "../../components/page-shell";
-import { type TranslationKey, useI18n } from "../../state/i18n";
+} from "../../../api/queries";
+import { useReload, Waiting } from "../../../components/layout/page-shell";
+import { type TranslationKey, useI18n } from "../../../state/i18n";
 
 /**
  * Who may see one library, and in what standing.

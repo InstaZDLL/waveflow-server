@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { mixQuery } from "../api/queries";
-import { Loading, PageHeader } from "../components/page-shell";
-import { PlaySetActions } from "../components/play-set-actions";
-import { SongTable } from "../components/song-table";
-import { mixTitle } from "../lib/mixes";
-import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
-import { useLocalDay } from "../state/local-day";
+import { mixQuery } from "../../api/queries";
+import { PlaySetActions } from "../../components/catalog/play-set-actions";
+import { SongTable } from "../../components/catalog/song-table";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { mixTitle } from "../../lib/mixes";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
+import { useLocalDay } from "../../state/local-day";
 
 /**
  * One mix and its tracks (RFC-024 decision 7). The server draws it once a

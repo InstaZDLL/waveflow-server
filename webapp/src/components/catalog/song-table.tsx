@@ -2,14 +2,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
 
-import { formatDuration, type Song, setFavorite, setRating } from "../api";
-import { creditedArtists } from "../lib/artist-credits";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
-import { Artwork } from "./artwork";
-import { Icon } from "./icons";
-import { useTrackMenu } from "./track-menu";
+import { formatDuration, type Song, setFavorite, setRating } from "../../api";
+import { creditedArtists } from "../../lib/artist-credits";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
+import { Artwork } from "../artwork/artwork";
+import { Icon } from "../layout/icons";
+import { useTrackMenu } from "../menus/track-menu";
 
 const RATING_STARS = [1, 2, 3, 4, 5];
 

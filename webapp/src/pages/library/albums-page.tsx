@@ -1,16 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import type { AlbumSort } from "../api";
-import { albumsQuery, mixesQuery } from "../api/queries";
-import { AlbumGrid } from "../components/album-grid";
-import { FilterField } from "../components/filter-field";
-import { MixShelves } from "../components/mix-shelves";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { matches, normalizeFilter } from "../lib/filter";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
-import { useLocalDay } from "../state/local-day";
+import type { AlbumSort } from "../../api";
+import { albumsQuery, mixesQuery } from "../../api/queries";
+import { AlbumGrid } from "../../components/catalog/album-grid";
+import { MixShelves } from "../../components/catalog/mix-shelves";
+import { FilterField } from "../../components/layout/filter-field";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { matches, normalizeFilter } from "../../lib/filter";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
+import { useLocalDay } from "../../state/local-day";
 
 /**
  * The orders offered on the albums page, in menu order. Four of them narrow the

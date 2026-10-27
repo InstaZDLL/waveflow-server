@@ -1,5 +1,5 @@
-import type { Song } from "../api";
-import { type Locale, type TranslationKey, useI18n } from "../state/i18n";
+import type { Song } from "../../api";
+import { type Locale, type TranslationKey, useI18n } from "../../state/i18n";
 
 /**
  * What a file is, and a meter that says it at a glance.

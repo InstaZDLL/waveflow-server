@@ -1,17 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
-import { createShare, deleteShare, type Share } from "../api";
-import { sharesQuery } from "../api/queries";
-import { MAX_SHARE_TRACKS } from "../api/shares";
+import { createShare, deleteShare, type Share } from "../../api";
+import { sharesQuery } from "../../api/queries";
+import { MAX_SHARE_TRACKS } from "../../api/shares";
 import {
   EmptyState,
   Loading,
   PageHeader,
   useReload,
-} from "../components/page-shell";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+} from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 export function SharesPage() {
   const player = usePlayer();

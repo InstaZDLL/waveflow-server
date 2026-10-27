@@ -6,10 +6,10 @@ import {
   type ArtistImageCandidate,
   getArtistImageCandidates,
   pickDeezerPortrait,
-} from "../api";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { Artwork } from "./artwork";
-import { Icon } from "./icons";
+} from "../../api";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { Artwork } from "../artwork/artwork";
+import { Icon } from "../layout/icons";
 
 /**
  * Choose an artist's portrait from Deezer (RFC-013 decision 4): the desktop's

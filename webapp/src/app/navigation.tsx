@@ -18,9 +18,9 @@ import {
   songsQuery,
   statsQuery,
 } from "../api/queries";
-import { Icon } from "../components/icons";
+import { Icon } from "../components/layout/icons";
 import { localDayKey } from "../lib/local-day";
-import { maintenanceSections } from "../pages/maintenance-hub";
+import { maintenanceSections } from "../pages/maintenance/maintenance-hub";
 import { useI18n } from "../state/i18n";
 import { useLibraryScope } from "../state/library-scope";
 import { MoreSheet } from "./more-sheet";

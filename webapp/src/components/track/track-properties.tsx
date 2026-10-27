@@ -1,11 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useId, useRef } from "react";
 
-import { formatDuration, type Song } from "../api";
-import { lyricsQuery, trackPropertiesQuery } from "../api/queries";
-import { useI18n } from "../state/i18n";
-import { Artwork } from "./artwork";
-import { Icon } from "./icons";
+import { formatDuration, type Song } from "../../api";
+import { lyricsQuery, trackPropertiesQuery } from "../../api/queries";
+import { useI18n } from "../../state/i18n";
+import { Artwork } from "../artwork/artwork";
+import { Icon } from "../layout/icons";
 import { LyricsSection } from "./lyrics-section";
 import { QualitySection } from "./quality-section";
 

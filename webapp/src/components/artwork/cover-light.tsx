@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 
-import { artworkUrl } from "../api";
-import { glowOf, sampleCover } from "../lib/cover-light";
-import { usePlayer } from "../player/player";
+import { artworkUrl } from "../../api";
+import { glowOf, sampleCover } from "../../lib/cover-light";
+import { usePlayer } from "../../player/player";
 
 /**
  * Lights the page with the playing record's cover.

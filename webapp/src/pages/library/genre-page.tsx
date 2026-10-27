@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { listRandomSongs } from "../api";
-import { genreSongsQuery } from "../api/queries";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
+import { listRandomSongs } from "../../api";
+import { genreSongsQuery } from "../../api/queries";
+import { SongTable } from "../../components/catalog/song-table";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
 
 export function GenrePage({ genre }: { genre: string }) {
   const player = usePlayer();

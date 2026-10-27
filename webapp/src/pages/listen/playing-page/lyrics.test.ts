@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { currentLyricLine } from "./playing-page";
+import { currentLyricLine } from "./lyrics";
 
 /**
  * The highlight in the now-playing view. Off-by-one here shows a line before

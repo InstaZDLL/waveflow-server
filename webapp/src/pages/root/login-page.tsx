@@ -8,9 +8,9 @@ import {
   SETUP_TOKEN_REJECTED,
   safeInternalPath,
   setupRequired,
-} from "../api";
-import { keptSongs, offlineSupported } from "../lib/offline";
-import { useI18n } from "../state/i18n";
+} from "../../api";
+import { keptSongs, offlineSupported } from "../../lib/offline";
+import { useI18n } from "../../state/i18n";
 
 /**
  * A way to what this browser kept for offline listening (RFC-022), shown only

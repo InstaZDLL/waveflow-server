@@ -1,25 +1,25 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
-import type { Album, ArtistEnrichment } from "../api";
+import type { Album, ArtistEnrichment } from "../../api";
 import {
   artistQuery,
   artistTopSongsQuery,
   enrichmentRetryDelay,
-} from "../api/queries";
-import { AlbumGrid } from "../components/album-grid";
-import { ArtistImageControls } from "../components/artist-image-controls";
-import { ArtistSplit } from "../components/artist-split";
-import { Artwork } from "../components/artwork";
-import { Loading } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { isSplitCandidate } from "../lib/credit-fragments";
+} from "../../api/queries";
+import { ArtistImageControls } from "../../components/artist/artist-image-controls";
+import { ArtistSplit } from "../../components/artist/artist-split";
+import { Artwork } from "../../components/artwork/artwork";
+import { AlbumGrid } from "../../components/catalog/album-grid";
+import { SongTable } from "../../components/catalog/song-table";
+import { Loading } from "../../components/layout/page-shell";
+import { isSplitCandidate } from "../../lib/credit-fragments";
 import {
   type DiscographySection,
   discographySections,
-} from "../lib/discography";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
+} from "../../lib/discography";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
 
 /** A provider as a reader knows it, rather than as the setting spells it. */
 const PROVIDER_NAMES: Record<string, string> = {

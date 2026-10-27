@@ -21,7 +21,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import { useI18n } from "../state/i18n";
+import { useI18n } from "../../state/i18n";
 import { Icon, type IconName } from "./icons";
 
 /** Eight placeholder cards, keyed by name because their order is their only identity. */

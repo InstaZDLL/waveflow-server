@@ -2,8 +2,8 @@
 import { Outlet, useMatches } from "@tanstack/react-router";
 import { useEffect } from "react";
 
-import { CoverLight } from "../components/cover-light";
-import { Waiting } from "../components/page-shell";
+import { CoverLight } from "../components/artwork/cover-light";
+import { Waiting } from "../components/layout/page-shell";
 import { dismissSplash } from "../lib/splash";
 import { PlayerBar, PlayerProvider } from "../player/player";
 import { useI18n } from "../state/i18n";

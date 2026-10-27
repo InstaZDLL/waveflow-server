@@ -10,22 +10,22 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-import { placeTracks, type Song, streamUrl } from "../api";
-import { creditedArtists } from "../lib/artist-credits";
-import { downloadUrl, saveFrom } from "../lib/download";
+import { placeTracks, type Song, streamUrl } from "../../api";
+import { creditedArtists } from "../../lib/artist-credits";
+import { downloadUrl, saveFrom } from "../../lib/download";
 import {
   forgetOffline,
   isKeptOffline,
   keepOffline,
   offlineSupported,
-} from "../lib/offline";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
-import { FolderPicker } from "./folder-picker";
-import { Icon } from "./icons";
+} from "../../lib/offline";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
+import { FolderPicker } from "../catalog/folder-picker";
+import { Icon } from "../layout/icons";
+import { TrackProperties } from "../track/track-properties";
 import { PopupMenu, type PopupMenuItem } from "./popup-menu";
-import { TrackProperties } from "./track-properties";
 
 /** Where a menu was asked for, and for which row. */
 type Opened = {

@@ -8,12 +8,12 @@ import {
   type ArtistImageKind,
   removeArtistImage,
   setArtistImage,
-} from "../api";
-import { artistQuery } from "../api/queries";
-import { type TranslationKey, useI18n } from "../state/i18n";
+} from "../../api";
+import { artistQuery } from "../../api/queries";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { Icon } from "../layout/icons";
+import { PopupMenu, type PopupMenuItem } from "../menus/popup-menu";
 import { DeezerPortraitPicker } from "./deezer-portrait-picker";
-import { Icon } from "./icons";
-import { PopupMenu, type PopupMenuItem } from "./popup-menu";
 
 /** What the server takes: recognised from the bytes, these three only. */
 const ACCEPT = "image/jpeg,image/png,image/webp";

@@ -1,13 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { formatDuration } from "../api";
-import { albumQuery, artistAlbumsQuery } from "../api/queries";
-import { Artwork } from "../components/artwork";
-import { Icon } from "../components/icons";
-import { Loading } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+import { formatDuration } from "../../api";
+import { albumQuery, artistAlbumsQuery } from "../../api/queries";
+import { Artwork } from "../../components/artwork/artwork";
+import { SongTable } from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
+import { Loading } from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 export function AlbumPage({ albumId }: { albumId: string }) {
   const { t } = useI18n();

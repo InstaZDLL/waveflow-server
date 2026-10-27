@@ -25,8 +25,8 @@ import {
   type SmartPreview,
   type SmartSort,
   updateSmartPlaylist,
-} from "../api";
-import { smartPlaylistsQuery } from "../api/queries";
+} from "../../api";
+import { smartPlaylistsQuery } from "../../api/queries";
 import {
   blankCondition,
   blankRules,
@@ -40,11 +40,11 @@ import {
   SMART_FIELDS,
   SMART_SORTS,
   withField,
-} from "../lib/smart-rules";
-import { usePlayer } from "../player/player";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { useLibraryScope } from "../state/library-scope";
-import { useReload } from "./page-shell";
+} from "../../lib/smart-rules";
+import { usePlayer } from "../../player/player";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { useLibraryScope } from "../../state/library-scope";
+import { useReload } from "../layout/page-shell";
 
 type Editing = {
   /** `null` while creating. */

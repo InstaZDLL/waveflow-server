@@ -1,14 +1,14 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import type { SongSort } from "../api";
-import { songsQuery } from "../api/queries";
-import { Icon } from "../components/icons";
-import { Loading, PageHeader } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { usePlayer } from "../player/player";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
+import type { SongSort } from "../../api";
+import { songsQuery } from "../../api/queries";
+import { SongTable } from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
 
 /**
  * The orderings this menu offers, in the album menu's order plus one.

@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Icon } from "./icons";
+import { Icon } from "../layout/icons";
 import { PopupMenu, type PopupMenuItem } from "./popup-menu";
 
 export type ActionMenuItem = Pick<

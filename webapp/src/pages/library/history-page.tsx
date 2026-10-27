@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { historyTracksQuery } from "../api/queries";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { PlaySetActions } from "../components/play-set-actions";
-import { SongTable } from "../components/song-table";
-import { useI18n } from "../state/i18n";
+import { historyTracksQuery } from "../../api/queries";
+import { PlaySetActions } from "../../components/catalog/play-set-actions";
+import { SongTable } from "../../components/catalog/song-table";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
 
 /**
  * How many distinct tracks the recently-played screen resolves.

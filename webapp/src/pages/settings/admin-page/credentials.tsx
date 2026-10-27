@@ -8,10 +8,10 @@ import {
   revokeApiToken,
   setSubsonicCredential,
   type User,
-} from "../../api";
-import { apiTokensQuery } from "../../api/queries";
-import { useReload } from "../../components/page-shell";
-import { useI18n } from "../../state/i18n";
+} from "../../../api";
+import { apiTokensQuery } from "../../../api/queries";
+import { useReload } from "../../../components/layout/page-shell";
+import { useI18n } from "../../../state/i18n";
 
 export function CredentialForm({ user }: { user: User }) {
   const { t } = useI18n();

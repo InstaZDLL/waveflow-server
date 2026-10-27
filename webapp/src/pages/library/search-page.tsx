@@ -2,12 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { searchQuery } from "../api/queries";
-import { AlbumGrid } from "../components/album-grid";
-import { Loading, PageHeader } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { useI18n } from "../state/i18n";
-import { useLibraryScope } from "../state/library-scope";
+import { searchQuery } from "../../api/queries";
+import { AlbumGrid } from "../../components/catalog/album-grid";
+import { SongTable } from "../../components/catalog/song-table";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
+import { useLibraryScope } from "../../state/library-scope";
 
 /**
  * How long the typing has to settle before the search is asked.

@@ -1,11 +1,11 @@
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { type Album, getAlbum, type Song } from "../api";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
-import { Artwork } from "./artwork";
-import { Icon } from "./icons";
+import { type Album, getAlbum, type Song } from "../../api";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
+import { Artwork } from "../artwork/artwork";
+import { Icon } from "../layout/icons";
 
 export function AlbumGrid({ albums }: { albums: Album[] }) {
   const player = usePlayer();

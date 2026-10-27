@@ -1,6 +1,6 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 
-import { useI18n } from "../state/i18n";
+import { useI18n } from "../../state/i18n";
 import { Icon } from "./icons";
 
 type Navigate = ReturnType<typeof useNavigate>;

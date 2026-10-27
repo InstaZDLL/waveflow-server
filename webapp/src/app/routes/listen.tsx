@@ -1,11 +1,11 @@
 // The listening routes: now playing, the queue, random, radio, podcasts.
 import { createRoute } from "@tanstack/react-router";
 
-import { PlayingPage } from "../../pages/playing-page";
-import { PodcastsPage } from "../../pages/podcasts-page";
-import { QueuePage } from "../../pages/queue-page";
-import { RadioPage } from "../../pages/radio-page";
-import { RandomPage } from "../../pages/random-page";
+import { PlayingPage } from "../../pages/listen/playing-page";
+import { PodcastsPage } from "../../pages/listen/podcasts-page";
+import { QueuePage } from "../../pages/listen/queue-page";
+import { RadioPage } from "../../pages/listen/radio-page";
+import { RandomPage } from "../../pages/listen/random-page";
 import { authedRoute } from "./root";
 
 export const randomRoute = createRoute({

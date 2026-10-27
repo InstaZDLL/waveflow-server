@@ -1,11 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { randomSongsQuery } from "../api/queries";
-import { Icon } from "../components/icons";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { PlaySetActions } from "../components/play-set-actions";
-import { SongTable } from "../components/song-table";
-import { useI18n } from "../state/i18n";
-import { useScopeId } from "../state/library-scope";
+import { randomSongsQuery } from "../../api/queries";
+import { PlaySetActions } from "../../components/catalog/play-set-actions";
+import { SongTable } from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
 
 export function RandomPage() {
   const { t } = useI18n();

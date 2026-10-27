@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useI18n } from "../state/i18n";
+import { useI18n } from "../../state/i18n";
 
 export function NotFoundPage() {
   const { t } = useI18n();

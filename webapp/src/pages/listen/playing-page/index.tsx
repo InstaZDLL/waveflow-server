@@ -9,12 +9,16 @@ import {
   formatDuration,
   type Song,
   setBookmark,
-} from "../../api";
-import { bookmarksQuery } from "../../api/queries";
-import { Artwork } from "../../components/artwork";
-import { EmptyState, PageHeader, useReload } from "../../components/page-shell";
-import { usePlayer, usePlayerProgress } from "../../player/player";
-import { type TranslationKey, useI18n } from "../../state/i18n";
+} from "../../../api";
+import { bookmarksQuery } from "../../../api/queries";
+import { Artwork } from "../../../components/artwork/artwork";
+import {
+  EmptyState,
+  PageHeader,
+  useReload,
+} from "../../../components/layout/page-shell";
+import { usePlayer, usePlayerProgress } from "../../../player/player";
+import { type TranslationKey, useI18n } from "../../../state/i18n";
 import { DetailView } from "./detail-view";
 import { ImmersiveView } from "./immersive";
 import { LyricsView } from "./lyrics";

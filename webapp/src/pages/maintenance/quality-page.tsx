@@ -12,16 +12,16 @@ import {
   type QualityTrack,
   type QualityVerdict,
   requestQualityAnalysis,
-} from "../api";
-import { qualitySummaryQuery, qualityTracksQuery } from "../api/queries";
-import { Artwork } from "../components/artwork";
-import { containerName, kilohertz } from "../components/file-quality";
-import { Loading, PageHeader } from "../components/page-shell";
-import { VERDICT_LABEL } from "../components/quality-section";
-import { TrackProperties } from "../components/track-properties";
-import { analysisIsWorking, highsStop, verdictTone } from "../lib/quality";
-import { useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
+} from "../../api";
+import { qualitySummaryQuery, qualityTracksQuery } from "../../api/queries";
+import { Artwork } from "../../components/artwork/artwork";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { containerName, kilohertz } from "../../components/track/file-quality";
+import { VERDICT_LABEL } from "../../components/track/quality-section";
+import { TrackProperties } from "../../components/track/track-properties";
+import { analysisIsWorking, highsStop, verdictTone } from "../../lib/quality";
+import { useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
 
 /** How long "Analyse again" waits for the second click, as Split does. */
 const CONFIRM_MS = 4000;

@@ -10,12 +10,12 @@ import {
   type LyricsSource,
   type Song,
   uploadLyrics,
-} from "../api";
-import { lyricsQuery } from "../api/queries";
-import { fileNameFrom, lyricsFormatOf, saveBlob } from "../lib/download";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
-import { Icon } from "./icons";
+} from "../../api";
+import { lyricsQuery } from "../../api/queries";
+import { fileNameFrom, lyricsFormatOf, saveBlob } from "../../lib/download";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
+import { Icon } from "../layout/icons";
 
 const SOURCE_LABELS: Record<LyricsSource, TranslationKey> = {
   upload_ttml: "lyrics.source.uploadTtml",

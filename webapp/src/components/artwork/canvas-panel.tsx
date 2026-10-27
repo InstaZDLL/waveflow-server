@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ChangeEvent, useState } from "react";
 
-import { ApiError, placeCanvas, removeCanvas, type Song } from "../api";
-import { canvasQuery } from "../api/queries";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { mayPlaceCanvas, useLibraryScope } from "../state/library-scope";
+import { ApiError, placeCanvas, removeCanvas, type Song } from "../../api";
+import { canvasQuery } from "../../api/queries";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { mayPlaceCanvas, useLibraryScope } from "../../state/library-scope";
+import { useReload } from "../layout/page-shell";
 import { canvasRefusal, usePrefersReducedMotion } from "./canvas";
-import { useReload } from "./page-shell";
 
 /**
  * What the file picker offers. The server reads the bytes and trusts neither

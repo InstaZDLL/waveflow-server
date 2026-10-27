@@ -11,23 +11,23 @@ import {
   removePlaylistEntry,
   type Song,
   setPlaylistPublic,
-} from "../api";
-import { playlistsQuery } from "../api/queries";
-import { Icon } from "../components/icons";
+} from "../../api";
+import { playlistsQuery } from "../../api/queries";
+import { SongTable } from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
 import {
   EmptyState,
   Loading,
   PageHeader,
   useReload,
-} from "../components/page-shell";
+} from "../../components/layout/page-shell";
 import {
   downloadPlaylist,
   PlaylistImportPanel,
-} from "../components/playlist-import";
-import { SmartPlaylistsSection } from "../components/smart-playlists";
-import { SongTable } from "../components/song-table";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+} from "../../components/playlists/playlist-import";
+import { SmartPlaylistsSection } from "../../components/playlists/smart-playlists";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 export function PlaylistsPage() {
   const player = usePlayer();

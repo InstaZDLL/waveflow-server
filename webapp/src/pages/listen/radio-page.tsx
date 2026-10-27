@@ -14,19 +14,19 @@ import {
   deleteRadioStation,
   type RadioStation,
   replaceRadioStation,
-} from "../api";
-import { radioStationsQuery } from "../api/queries";
-import { ActionMenu } from "../components/action-menu";
-import { Artwork } from "../components/artwork";
-import { Icon } from "../components/icons";
+} from "../../api";
+import { radioStationsQuery } from "../../api/queries";
+import { Artwork } from "../../components/artwork/artwork";
+import { Icon } from "../../components/layout/icons";
 import {
   EmptyState,
   Loading,
   PageHeader,
   useReload,
-} from "../components/page-shell";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+} from "../../components/layout/page-shell";
+import { ActionMenu } from "../../components/menus/action-menu";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 /**
  * The same rule the server applies, applied early enough to say so.

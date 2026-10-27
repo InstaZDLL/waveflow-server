@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useState } from "react";
 
-import { canvasUrl } from "../api";
-import { onMediaChange } from "../lib/media-query";
-import type { TranslationKey } from "../state/i18n";
+import { canvasUrl } from "../../api";
+import { onMediaChange } from "../../lib/media-query";
+import type { TranslationKey } from "../../state/i18n";
 
 /**
  * A refused placement or removal, in words. The statuses are the ones the

@@ -1,10 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { formatDuration, openPublicShare, type PublicShareTrack } from "../api";
-import { Loading, Waiting } from "../components/page-shell";
-import { type CanPlayType, shareSource } from "../lib/share-playback";
-import { useI18n } from "../state/i18n";
+import {
+  formatDuration,
+  openPublicShare,
+  type PublicShareTrack,
+} from "../../api";
+import { Loading, Waiting } from "../../components/layout/page-shell";
+import { type CanPlayType, shareSource } from "../../lib/share-playback";
+import { useI18n } from "../../state/i18n";
 
 /**
  * What a share link opens in a browser (RFC-020 decision 3).

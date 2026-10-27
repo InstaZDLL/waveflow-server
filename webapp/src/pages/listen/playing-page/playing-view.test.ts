@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { detailSplit, lyricSheetState, playingView } from "./playing-page";
+import { detailSplit, lyricSheetState, playingView } from "./index";
 
 /**
  * Which view a location asks for.

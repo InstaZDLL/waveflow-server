@@ -1,8 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { favoriteTracksQuery } from "../api/queries";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { useI18n } from "../state/i18n";
+import { favoriteTracksQuery } from "../../api/queries";
+import { SongTable } from "../../components/catalog/song-table";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
 
 export function FavoritesPage() {
   const { t } = useI18n();

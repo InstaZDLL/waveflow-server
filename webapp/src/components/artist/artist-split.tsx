@@ -2,9 +2,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
-import { type ArtistDetail, decideCredit } from "../api";
-import { creditFragments } from "../lib/credit-fragments";
-import { useI18n } from "../state/i18n";
+import { type ArtistDetail, decideCredit } from "../../api";
+import { creditFragments } from "../../lib/credit-fragments";
+import { useI18n } from "../../state/i18n";
 
 /** How long the offer waits for its confirming click, as on the desktop. */
 const CONFIRM_MS = 4000;

@@ -16,19 +16,22 @@ import {
   placeTracks,
   UNFILED,
   updateFolder,
-} from "../api";
-import { filedTreeQuery, folderTracksQuery } from "../api/queries";
-import { FolderPicker } from "../components/folder-picker";
-import { Icon } from "../components/icons";
-import { Loading, PageHeader } from "../components/page-shell";
-import { SongTable, TRACK_DRAG_TYPE } from "../components/song-table";
-import { usePlayer } from "../player/player";
-import { useI18n } from "../state/i18n";
+} from "../../api";
+import { filedTreeQuery, folderTracksQuery } from "../../api/queries";
+import { FolderPicker } from "../../components/catalog/folder-picker";
+import {
+  SongTable,
+  TRACK_DRAG_TYPE,
+} from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { usePlayer } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 import {
   mayCorrectTracks,
   mayUploadTo,
   useLibraryScope,
-} from "../state/library-scope";
+} from "../../state/library-scope";
 
 /** What a dragged folder card carries: its id. */
 const FOLDER_DRAG_TYPE = "application/x-waveflow-folder";

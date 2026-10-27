@@ -7,8 +7,8 @@ import {
   useState,
 } from "react";
 
-import { placeMenu } from "../lib/menu-place";
-import { Icon, type IconName } from "./icons";
+import { placeMenu } from "../../lib/menu-place";
+import { Icon, type IconName } from "../layout/icons";
 
 /** One entry of a menu. */
 export type PopupMenuItem = {

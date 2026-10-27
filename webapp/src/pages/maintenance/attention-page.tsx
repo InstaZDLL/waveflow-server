@@ -15,17 +15,17 @@ import {
   decideCredit,
   removeCreditDecision,
   type TrackCategory,
-} from "../api";
+} from "../../api";
 import {
   attentionSummaryQuery,
   attentionTracksQuery,
   creditCandidatesQuery,
   creditDecisionsQuery,
-} from "../api/queries";
-import { Loading, PageHeader } from "../components/page-shell";
-import { SongTable } from "../components/song-table";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { mayCorrectTracks, useLibraryScope } from "../state/library-scope";
+} from "../../api/queries";
+import { SongTable } from "../../components/catalog/song-table";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
 
 /** The page's lists, in the desktop's order, with what each is called. */
 const CATEGORIES: Array<{ key: AttentionCategory; label: TranslationKey }> = [

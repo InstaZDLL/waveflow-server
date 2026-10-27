@@ -2,14 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type CSSProperties, useState } from "react";
 
-import type { StatsPeriod } from "../api";
-import { statsQuery } from "../api/queries";
-import { Artwork } from "../components/artwork";
-import { EmptyState, Loading, PageHeader } from "../components/page-shell";
-import { barShares, listeningTime } from "../lib/mixes";
-import { usePlayer } from "../player/player";
-import { type TranslationKey, useI18n } from "../state/i18n";
-import { useLocalDay } from "../state/local-day";
+import type { StatsPeriod } from "../../api";
+import { statsQuery } from "../../api/queries";
+import { Artwork } from "../../components/artwork/artwork";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { barShares, listeningTime } from "../../lib/mixes";
+import { usePlayer } from "../../player/player";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+import { useLocalDay } from "../../state/local-day";
 
 const PERIODS: Array<{ value: StatsPeriod; labelKey: TranslationKey }> = [
   { value: "7d", labelKey: "stats.period7d" },
