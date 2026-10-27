@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { expectNoWcagViolations } from "./fixtures/accessibility";
 import { resetAndMockApi } from "./fixtures/api";
 import { albums, track } from "./fixtures/catalogue";
-import { silentWav } from "./fixtures/media";
+import { PIXEL, silentWav } from "./fixtures/media";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -157,12 +157,8 @@ test("shows queue artwork beside tracks without crowding times or actions", asyn
       },
     });
   });
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
   await page.route("**/api/v2/artwork/*", async (route) => {
-    await route.fulfill({ contentType: "image/png", body: png });
+    await route.fulfill({ contentType: "image/png", body: PIXEL });
   });
 
   await page.goto("/queue");
@@ -221,12 +217,8 @@ test("shows saved tracks with artwork and one aligned time column", async ({
       },
     }),
   );
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
   await page.route("**/api/v2/artwork/*", async (route) => {
-    await route.fulfill({ contentType: "image/png", body: png });
+    await route.fulfill({ contentType: "image/png", body: PIXEL });
   });
 
   await page.goto("/playing");

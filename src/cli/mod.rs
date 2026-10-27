@@ -1,4 +1,12 @@
-//! Administrative CLI used before the M4 web administration surface exists.
+//! The command line: what an operator does on the host itself — accounts and
+//! credentials, libraries and their members, database backups and restores,
+//! the instance key and scrobbling links.
+//!
+//! It predates the web administration and outlived it on purpose: it is how the
+//! first administrator is made without the setup page, and how a library is
+//! administered from a shell script. Most commands run against the same
+//! `AppState` the server builds; `restore` and `key` take only the
+//! `Config`, because they run on a database the boot would refuse.
 
 mod account;
 mod args;

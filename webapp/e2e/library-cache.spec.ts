@@ -4,6 +4,7 @@ import { expect, test } from "@playwright/test";
 
 import { resetAndMockApi } from "./fixtures/api";
 import { albums, session, track } from "./fixtures/catalogue";
+import { PIXEL } from "./fixtures/media";
 import { onPhoneNavigation } from "./fixtures/navigation";
 import { mock } from "./fixtures/state";
 
@@ -287,12 +288,8 @@ test("shows a held cover at once, without a grey frame in between", async ({
   await page.route("**/api/v2/albums*", async (route) => {
     await route.fulfill({ json: shelf });
   });
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
   await page.route("**/api/v2/artwork/*", async (route) => {
-    await route.fulfill({ contentType: "image/png", body: png });
+    await route.fulfill({ contentType: "image/png", body: PIXEL });
   });
 
   await page.goto("/");
@@ -387,17 +384,13 @@ test("asks again for a cover that failed, and not for one that is absent", async
     await route.fulfill({ json: shelf });
   });
 
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
   let flaky = 0;
   let absent = 0;
   await page.route("**/api/v2/artwork/hash-flaky", async (route) => {
     flaky += 1;
     // Down the first time, up afterwards.
     if (flaky === 1) return route.fulfill({ status: 503, body: "" });
-    await route.fulfill({ contentType: "image/png", body: png });
+    await route.fulfill({ contentType: "image/png", body: PIXEL });
   });
   await page.route("**/api/v2/artwork/hash-absent", async (route) => {
     absent += 1;

@@ -11,27 +11,21 @@
 #   file it tests) stays under 1,000 lines, as does any file under
 #   `webapp/e2e/`, specs and fixtures alike.
 #
-# Run from the repository root: `sh scripts/check-webapp-layout.sh`. POSIX sh
-# and coreutils only, so it runs the same on a runner and on a laptop.
+# `sh scripts/check-webapp-layout.sh`, from anywhere: it moves to the
+# repository root first, because run from a subfolder its `find` met no file
+# and it passed having measured nothing. POSIX sh and coreutils only, so it
+# runs the same on a runner and on a laptop.
 
 set -eu
+
+cd "$(dirname "$0")/.."
 
 CODE_LIMIT=600
 STYLE_LIMIT=800
 TEST_LIMIT=1000
 
 # Files allowed past their limit, one path per line, each with its reason.
-#
-# webapp/e2e/smart-playlists-and-podcasts.spec.ts: 965 lines until biome first
-# formatted `e2e/`, 1,102 after, by layout alone. Its two subjects
-# share one mock whose state is module-level `let`s the tests reassign, and a
-# binding imported from another module cannot be reassigned; splitting it
-# means moving that state onto an object, as `e2e/fixtures/state.ts` does for
-# the rest, and rewriting every read and write of it. That is a change to the
-# tests, owed its own pull request, not a formatting pass; remove this entry
-# with it.
 ALLOWLIST="
-webapp/e2e/smart-playlists-and-podcasts.spec.ts
 "
 
 failed=0

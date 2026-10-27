@@ -77,9 +77,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // A completed listen is reported once per track, when playback passes half
   // of it — the same threshold the Subsonic clients use for a submission.
   const submitted = useRef<string | null>(null);
-  // The ended handler is registered once, so it reads the queue length through
-  // a ref rather than closing over a stale value.
-  const queueLength = useRef(0);
   const queueRef = useRef<Song[]>([]);
   const indexRef = useRef(0);
   const positionRef = useRef(0);
@@ -103,7 +100,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ? order
       : Array.from({ length: queue.length }, (_, position) => position);
   repeatRef.current = repeat;
-  queueLength.current = queue.length;
   queueRef.current = queue;
   indexRef.current = index;
   positionRef.current = position;
@@ -318,10 +314,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // and the mode rather than set from a toggle's updater — which is a side
   // effect in a place React is free to run twice.
   //
-  // The queue is compared by identity and by prefix, not by length: replacing
-  // one five-track album with another left the previous draw standing, and a
-  // starting position that fell at the end of that draw stopped playback after
-  // a single track.
+  // The queue is compared entry by entry (`continuationOf`), not by length:
+  // replacing one five-track album with another left the previous draw
+  // standing, and a starting position that fell at the end of that draw
+  // stopped playback after a single track.
   useEffect(() => {
     const drawn = drawnFor.current;
     const continues = continuationOf(

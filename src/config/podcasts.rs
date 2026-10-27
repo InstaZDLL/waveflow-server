@@ -3,7 +3,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use super::env::{parse_bool_env, parse_positive_env};
+use super::env::{parse_bool_env, parse_env, parse_positive_env};
 
 /// Podcasts (RFC-025 decisions 7 to 12).
 ///
@@ -75,12 +75,7 @@ pub struct RemoteArtworkSettings {
 pub(super) fn parse_podcast_settings(
     data_dir: &std::path::Path,
 ) -> anyhow::Result<PodcastSettings> {
-    let refresh_secs = std::env::var("WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS")
-        .unwrap_or_else(|_| "21600".to_owned())
-        .parse::<u64>()
-        .map_err(|error| {
-            anyhow::anyhow!("invalid WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS: {error}")
-        })?;
+    let refresh_secs = parse_env::<u64>("WAVEFLOW_PODCAST_REFRESH_INTERVAL_SECS", "21600")?;
     let max_episode_bytes = parse_positive_env("WAVEFLOW_PODCAST_MAX_EPISODE_BYTES", 1u64 << 30)?;
     let quota_bytes = parse_positive_env("WAVEFLOW_PODCAST_QUOTA_BYTES", 20u64 << 30)?;
     if max_episode_bytes > quota_bytes {

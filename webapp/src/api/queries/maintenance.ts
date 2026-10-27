@@ -22,10 +22,6 @@ import {
 } from "../index";
 
 /**
- * A library's whole filed tree: bounded by the server's folder cap, so it
- * is held whole rather than paged.
- */
-/**
  * "Needs attention" (RFC-015): every query of the page is keyed under
  * `attention` and the library, so one invalidation after a decision, a
  * correction or a scan refreshes the whole page.
@@ -117,6 +113,10 @@ export const trackQualityQuery = (trackId: string) =>
     queryFn: () => getTrackQuality(trackId),
   });
 
+/**
+ * A library's whole filed tree: bounded by the server's folder cap, so it
+ * is held whole rather than paged.
+ */
 export const filedTreeQuery = (libraryId: string) =>
   queryOptions({
     queryKey: ["filed-tree", libraryId],

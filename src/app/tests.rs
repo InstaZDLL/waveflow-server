@@ -254,3 +254,22 @@ fn every_public_ticket_route_has_a_redaction_prefix() {
         );
     }
 }
+
+/// A canvas size the platform cannot represent falls back to a finite ceiling.
+///
+/// `Config::from_env` refuses such a size, but a `Config` built by hand never
+/// meets that check. The conversion used to fall back to `usize::MAX`, which
+/// is no ceiling at all on the one route that takes a whole video in a body.
+#[test]
+fn a_canvas_size_that_does_not_fit_keeps_a_finite_ceiling() {
+    use super::state::canvas_body_limit;
+    use crate::config::CanvasLimits;
+
+    let limits = |max_bytes| CanvasLimits {
+        max_bytes,
+        max_duration_secs: 8,
+        library_quota_bytes: i64::MAX,
+    };
+    assert_eq!(canvas_body_limit(&limits(256 * 1024)), 256 * 1024);
+    assert_eq!(canvas_body_limit(&limits(-1)), 4 * 1024 * 1024);
+}

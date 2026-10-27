@@ -183,6 +183,32 @@ test("lists who may see a library, once its panel is opened", async ({
 });
 
 /**
+ * The roles are words for a reader, not the API's enum. The account rows
+ * printed `admin` and an English "libraries" whatever the language, and the
+ * role picker offered `listener` and `manager` as they cross the wire.
+ */
+test("names the roles and the library count in the reader's language", async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem("waveflow.locale", "fr"));
+  await page.goto("/admin");
+
+  await expect(page.getByText("administrateur · 1 bibliothèque")).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Qui peut voir cette bibliothèque" })
+    .first()
+    .click();
+  await expect(page.getByText("propriétaire", { exact: true })).toBeVisible();
+  const picker = page.getByRole("combobox", { name: "Rôle: guest" });
+  await expect(picker).toHaveValue("listener");
+  await expect(picker.locator("option")).toHaveText([
+    "auditeur",
+    "gestionnaire",
+  ]);
+});
+
+/**
  * A membership list that could not be read is not an empty one. Standing an
  * empty array in for "not known yet" made every account on the server look like
  * a non-member, so the panel offered access to people who already had it —
