@@ -44,7 +44,9 @@ test("offers the day's mixes above the albums, and plays one", async ({
 
   // A genre's name travels in the address whole, space and all.
   await shelf.getByRole("link", { name: /Art Pop mix/ }).click();
-  await expect(page.getByRole("heading", { name: "Art Pop mix" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Art Pop mix" }),
+  ).toBeVisible();
   await expect(page.getByText("2 tracks, drawn for today")).toBeVisible();
   expect(mock.mixAsks).toEqual(["most-played", "genre:art pop"]);
   await expectNoWcagViolations(page);
@@ -68,7 +70,9 @@ test("says so when a mix cannot be opened, and lets the press be tried again", a
     "“Most played” could not be opened. Try again.",
   );
   // Both actions say it, and neither stays disabled after the failure.
-  await shelf.getByRole("button", { name: "Add to queue: Art Pop mix" }).click();
+  await shelf
+    .getByRole("button", { name: "Add to queue: Art Pop mix" })
+    .click();
   await expect(shelf.getByRole("alert")).toHaveText(
     "“Art Pop mix” could not be opened. Try again.",
   );

@@ -1,0 +1,49 @@
+import { useQuery } from "@tanstack/react-query";
+import { randomSongsQuery } from "../../api/queries";
+import { PlaySetActions } from "../../components/catalog/play-set-actions";
+import { SongTable } from "../../components/catalog/song-table";
+import { Icon } from "../../components/layout/icons";
+import {
+  EmptyState,
+  Loading,
+  PageHeader,
+} from "../../components/layout/page-shell";
+import { useI18n } from "../../state/i18n";
+import { useScopeId } from "../../state/library-scope";
+
+export function RandomPage() {
+  const { t } = useI18n();
+  const scope = useScopeId();
+  const { data: value, error, refetch } = useQuery(randomSongsQuery(scope));
+  if (!value) return <Loading error={error} />;
+  return (
+    <section>
+      <PageHeader
+        kicker={t("nav.group.listen")}
+        title={t("nav.random")}
+        detail={t("random.detail", { count: value.length })}
+      >
+        <div className="actions">
+          <PlaySetActions songs={value} />
+          {/* A redraw is the same question asked again, not a different one,
+              so it refetches rather than changing a key. The query holds
+              nothing between visits — a shuffle that came back identical
+              would be the cache working and the page failing. */}
+          <button
+            className="action-secondary"
+            type="button"
+            onClick={() => void refetch()}
+          >
+            <Icon name="random" size={17} />
+            {t("random.again")}
+          </button>
+        </div>
+      </PageHeader>
+      {value.length ? (
+        <SongTable songs={value} />
+      ) : (
+        <EmptyState message={t("random.empty")} />
+      )}
+    </section>
+  );
+}

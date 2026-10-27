@@ -1,7 +1,5 @@
 // The bytes the mocks serve: a silent WAV and a one-pixel image.
 
-
-
 /** A one-pixel PNG, for every cover the artwork route is asked for. */
 export const PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",

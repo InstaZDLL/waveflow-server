@@ -1,7 +1,5 @@
 // The fixed catalogue the mock answers from, and its answer factories.
 
-
-
 export const session = {
   access_token: "e2e-access-token",
   user: { id: "user-1", username: "listener", role: "admin" },
@@ -320,7 +318,11 @@ export function correctableTrack() {
 /** What the file credits: where a removed artists correction goes back to. */
 export const fileArtists = [{ id: "artist-1", name: "Björk" }];
 
-export type Offer = { full_hash: string; size_bytes: number; extension: string };
+export type Offer = {
+  full_hash: string;
+  size_bytes: number;
+  extension: string;
+};
 
 export const freshUploadSession = () => ({
   session_id: "upload-1",
@@ -350,8 +352,24 @@ export type Recipient = "listenbrainz" | "maloja" | "lastfm";
  */
 const NO_PUBLIC_URL = "browser_journey_needs_https";
 
-export const freshDestinations = () => [
-  { provider: "listenbrainz" as const, destination: "default", available: true },
+/**
+ * A row of the listing. `unavailable` is optional, as on the wire: inferred
+ * from the rows below, it was required on Last.fm's, and a test declaring
+ * Last.fm usable could not leave it out.
+ */
+type Destination = {
+  provider: Recipient;
+  destination: string;
+  available: boolean;
+  unavailable?: string;
+};
+
+export const freshDestinations = (): Destination[] => [
+  {
+    provider: "listenbrainz" as const,
+    destination: "default",
+    available: true,
+  },
   { provider: "maloja" as const, destination: "alice", available: true },
   { provider: "maloja" as const, destination: "bob", available: true },
   {
@@ -430,12 +448,22 @@ export function statsFor(period: string) {
     ],
     top_albums: [{ album: albums[1], plays: 4 }],
     top_artists: [
-      { artist: { id: "artist-1", name: "Björk" }, artwork_hash: null, plays: 4 },
+      {
+        artist: { id: "artist-1", name: "Björk" },
+        artwork_hash: null,
+        plays: 4,
+      },
     ],
     top_genres: [{ name: "Art Pop", plays: 4 }],
     timeline,
-    first_play: { song: song(2, "Cocoon", 0, false), played_at: 1_790_000_000_000 },
-    last_play: { song: song(1, "Hidden Place", 0, false), played_at: 1_790_100_000_000 },
+    first_play: {
+      song: song(2, "Cocoon", 0, false),
+      played_at: 1_790_000_000_000,
+    },
+    last_play: {
+      song: song(1, "Hidden Place", 0, false),
+      played_at: 1_790_100_000_000,
+    },
   };
 }
 

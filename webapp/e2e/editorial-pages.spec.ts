@@ -177,7 +177,8 @@ async function mockApi(page: Page) {
       return answer({ enabled: false, can_manage: false, channels: [] });
     }
     if (path === "/api/v2/albums") return answer(albums);
-    if (path === "/api/v2/albums/album-2") return answer({ ...albums[1], songs });
+    if (path === "/api/v2/albums/album-2")
+      return answer({ ...albums[1], songs });
     if (path === "/api/v2/mixes") return answer(mixes);
     if (path === "/api/v2/artists/artist-1/top-songs") return answer([]);
     if (path === "/api/v2/artists/artist-1") {
@@ -246,7 +247,12 @@ async function boxes(page: Page, first: string, second: string) {
       [a, b].map((selector) => {
         const box = document.querySelector(selector)?.getBoundingClientRect();
         return box
-          ? { left: box.left, right: box.right, top: box.top, bottom: box.bottom }
+          ? {
+              left: box.left,
+              right: box.right,
+              top: box.top,
+              bottom: box.bottom,
+            }
           : null;
       }),
     [first, second] as const,
@@ -346,11 +352,15 @@ test("follows the sung line and seeks from the lyrics column", async ({
  * nothing to read — rather than holding half the screen open for words that
  * are not there.
  */
-test("keeps one centred column for a track without lyrics", async ({ page }) => {
+test("keeps one centred column for a track without lyrics", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/playing");
   const playing = page.locator(".playing");
-  await expect(page.getByText("No lyrics travel with this file.")).toBeVisible();
+  await expect(
+    page.getByText("No lyrics travel with this file."),
+  ).toBeVisible();
   await expect(playing).toHaveClass(/playing-solo/);
   await expect(page.locator(".playing-lyrics")).toHaveCount(0);
 
@@ -430,7 +440,9 @@ test("names no album section when there is no shelf above it", async ({
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   await expect(page.locator(".grid li")).toHaveCount(2);
-  await expect(page.getByRole("heading", { name: "In your library" })).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "In your library" }),
+  ).toHaveCount(0);
 });
 
 /**
@@ -444,7 +456,10 @@ test("offers an editor the artist's image actions behind one menu", async ({
   await page.goto("/artists/artist-1");
   const hero = page.locator(".artist-hero");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
-  const trigger = hero.getByRole("button", { name: "Edit images", exact: true });
+  const trigger = hero.getByRole("button", {
+    name: "Edit images",
+    exact: true,
+  });
   await expect(trigger).toBeVisible();
   await expect(trigger).toHaveAttribute("aria-haspopup", "menu");
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -455,7 +470,9 @@ test("offers an editor the artist's image actions behind one menu", async ({
     "Automatic portrait",
     "Change banner",
   ]) {
-    await expect(hero.getByRole("button", { name, exact: true })).toHaveCount(0);
+    await expect(hero.getByRole("button", { name, exact: true })).toHaveCount(
+      0,
+    );
   }
   await expectNoWcagViolations(page);
 
@@ -497,7 +514,9 @@ test("shows a reader the artist's header with no edit menu", async ({
   const hero = page.locator(".artist-hero");
   await expect(hero.locator("img.artist-banner")).toBeVisible();
   await expect(hero.getByRole("heading", { name: "Björk" })).toBeVisible();
-  await expect(hero.getByRole("button", { name: "Edit images" })).toHaveCount(0);
+  await expect(hero.getByRole("button", { name: "Edit images" })).toHaveCount(
+    0,
+  );
   await expect(page.getByRole("menu")).toHaveCount(0);
   await expectNoWcagViolations(page);
 });

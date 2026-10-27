@@ -2,11 +2,11 @@
 import { createRootRoute, createRoute, redirect } from "@tanstack/react-router";
 
 import { ensureSession } from "../../api";
-import { AuthorizePage } from "../../pages/authorize-page";
-import { LoginPage } from "../../pages/login-page";
-import { NotFoundPage } from "../../pages/not-found-page";
-import { OfflinePage } from "../../pages/offline-page";
-import { SharePage } from "../../pages/share-page";
+import { AuthorizePage } from "../../pages/root/authorize-page";
+import { LoginPage } from "../../pages/root/login-page";
+import { NotFoundPage } from "../../pages/root/not-found-page";
+import { OfflinePage } from "../../pages/root/offline-page";
+import { SharePage } from "../../pages/root/share-page";
 import { RootFrame, Shell } from "../shell";
 
 export const rootRoute = createRootRoute({

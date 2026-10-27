@@ -37,7 +37,9 @@ test("previews an .m3u import, shows what it cannot place, then imports", async 
   ).toBeVisible();
   expect(mock.importAsks).toEqual([{ dryRun: true, name: "Soirée" }]);
   // The name offered is the file's own, without its extension, and editable.
-  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveValue("Soirée");
+  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveValue(
+    "Soirée",
+  );
 
   // Both losses are named, with their line and their reason.
   await expect(page.getByText("2 entries cannot be placed:")).toBeVisible();
@@ -58,7 +60,9 @@ test("previews an .m3u import, shows what it cannot place, then imports", async 
 
   // Cancelling writes nothing, and asks nothing more.
   await page.getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveCount(
+    0,
+  );
   expect(mock.importAsks).toHaveLength(1);
 
   // And the panel opens again after a cancel, on a fresh choice.
@@ -77,9 +81,13 @@ test("previews an .m3u import, shows what it cannot place, then imports", async 
   expect(mock.importAsks).toHaveLength(2);
 
   // A name of the reader's choosing, then the commit.
-  await page.getByLabel("Playlist name", { exact: true }).fill("Evening from elsewhere");
+  await page
+    .getByLabel("Playlist name", { exact: true })
+    .fill("Evening from elsewhere");
   await page.getByRole("button", { name: "Import", exact: true }).click();
-  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Playlist name", { exact: true })).toHaveCount(
+    0,
+  );
   expect(mock.importAsks[2]).toEqual({
     dryRun: false,
     name: "Evening from elsewhere",
@@ -166,7 +174,9 @@ test("lists another account's public playlist apart, and read-only", async ({
   );
   await page.goto("/playlists");
   const others = page.getByRole("region", { name: "From other accounts" });
-  await expect(others.getByRole("heading", { name: "Guest picks" })).toBeVisible();
+  await expect(
+    others.getByRole("heading", { name: "Guest picks" }),
+  ).toBeVisible();
   await expect(others.getByText("By guest")).toBeVisible();
   await expect(others.getByRole("button", { name: "Delete" })).toHaveCount(0);
   await expect(others.getByRole("checkbox")).toHaveCount(0);
@@ -244,13 +254,18 @@ test("offers no move or removal on another account's playlist", async ({
           owner_username: "guest",
           name: "Guest picks",
           public: true,
-          songs: [song(1, "Hidden Place", 5, true), song(2, "Cocoon", 0, false)],
+          songs: [
+            song(1, "Hidden Place", 5, true),
+            song(2, "Cocoon", 0, false),
+          ],
         },
       ],
     }),
   );
   await page.goto("/playlists");
-  await expect(page.getByRole("heading", { name: "Guest picks" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Guest picks" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /^Move / })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /from this playlist$/ }),

@@ -3,8 +3,8 @@ import { Link } from "@tanstack/react-router";
 import { type CSSProperties, useState } from "react";
 
 import { formatDuration } from "../api";
-import { Artwork } from "../components/artwork";
-import { Icon } from "../components/icons";
+import { Artwork } from "../components/artwork/artwork";
+import { Icon } from "../components/layout/icons";
 import { type Aside, asideArtwork, asideTransport } from "../lib/aside";
 import { useI18n } from "../state/i18n";
 import { useAsideProgress, usePlayer, usePlayerProgress } from "./context";

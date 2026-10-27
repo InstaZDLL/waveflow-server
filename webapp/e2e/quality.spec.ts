@@ -48,9 +48,7 @@ test("lists a library's files by what their audio says, worst first", async ({
 
   // A file opens on its real quality: the verdict, the numbers behind it, the
   // spectrum it was judged on, and no spectrogram until somebody asks.
-  await page
-    .getByRole("button", { name: /^Made From An MP3/ })
-    .click();
+  await page.getByRole("button", { name: /^Made From An MP3/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(
     dialog.getByRole("heading", { name: "Real quality" }),
@@ -88,13 +86,15 @@ test("asks for the whole library to be analysed again on the second click", asyn
 test("shows a listener the quality, and nothing to ask for", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
   await serveQuality(page);
   await page.goto("/quality");
   await expect(page.locator(".quality-table tbody tr")).toHaveCount(2);
-  await expect(
-    page.getByRole("button", { name: "Analyse again" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Analyse again" })).toHaveCount(
+    0,
+  );
 });
 
 test("keeps the quality page readable in the light", async ({ page }) => {
@@ -133,9 +133,7 @@ test("shows the analysis moving, then at rest, and stops asking", async ({
   ];
   await page.goto("/quality");
   const status = page.getByRole("status").filter({ hasText: /Analysing|Idle/ });
-  await expect(status).toHaveText(
-    "Analysing now: 1 of 3 done, 1 in progress.",
-  );
+  await expect(status).toHaveText("Analysing now: 1 of 3 done, 1 in progress.");
   // The count moves under the reader while the pass runs.
   await expect(status).toHaveText(
     "Analysing now: 2 of 3 done, 1 in progress.",
@@ -177,9 +175,9 @@ test("offers no new analysis while one runs", async ({ page }) => {
   await expect(page.getByText(/^Analysing now:/)).toBeVisible();
   // The server says a pass runs, so there is nothing to start: the offer
   // comes from its answer, not from what this page remembers doing.
-  await expect(
-    page.getByRole("button", { name: "Analyse again" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Analyse again" })).toHaveCount(
+    0,
+  );
 });
 
 test("asks for the header again when the list is filtered", async ({
@@ -197,9 +195,7 @@ test("asks for the header again when the list is filtered", async ({
   await expect(page.getByText("2 of 3 lossless files analysed")).toBeVisible();
 });
 
-test("asks for the header again on every visit", async ({
-  page,
-}, testInfo) => {
+test("asks for the header again on every visit", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "mobile", "walks the desktop sidebar");
   const state = await serveQuality(page);
   state.analyses = [analysisAt(0, "idle"), analysisAt(2, "idle")];
@@ -212,7 +208,10 @@ test("asks for the header again on every visit", async ({
   await expect(page.getByRole("heading", { name: "Queue" })).toBeVisible();
   // The rail's entry opens the first section this owner may use, and the
   // hub's menu the one this test is about.
-  await page.locator(".sidebar").getByRole("link", { name: "Maintenance" }).click();
+  await page
+    .locator(".sidebar")
+    .getByRole("link", { name: "Maintenance" })
+    .click();
   await page
     .getByRole("navigation", { name: "Maintenance sections" })
     .getByRole("link", { name: "Quality" })

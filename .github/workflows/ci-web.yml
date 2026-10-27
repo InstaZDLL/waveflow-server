@@ -16,11 +16,13 @@ on:
     branches: [main]
     paths:
       - "webapp/**"
+      - "scripts/check-webapp-layout.sh"
       - ".github/workflows/ci-web.yml"
   pull_request:
     branches: [main]
     paths:
       - "webapp/**"
+      - "scripts/check-webapp-layout.sh"
       - ".github/workflows/ci-web.yml"
 
 permissions:
@@ -54,6 +56,15 @@ jobs:
           # codeql).
           persist-credentials: false
 
+      # The shape the restructuring gave the client: no code file past 600
+      # lines, no stylesheet past 800, no test, spec or fixture past 1,000.
+      # The limits and any allowed exception live in the script, with why.
+      # It reads the tree from the repository root, so it steps out of the
+      # job's default `webapp/`.
+      - name: Webapp layout
+        working-directory: .
+        run: sh scripts/check-webapp-layout.sh
+
       - name: Install Bun
         # Pinned to the v2.2.0 commit SHA. `pull_request` runs with a
         # read-only token but CodeQL's actions/unpinned-tag rule
@@ -76,6 +87,12 @@ jobs:
       # `bun run build` typechecks before bundling, so this covers both.
       - name: Build
         run: bun run build
+
+      # The build's check reads `tsconfig.json`, the browser code alone, with
+      # no Node types. The tool configs (`tsconfig.node.json`) and the
+      # browser tests (`e2e/tsconfig.json`) run under Node and have their own.
+      - name: Typecheck tool configs and end-to-end tests
+        run: bun run typecheck:node && bun run typecheck:e2e
 
       # Covers the redirect guards that keep the consent screen and the
       # post-login hop from navigating to attacker-supplied targets.

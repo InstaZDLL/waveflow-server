@@ -2,12 +2,15 @@
 import { createRoute, redirect } from "@tanstack/react-router";
 
 import { currentUser } from "../../api";
-import { AdminPage } from "../../pages/admin-page";
-import { ScrobblingPage } from "../../pages/scrobbling-page";
-import { SettingsHub } from "../../pages/settings-hub";
-import { PlaybackSettingsPage, SettingsPage } from "../../pages/settings-page";
-import { SharesPage } from "../../pages/shares-page";
-import { UploadPage } from "../../pages/upload-page";
+import { AdminPage } from "../../pages/settings/admin-page";
+import { ScrobblingPage } from "../../pages/settings/scrobbling-page";
+import { SettingsHub } from "../../pages/settings/settings-hub";
+import {
+  PlaybackSettingsPage,
+  SettingsPage,
+} from "../../pages/settings/settings-page";
+import { SharesPage } from "../../pages/settings/shares-page";
+import { UploadPage } from "../../pages/settings/upload-page";
 import { authedRoute } from "./root";
 
 /**

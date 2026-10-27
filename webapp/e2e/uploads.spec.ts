@@ -23,7 +23,9 @@ test.beforeEach(resetAndMockApi);
 test("uploads a file in fragments, resuming from the server's account", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   mock.loseAcknowledgementOf = 1;
   const bytes = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
 
@@ -43,12 +45,16 @@ test("uploads a file in fragments, resuming from the server's account", async ({
   expect(mock.uploadOffers).toEqual([
     { full_hash: bytesToHex(blake3(bytes)), size_bytes: 20, extension: "flac" },
   ]);
-  expect(mock.uploadChunks.map(({ index, bytes: sent }) => [index, sent.length])).toEqual([
+  expect(
+    mock.uploadChunks.map(({ index, bytes: sent }) => [index, sent.length]),
+  ).toEqual([
     [0, 8],
     [1, 8],
     [2, 4],
   ]);
-  expect(mock.uploadChunks.flatMap(({ bytes: sent }) => sent)).toEqual([...bytes]);
+  expect(mock.uploadChunks.flatMap(({ bytes: sent }) => sent)).toEqual([
+    ...bytes,
+  ]);
   expect(mock.uploadCommits).toEqual(["upload-1"]);
 
   await expectNoWcagViolations(page);
@@ -61,7 +67,9 @@ test("uploads a file in fragments, resuming from the server's account", async ({
 test("refuses a file the library cannot index, before hashing it", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.goto("/upload");
   await page.getByLabel("Choose audio files").setInputFiles({
     name: "notes.txt",
@@ -83,14 +91,24 @@ test("refuses a file the library cannot index, before hashing it", async ({
 test("fails a file whose fingerprinting worker cannot load, and moves on", async ({
   page,
 }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.route("**/assets/hash-worker-*.js", (route) =>
     route.fulfill({ status: 404, body: "" }),
   );
   await page.goto("/upload");
   await page.getByLabel("Choose audio files").setInputFiles([
-    { name: "first.flac", mimeType: "audio/flac", buffer: Buffer.from([1, 2, 3]) },
-    { name: "second.flac", mimeType: "audio/flac", buffer: Buffer.from([4, 5, 6]) },
+    {
+      name: "first.flac",
+      mimeType: "audio/flac",
+      buffer: Buffer.from([1, 2, 3]),
+    },
+    {
+      name: "second.flac",
+      mimeType: "audio/flac",
+      buffer: Buffer.from([4, 5, 6]),
+    },
   ]);
   await expect(
     page.getByText("Failed: this browser could not fingerprint the file"),
@@ -118,7 +136,9 @@ test("offers the upload only where the library takes files and the role may add 
   await expect(account).toBeVisible();
   await expect(link).toHaveCount(0);
 
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.reload();
   await expect(account).toBeVisible();
   await expect(link).toHaveCount(1);

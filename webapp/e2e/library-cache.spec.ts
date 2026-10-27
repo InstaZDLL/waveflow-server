@@ -38,17 +38,17 @@ test("keeps the current tab visible while the next tab loads", async ({
     : page.locator(".primary-navigation").getByRole("link", { name: "Genres" });
   async function visitGenres() {
     if (mobile) {
-      await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+      await page
+        .locator(".mobile-navigation")
+        .getByRole("button", { name: "More" })
+        .click();
     }
     await genresLink.click();
   }
   await visitGenres();
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   await expect(page.locator(".skeleton-grid")).toHaveCount(0);
-  await expect(genresLink).toHaveAttribute(
-    "aria-busy",
-    "true",
-  );
+  await expect(genresLink).toHaveAttribute("aria-busy", "true");
   answerGenres?.();
   await expect(page.getByRole("heading", { name: "Genres" })).toBeVisible();
   await page.getByRole("link", { name: "Albums" }).click();
@@ -130,10 +130,16 @@ test("draws the random tab once when switching to it", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   if (await onPhoneNavigation(page)) {
-    await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
     await page.locator('.more-sheet a[href="/random"]').click();
   } else {
-    await page.locator(".primary-navigation").getByRole("link", { name: "Random" }).click();
+    await page
+      .locator(".primary-navigation")
+      .getByRole("link", { name: "Random" })
+      .click();
   }
   await expect(page.getByRole("heading", { name: "Random" })).toBeVisible();
   await expect(page.locator(".songs")).toContainText("Army of Me");
@@ -173,7 +179,10 @@ test("leaves a tab switch behind when the visitor moves on while it loads", asyn
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
   const mobile = await onPhoneNavigation(page);
   if (mobile) {
-    await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
   }
   const genresLink = mobile
     ? page.locator('.more-sheet a[href="/genres"]')
@@ -239,9 +248,7 @@ test("forgets the catalogue when the session changes", async ({
   // player bar at this viewport, so a real click waits on hit-testing forever.
   // What this test is about is what the sign-out does to the cache, and the
   // gesture itself is covered by the accessibility pass.
-  await page
-    .getByRole("button", { name: "Sign out" })
-    .dispatchEvent("click");
+  await page.getByRole("button", { name: "Sign out" }).dispatchEvent("click");
   await expect(page).toHaveURL(/\/login$/);
 
   // Signed in again through the form, not by reloading the page. A reload
@@ -353,12 +360,8 @@ test("asks the catalogue again after a track is favourited", async ({
   await expect(page.getByRole("heading", { name: "Post" })).toBeVisible();
   expect(asked).toBe(1);
 
-  await page
-    .getByRole("button", { name: "Add favourite: Army of Me" })
-    .click();
-  await expect
-    .poll(() => asked, { message: "the album was re-asked" })
-    .toBe(2);
+  await page.getByRole("button", { name: "Add favourite: Army of Me" }).click();
+  await expect.poll(() => asked, { message: "the album was re-asked" }).toBe(2);
 });
 
 /**
@@ -461,9 +464,7 @@ test("re-asks a held listing after a correction is saved", async ({
 
   const sidebar = page.getByRole("navigation");
   await page.getByRole("link", { name: /Post/ }).first().click();
-  await page
-    .getByRole("link", { name: "Correct tags: Army Of Me" })
-    .click();
+  await page.getByRole("link", { name: "Correct tags: Army Of Me" }).click();
 
   const title = page.getByLabel("Title", { exact: true });
   await expect(title).toHaveValue("Army Of Me");

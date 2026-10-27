@@ -1,0 +1,361 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { type FormEvent, useState } from "react";
+
+import {
+  ApiError,
+  correctTrack,
+  type SongCredits,
+  type TrackOverrides,
+} from "../../api";
+import { trackEditQuery } from "../../api/queries";
+import { CanvasPanel } from "../../components/artwork/canvas-panel";
+import { PageBack } from "../../components/layout/page-back";
+import { Loading, PageHeader } from "../../components/layout/page-shell";
+import {
+  buildCorrectionPatch,
+  type CorrectionDraft,
+  type CorrectionField,
+  draftFrom,
+  type FieldDraft,
+  isMultilineField,
+  isNumericField,
+  LIST_FIELDS,
+  type ListField,
+  SCALAR_FIELDS,
+  type ScalarField,
+} from "../../lib/track-corrections";
+import { type TranslationKey, useI18n } from "../../state/i18n";
+
+const LABELS: Record<CorrectionField, TranslationKey> = {
+  title: "correction.fieldTitle",
+  sort_title: "correction.fieldSortTitle",
+  year: "correction.fieldYear",
+  track_number: "correction.fieldTrackNumber",
+  disc_number: "correction.fieldDiscNumber",
+  musicbrainz_recording_id: "correction.fieldMusicbrainz",
+  comment: "correction.fieldComment",
+  artists: "correction.fieldArtists",
+  genres: "correction.fieldGenres",
+};
+
+type Loaded = { song: SongCredits; tracked: TrackOverrides };
+
+/**
+ * Corrects a track's tags without touching its file.
+ *
+ * The contract decided on 2026-09-07: the catalogue shows the effective value
+ * everywhere, and **provenance appears here and nowhere else**. The page is not
+ * gated on the account's role: the server is the authority, and a list of
+ * libraries that failed to load would otherwise turn an owner away.
+ */
+export function TrackEditorPage({ trackId }: { trackId: string }) {
+  const { data: value, error } = useQuery(trackEditQuery(trackId));
+  if (!value) {
+    return (
+      <section className="correction-page">
+        <BackButton />
+        <Loading error={error} />
+      </section>
+    );
+  }
+  return <CorrectionForm key={trackId} initial={value} />;
+}
+
+/**
+ * Back to wherever the editor was opened from — a song row, an album, the
+ * track menu — or to the songs list, the nearest place that holds the track.
+ * Drawn while the track loads and when it fails to, so the way out never
+ * waits on the answer.
+ */
+function BackButton() {
+  return <PageBack fallback={(navigate) => navigate({ to: "/songs" })} />;
+}
+
+function CorrectionForm({ initial }: { initial: Loaded }) {
+  const { t } = useI18n();
+  // Read through the cache, so the rest of the client sees the corrected
+  // track too rather than only this form.
+  const client = useQueryClient();
+  const [loaded, setLoaded] = useState(initial);
+  const [draft, setDraft] = useState<CorrectionDraft>(() =>
+    draftFrom(initial.tracked, initial.song),
+  );
+  const [saving, setSaving] = useState(false);
+  // After a save the stored corrections have moved. The next patch is computed
+  // against them, so a form that could not read them back must not save again:
+  // it would diff against the corrections from before and remove the wrong one.
+  const [stale, setStale] = useState(false);
+  const [message, setMessage] = useState<{
+    kind: "notice" | "error";
+    text: string;
+  } | null>(null);
+  const { song, tracked } = loaded;
+
+  function update(field: CorrectionField, change: Partial<FieldDraft>) {
+    setMessage(null);
+    setDraft((current) => ({
+      ...current,
+      [field]: { ...current[field], ...change },
+    }));
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    const result = buildCorrectionPatch(tracked, song, draft);
+    if (!result.ok) {
+      setMessage({
+        kind: "error",
+        text: t("correction.invalid", {
+          fields: result.invalid.map((field) => t(LABELS[field])).join(", "),
+        }),
+      });
+      return;
+    }
+    if (Object.keys(result.patch).length === 0) {
+      setMessage({ kind: "notice", text: t("correction.nothing") });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      await correctTrack(song.id, result.patch);
+    } catch (cause) {
+      const status = cause instanceof ApiError ? cause.status : 0;
+      setMessage({
+        kind: "error",
+        text:
+          status === 422
+            ? t("correction.refused")
+            : status === 404
+              ? t("correction.notAllowed")
+              : t("correction.error"),
+      });
+      setSaving(false);
+      return;
+    }
+    try {
+      // Everything, not the six keys that came to mind.
+      //
+      // A correction can change a title, a sort title, a year, a track or disc
+      // number, the artists and the genres — so it can change what an album
+      // holds, how a listing orders, which genre a track belongs to, what a
+      // search matches and what a favourite is called. Listing the caches that
+      // could be wrong is a list with something missing in it; a cache nobody
+      // thought of is exactly the one that goes on showing the old title.
+      // Marking all of them stale costs a refetch on the screens actually open
+      // and nothing at all on the rest, which ask again when they are next
+      // mounted.
+      await client.invalidateQueries();
+      // Then read this track back, past the cache: the entry invalidated a line
+      // above is the one that was just made wrong, and the form has to stand on
+      // what the server now holds before it says the correction was taken.
+      const fresh = await client.fetchQuery({
+        ...trackEditQuery(song.id),
+        staleTime: 0,
+      });
+      setLoaded(fresh);
+      setDraft(draftFrom(fresh.tracked, fresh.song));
+      setMessage({ kind: "notice", text: t("correction.saved") });
+    } catch {
+      setStale(true);
+      setMessage({ kind: "error", text: t("correction.stale") });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section className="correction-page">
+      <BackButton />
+      <PageHeader
+        kicker={t("nav.group.library")}
+        title={t("correction.edit")}
+        detail={song.title}
+      >
+        {song.album_id ? (
+          <Link to="/albums/$albumId" params={{ albumId: song.album_id }}>
+            {t("correction.back", { album: song.album ?? song.title })}
+          </Link>
+        ) : null}
+      </PageHeader>
+      <p className="muted correction-detail">{t("correction.detail")}</p>
+      <form
+        className="correction-form"
+        onSubmit={(event) => void submit(event)}
+      >
+        {SCALAR_FIELDS.map((field) => (
+          <ScalarInput
+            key={field}
+            field={field}
+            tracked={tracked}
+            draft={draft[field]}
+            onChange={(change) => update(field, change)}
+          />
+        ))}
+        {LIST_FIELDS.map((field) => (
+          <ListInput
+            key={field}
+            field={field}
+            tracked={tracked}
+            draft={draft[field]}
+            onChange={(change) => update(field, change)}
+          />
+        ))}
+        <div className="correction-actions">
+          <button type="submit" disabled={saving || stale}>
+            {saving ? t("correction.saving") : t("correction.save")}
+          </button>
+          {message ? (
+            <p
+              role={message.kind === "error" ? "alert" : "status"}
+              className={message.kind}
+            >
+              {message.text}
+            </p>
+          ) : null}
+        </div>
+      </form>
+      <CanvasPanel song={song} />
+    </section>
+  );
+}
+
+function CorrectedBadge() {
+  const { t } = useI18n();
+  return <span className="correction-badge">{t("correction.corrected")}</span>;
+}
+
+function RestoreToggle({
+  label,
+  restore,
+  onToggle,
+}: {
+  label: string;
+  restore: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const text = restore ? t("correction.keep") : t("correction.restore");
+  return (
+    <button
+      type="button"
+      className="link"
+      aria-pressed={restore}
+      aria-label={`${text}: ${label}`}
+      onClick={onToggle}
+    >
+      {text}
+    </button>
+  );
+}
+
+function ScalarInput({
+  field,
+  tracked,
+  draft,
+  onChange,
+}: {
+  field: ScalarField;
+  tracked: TrackOverrides;
+  draft: FieldDraft;
+  onChange: (change: Partial<FieldDraft>) => void;
+}) {
+  const { t } = useI18n();
+  const label = t(LABELS[field]);
+  const corrected = tracked.overrides[field] !== null;
+  const fileValue = tracked.source[field];
+  const id = `correction-${field}`;
+  const provenanceId = `${id}-provenance`;
+  return (
+    <div className="correction-field">
+      <div className="correction-label">
+        <label htmlFor={id}>{label}</label>
+        {corrected ? <CorrectedBadge /> : null}
+      </div>
+      {isMultilineField(field) ? (
+        <textarea
+          id={id}
+          rows={3}
+          value={draft.restore ? String(fileValue ?? "") : draft.value}
+          disabled={draft.restore}
+          aria-describedby={corrected ? provenanceId : undefined}
+          onChange={(event) => onChange({ value: event.target.value })}
+        />
+      ) : (
+        <input
+          id={id}
+          inputMode={isNumericField(field) ? "numeric" : undefined}
+          value={draft.restore ? String(fileValue ?? "") : draft.value}
+          disabled={draft.restore}
+          aria-describedby={corrected ? provenanceId : undefined}
+          onChange={(event) => onChange({ value: event.target.value })}
+        />
+      )}
+      {corrected ? (
+        <p id={provenanceId} className="muted correction-provenance">
+          <span>
+            {draft.restore
+              ? t("correction.restoring")
+              : fileValue === null
+                ? t("correction.fileEmpty")
+                : t("correction.fromFile", { value: String(fileValue) })}
+          </span>
+          <RestoreToggle
+            label={label}
+            restore={draft.restore}
+            onToggle={() => onChange({ restore: !draft.restore })}
+          />
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function ListInput({
+  field,
+  tracked,
+  draft,
+  onChange,
+}: {
+  field: ListField;
+  tracked: TrackOverrides;
+  draft: FieldDraft;
+  onChange: (change: Partial<FieldDraft>) => void;
+}) {
+  const { t } = useI18n();
+  const label = t(LABELS[field]);
+  const corrected = tracked.overrides[field] !== null;
+  const id = `correction-${field}`;
+  const hintId = `${id}-hint`;
+  return (
+    <div className="correction-field">
+      <div className="correction-label">
+        <label htmlFor={id}>{label}</label>
+        {corrected ? <CorrectedBadge /> : null}
+      </div>
+      <textarea
+        id={id}
+        rows={3}
+        value={draft.restore ? "" : draft.value}
+        disabled={draft.restore}
+        aria-describedby={hintId}
+        onChange={(event) => onChange({ value: event.target.value })}
+      />
+      <p id={hintId} className="muted correction-provenance">
+        <span>
+          {draft.restore
+            ? t("correction.restoringList")
+            : t("correction.listHint")}
+        </span>
+        {corrected ? (
+          <RestoreToggle
+            label={label}
+            restore={draft.restore}
+            onToggle={() => onChange({ restore: !draft.restore })}
+          />
+        ) : null}
+      </p>
+    </div>
+  );
+}

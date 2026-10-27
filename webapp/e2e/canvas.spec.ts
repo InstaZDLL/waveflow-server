@@ -15,7 +15,9 @@ test.beforeEach(resetAndMockApi);
  * and taken away.
  */
 test("places, replaces and removes a track's canvas", async ({ page }) => {
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_canvas: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_canvas: true },
+  ];
   await page.goto("/tracks/song-9/edit");
   await expect(page.getByText("This track has no canvas.")).toBeVisible();
 
@@ -107,9 +109,9 @@ test("asks once whether a track carries a canvas, not once per visit", async ({
 
   await page.goto("/playing");
   await expect(page.locator(".canvas-stage .cover")).toBeVisible();
-  await expect.poll(() => tickets).toEqual([
-    "/api/v2/tracks/song-1/canvas-ticket",
-  ]);
+  await expect
+    .poll(() => tickets)
+    .toEqual(["/api/v2/tracks/song-1/canvas-ticket"]);
 
   for (const _visit of [1, 2]) {
     await page.getByRole("link", { name: "Albums" }).click();

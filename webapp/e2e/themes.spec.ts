@@ -56,7 +56,12 @@ const albums = [
   },
 ];
 
-const song = (index: number, title: string, rating: number, starred: boolean) => ({
+const song = (
+  index: number,
+  title: string,
+  rating: number,
+  starred: boolean,
+) => ({
   id: `song-${index}`,
   library_id: "library-1",
   album_id: "album-2",
@@ -210,7 +215,10 @@ test("draws a card per preset under a Light and a Dark heading", async ({
 
   // A first visit keeps the default, and its card is the checked one, with
   // the accent's edge and the check that says so.
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "default-dark");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "default-dark",
+  );
   const current = themes.getByRole("radio", { checked: true });
   await expect(current).toHaveCount(1);
   await expect(current).toHaveAccessibleName("Emerald dark");
@@ -271,7 +279,10 @@ test("walks the cards with the arrow keys, selecting as it goes", async ({
   await page.keyboard.press("ArrowLeft");
   const oceanLight = themes.getByRole("radio", { name: "Ocean light" });
   await expect(oceanLight).toBeChecked();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "ocean-light");
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-theme",
+    "ocean-light",
+  );
 
   // And the tab order still holds one stop: out and back lands on it.
   await page.keyboard.press("Shift+Tab");
@@ -311,7 +322,9 @@ test("follows the device between a preset and its pair, live", async ({
   // Picking a card picks its family: Sunset light, at night, is Sunset.
   await themes.getByRole("radio", { name: "Sunset light" }).click();
   await expect(html).toHaveAttribute("data-theme", "sunset");
-  await expect(themes.getByRole("radio", { name: "Sunset", exact: true })).toBeChecked();
+  await expect(
+    themes.getByRole("radio", { name: "Sunset", exact: true }),
+  ).toBeChecked();
 
   // Kept per browser, beside the theme, and read back on the next visit.
   await expect
@@ -328,7 +341,9 @@ test("follows the device between a preset and its pair, live", async ({
   await themes.getByRole("radio", { name: "OLED black" }).click();
   await expect(html).toHaveAttribute("data-theme", "default");
   await expect(
-    page.getByText("OLED black has no light version, so Emerald light stands in"),
+    page.getByText(
+      "OLED black has no light version, so Emerald light stands in",
+    ),
   ).toBeVisible();
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(html).toHaveAttribute("data-theme", "oled");
@@ -399,7 +414,10 @@ test("paints the page in each dark preset's own surfaces", async ({
     // And the card that chose it shows what the page now paints.
     const card = page.locator(`.theme-card[data-theme-id="${id}"]`);
     expect(
-      await backgroundOf(page, `.theme-card[data-theme-id="${id}"] .theme-card-preview`),
+      await backgroundOf(
+        page,
+        `.theme-card[data-theme-id="${id}"] .theme-card-preview`,
+      ),
       `${id}: the card's ground`,
     ).toBe(body);
     expect(
@@ -419,13 +437,17 @@ test("reflows the cards at any width without scrolling sideways", async ({
   await page.goto("/settings");
   await expect(picker(page)).toBeVisible();
   const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    () =>
+      document.documentElement.scrollWidth -
+      document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
   // Every card inside the viewport's width, and at least two abreast.
-  const boxes = await page.locator(".theme-card").evaluateAll((cards) =>
-    cards.map((card) => card.getBoundingClientRect().toJSON()),
-  );
+  const boxes = await page
+    .locator(".theme-card")
+    .evaluateAll((cards) =>
+      cards.map((card) => card.getBoundingClientRect().toJSON()),
+    );
   const width = await page.evaluate(() => document.documentElement.clientWidth);
   for (const box of boxes) expect(box.right).toBeLessThanOrEqual(width);
   const firstRow = boxes.filter((box) => box.top === boxes[0]?.top);
@@ -440,7 +462,9 @@ test("drops the cards' motion when the device asks for less", async ({
   const card = page.locator(".theme-card").first();
   await expect(card).toBeVisible();
   const durations = await card.evaluate((element) =>
-    getComputedStyle(element).transitionDuration.split(",").map((value) => value.trim()),
+    getComputedStyle(element)
+      .transitionDuration.split(",")
+      .map((value) => value.trim()),
   );
   expect(durations.every((value) => value === "0s")).toBe(true);
 });
@@ -474,7 +498,10 @@ for (const preset of THEME_PRESETS) {
     }, preset.id);
     for (const screen of SCREENS) {
       await page.goto(screen.path);
-      await expect(page.locator("html")).toHaveAttribute("data-theme", preset.id);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-theme",
+        preset.id,
+      );
       await screen.ready(page);
       await expect(page.locator(".player")).toBeVisible();
       await settle(page);
@@ -483,7 +510,10 @@ for (const preset of THEME_PRESETS) {
         .analyze();
       expect(
         results.violations.flatMap((violation) =>
-          violation.nodes.map((node) => `${screen.path} ${node.target.join(" ")}: ${node.failureSummary}`),
+          violation.nodes.map(
+            (node) =>
+              `${screen.path} ${node.target.join(" ")}: ${node.failureSummary}`,
+          ),
         ),
       ).toEqual([]);
     }

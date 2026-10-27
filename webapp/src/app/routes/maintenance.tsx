@@ -1,10 +1,19 @@
 // Maintenance and its sections, and the addresses they had before it.
 import { createRoute, redirect } from "@tanstack/react-router";
 
-import { AttentionPage, isAttentionCategory } from "../../pages/attention-page";
-import { MaintenanceHub, MaintenanceIndex } from "../../pages/maintenance-hub";
-import { MissingPage } from "../../pages/missing-page";
-import { isQualityVerdict, QualityPage } from "../../pages/quality-page";
+import {
+  AttentionPage,
+  isAttentionCategory,
+} from "../../pages/maintenance/attention-page";
+import {
+  MaintenanceHub,
+  MaintenanceIndex,
+} from "../../pages/maintenance/maintenance-hub";
+import { MissingPage } from "../../pages/maintenance/missing-page";
+import {
+  isQualityVerdict,
+  QualityPage,
+} from "../../pages/maintenance/quality-page";
 import { authedRoute } from "./root";
 
 /**

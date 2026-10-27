@@ -102,10 +102,12 @@ test("links each credited artist in a song list to its page", async ({
   await expect(
     rows.nth(1).locator(".song-artists").getByRole("link", { name: "Björk" }),
   ).toHaveAttribute("href", "/artists/artist-1");
-  await expect(rows.nth(2).locator(".song-artists").getByRole("link")).toHaveCount(
-    0,
+  await expect(
+    rows.nth(2).locator(".song-artists").getByRole("link"),
+  ).toHaveCount(0);
+  await expect(rows.nth(2).locator(".song-artists")).toHaveText(
+    "Nobody We Know",
   );
-  await expect(rows.nth(2).locator(".song-artists")).toHaveText("Nobody We Know");
 
   await expectNoWcagViolations(page);
 
@@ -152,9 +154,9 @@ test("keeps a long track menu on screen and lets it scroll", async ({
   const box = await menu.boundingBox();
   expect(box).not.toBeNull();
   expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(420);
-  expect(await menu.evaluate((node) => node.scrollHeight > node.clientHeight)).toBe(
-    true,
-  );
+  expect(
+    await menu.evaluate((node) => node.scrollHeight > node.clientHeight),
+  ).toBe(true);
 
   // The wheel over the menu scrolls it and leaves it open.
   await menu.hover();
@@ -185,8 +187,12 @@ test("gives random playback one clear primary action", async ({ page }) => {
   await expect(play).toBeVisible();
   await expect(queue).toBeVisible();
   await expect(redraw).toBeVisible();
-  const playFill = await play.evaluate((node) => getComputedStyle(node).backgroundColor);
-  const queueFill = await queue.evaluate((node) => getComputedStyle(node).backgroundColor);
+  const playFill = await play.evaluate(
+    (node) => getComputedStyle(node).backgroundColor,
+  );
+  const queueFill = await queue.evaluate(
+    (node) => getComputedStyle(node).backgroundColor,
+  );
   expect(playFill).not.toBe(queueFill);
 });
 
@@ -354,18 +360,22 @@ test("album view plays its tracks and keeps its compact list readable", async ({
   await expect(page.locator(".album-meta")).toContainText("15:00");
   await expect(page.locator(".album-songs tbody tr")).toHaveCount(3);
   await expect(page.locator(".album-songs .song-cover")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "More by Björk" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "More by Björk" }),
+  ).toBeVisible();
   await expect(page.locator(".album-related-grid a")).toHaveCount(1);
   expect(listings).toEqual([]);
-  const actions = await page.locator(".album-actions button").evaluateAll((buttons) =>
-    buttons.map((button) => {
-      const style = getComputedStyle(button);
-      return {
-        left: Number.parseFloat(style.paddingLeft),
-        right: Number.parseFloat(style.paddingRight),
-      };
-    }),
-  );
+  const actions = await page
+    .locator(".album-actions button")
+    .evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const style = getComputedStyle(button);
+        return {
+          left: Number.parseFloat(style.paddingLeft),
+          right: Number.parseFloat(style.paddingRight),
+        };
+      }),
+    );
   expect(actions).toHaveLength(2);
   for (const action of actions) {
     expect(action.left).toBeGreaterThanOrEqual(20);
@@ -377,8 +387,8 @@ test("album view plays its tracks and keeps its compact list readable", async ({
   await page.locator(".album-songs .song-title").nth(1).click();
   await expect(page.locator(".player-track strong")).toHaveText("Cocoon");
   expect(
-    await page.evaluate(() =>
-      document.documentElement.scrollWidth <= window.innerWidth,
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
 });

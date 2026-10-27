@@ -1,21 +1,20 @@
 // The catalogue's routes, the account's lists and listening, the editor.
 import { createRoute } from "@tanstack/react-router";
-
-import { TrackEditorPage } from "../../components/track-editor";
-import { AlbumPage } from "../../pages/album-page";
-import { AlbumsPage } from "../../pages/albums-page";
-import { ArtistPage } from "../../pages/artist-page";
-import { ArtistsPage } from "../../pages/artists-page";
-import { FavoritesPage } from "../../pages/favorites-page";
-import { FoldersPage } from "../../pages/folders-page";
-import { GenrePage } from "../../pages/genre-page";
-import { GenresPage } from "../../pages/genres-page";
-import { HistoryPage } from "../../pages/history-page";
-import { MixPage } from "../../pages/mix-page";
-import { PlaylistsPage } from "../../pages/playlists-page";
-import { SearchPage } from "../../pages/search-page";
-import { SongsPage } from "../../pages/songs-page";
-import { StatsPage } from "../../pages/stats-page";
+import { AlbumPage } from "../../pages/library/album-page";
+import { AlbumsPage } from "../../pages/library/albums-page";
+import { ArtistPage } from "../../pages/library/artist-page";
+import { ArtistsPage } from "../../pages/library/artists-page";
+import { FavoritesPage } from "../../pages/library/favorites-page";
+import { FoldersPage } from "../../pages/library/folders-page";
+import { GenrePage } from "../../pages/library/genre-page";
+import { GenresPage } from "../../pages/library/genres-page";
+import { HistoryPage } from "../../pages/library/history-page";
+import { MixPage } from "../../pages/library/mix-page";
+import { PlaylistsPage } from "../../pages/library/playlists-page";
+import { SearchPage } from "../../pages/library/search-page";
+import { SongsPage } from "../../pages/library/songs-page";
+import { StatsPage } from "../../pages/library/stats-page";
+import { TrackEditorPage } from "../../pages/library/track-editor";
 import { authedRoute } from "./root";
 
 export const albumsRoute = createRoute({

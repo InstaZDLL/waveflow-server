@@ -36,7 +36,9 @@ test("renders the studio shell and persists appearance preferences", async ({
 
   const language = preferences.getByLabel("Language");
   await language.selectOption("fr");
-  await expect(page.getByRole("link", { name: "Recherche" }).first()).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Recherche" }).first(),
+  ).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", "fr");
   // And nowhere else: a picker still reachable from the corridor would mean
   // the move had added a place rather than chosen one.
@@ -48,7 +50,9 @@ test("renders the studio shell and persists appearance preferences", async ({
   if (testInfo.project.name === "mobile") {
     await expect(page.locator(".mobile-navigation")).toBeVisible();
     const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(1);
   } else {
@@ -66,10 +70,16 @@ test("keeps navigation and player controls within their own space", async ({
   if (testInfo.project.name === "mobile") {
     await expect(page.locator(".sidebar")).toBeHidden();
     const bounds = await page.evaluate(() => {
-      const track = document.querySelector(".player-track")?.getBoundingClientRect();
-      const progress = document.querySelector(".player-progress")?.getBoundingClientRect();
+      const track = document
+        .querySelector(".player-track")
+        ?.getBoundingClientRect();
+      const progress = document
+        .querySelector(".player-progress")
+        ?.getBoundingClientRect();
       const player = document.querySelector(".player")?.getBoundingClientRect();
-      const navigation = document.querySelector(".mobile-navigation")?.getBoundingClientRect();
+      const navigation = document
+        .querySelector(".mobile-navigation")
+        ?.getBoundingClientRect();
       return {
         trackBottom: track?.bottom ?? 0,
         progressTop: progress?.top ?? 0,
@@ -83,10 +93,17 @@ test("keeps navigation and player controls within their own space", async ({
     expect(bounds.overflow).toBeLessThanOrEqual(1);
     await page.setViewportSize({ width: 320, height: 700 });
     const narrow = await page.evaluate(() => ({
-      trackBottom: document.querySelector(".player-track")?.getBoundingClientRect().bottom ?? 0,
-      progressTop: document.querySelector(".player-progress")?.getBoundingClientRect().top ?? 0,
-      playerBottom: document.querySelector(".player")?.getBoundingClientRect().bottom ?? 0,
-      navigationTop: document.querySelector(".mobile-navigation")?.getBoundingClientRect().top ?? 0,
+      trackBottom:
+        document.querySelector(".player-track")?.getBoundingClientRect()
+          .bottom ?? 0,
+      progressTop:
+        document.querySelector(".player-progress")?.getBoundingClientRect()
+          .top ?? 0,
+      playerBottom:
+        document.querySelector(".player")?.getBoundingClientRect().bottom ?? 0,
+      navigationTop:
+        document.querySelector(".mobile-navigation")?.getBoundingClientRect()
+          .top ?? 0,
       overflow: document.documentElement.scrollWidth - window.innerWidth,
     }));
     expect(narrow.progressTop).toBeGreaterThanOrEqual(narrow.trackBottom);
@@ -94,9 +111,15 @@ test("keeps navigation and player controls within their own space", async ({
     expect(narrow.overflow).toBeLessThanOrEqual(1);
   } else {
     const bounds = await page.evaluate(() => {
-      const sidebar = document.querySelector(".sidebar")?.getBoundingClientRect();
-      const footer = document.querySelector(".sidebar-footer")?.getBoundingClientRect();
-      const navigation = document.querySelector(".primary-navigation")?.getBoundingClientRect();
+      const sidebar = document
+        .querySelector(".sidebar")
+        ?.getBoundingClientRect();
+      const footer = document
+        .querySelector(".sidebar-footer")
+        ?.getBoundingClientRect();
+      const navigation = document
+        .querySelector(".primary-navigation")
+        ?.getBoundingClientRect();
       return {
         sidebarBottom: sidebar?.bottom ?? 0,
         footerBottom: footer?.bottom ?? 0,
@@ -105,11 +128,16 @@ test("keeps navigation and player controls within their own space", async ({
     });
     expect(bounds.footerBottom).toBeLessThanOrEqual(bounds.sidebarBottom);
     expect(bounds.navigationBottom).toBeLessThanOrEqual(bounds.footerBottom);
-    await expect(page.locator(".sidebar-footer").getByRole("button", { name: "Sign out" })).toBeVisible();
+    await expect(
+      page.locator(".sidebar-footer").getByRole("button", { name: "Sign out" }),
+    ).toBeVisible();
     await page.setViewportSize({ width: 821, height: 650 });
     const compact = await page.evaluate(() => ({
-      sidebarBottom: document.querySelector(".sidebar")?.getBoundingClientRect().bottom ?? 0,
-      footerBottom: document.querySelector(".sidebar-footer")?.getBoundingClientRect().bottom ?? 0,
+      sidebarBottom:
+        document.querySelector(".sidebar")?.getBoundingClientRect().bottom ?? 0,
+      footerBottom:
+        document.querySelector(".sidebar-footer")?.getBoundingClientRect()
+          .bottom ?? 0,
       overflow: document.documentElement.scrollWidth - window.innerWidth,
     }));
     expect(compact.footerBottom).toBeLessThanOrEqual(compact.sidebarBottom);
@@ -120,7 +148,10 @@ test("keeps navigation and player controls within their own space", async ({
 test("shows one current navigation item and separates administration panels", async ({
   page,
 }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "sidebar layout is desktop-only");
+  test.skip(
+    testInfo.project.name !== "desktop",
+    "sidebar layout is desktop-only",
+  );
   // A section of Settings: the rail has no entry of its own for it any more,
   // and the one entry that leads there is the current one — in the rail's
   // foot, so the whole sidebar is counted and not only the rail.
@@ -133,11 +164,11 @@ test("shows one current navigation item and separates administration panels", as
     name: "Genres",
   });
   await genres.hover();
-  const activeBackground = await current.evaluate((node) =>
-    getComputedStyle(node).backgroundColor,
+  const activeBackground = await current.evaluate(
+    (node) => getComputedStyle(node).backgroundColor,
   );
-  const hoverBackground = await genres.evaluate((node) =>
-    getComputedStyle(node).backgroundColor,
+  const hoverBackground = await genres.evaluate(
+    (node) => getComputedStyle(node).backgroundColor,
   );
   expect(hoverBackground).not.toBe(activeBackground);
 
@@ -172,7 +203,9 @@ test("fits the rail without scrolling at common desktop heights", async ({
   page,
 }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the rail is desktop-only");
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   for (const [width, height] of [
     [1366, 768],
     [1440, 900],
@@ -206,9 +239,15 @@ test("fits the rail without scrolling at common desktop heights", async ({
           ),
         ),
       );
-    expect(smallest, `targets at ${width}x${height}`).toBeGreaterThanOrEqual(24);
-    const settings = page.locator(".sidebar").getByRole("link", { name: "Settings" });
-    await expect(settings, `at ${width}x${height}`).toBeInViewport({ ratio: 1 });
+    expect(smallest, `targets at ${width}x${height}`).toBeGreaterThanOrEqual(
+      24,
+    );
+    const settings = page
+      .locator(".sidebar")
+      .getByRole("link", { name: "Settings" });
+    await expect(settings, `at ${width}x${height}`).toBeInViewport({
+      ratio: 1,
+    });
     // And not under the player bar, which runs across the rail's foot.
     const overlap = await settings.evaluate((link) => {
       const player = document.querySelector(".player")?.getBoundingClientRect();
@@ -233,7 +272,9 @@ test("offers a keyboard skip link and a localized not-found route", async ({
   await expect(
     page.getByRole("heading", { name: "This room is silent" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Back to the library" })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Back to the library" }),
+  ).toBeVisible();
 });
 
 test("has no automated WCAG A or AA violations", async ({ page }) => {
@@ -273,7 +314,9 @@ test("opens the rest of the client from the mobile bar", async ({
   // the test beside this one is over-determined: that account is a listener
   // *and* its library is closed, so it would pass against a sheet that had
   // dropped the entry entirely.
-  mock.libraries = [{ ...library("library-1", "Ma musique"), accepts_uploads: true }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), accepts_uploads: true },
+  ];
   await page.goto("/");
 
   const bar = page.locator(".mobile-navigation");
@@ -356,10 +399,15 @@ test("offers nothing in the sheet that the account may not reach", async ({
       json: { ...session, user: { ...session.user, role: "user" } },
     }),
   );
-  mock.libraries = [{ ...library("library-1", "Ma musique"), role: "listener" }];
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), role: "listener" },
+  ];
 
   await page.goto("/");
-  await page.locator(".mobile-navigation").getByRole("button", { name: "More" }).click();
+  await page
+    .locator(".mobile-navigation")
+    .getByRole("button", { name: "More" })
+    .click();
 
   const sheet = page.getByRole("dialog");
   // Settings is everyone's. What sits behind it is gated in its own menu, and
@@ -373,9 +421,9 @@ test("offers nothing in the sheet that the account may not reach", async ({
   await expect(
     sheet.getByRole("link", { name: "Needs attention" }),
   ).toHaveCount(0);
-  await expect(
-    sheet.getByRole("link", { name: "Missing files" }),
-  ).toHaveCount(0);
+  await expect(sheet.getByRole("link", { name: "Missing files" })).toHaveCount(
+    0,
+  );
 });
 
 /**
@@ -440,7 +488,8 @@ test("declares the logo kit's icons, and serves the ones it declares", async ({
 test("draws the brand from the logo kit, in the version for the theme", async ({
   page,
 }, testInfo) => {
-  const where = testInfo.project.name === "mobile" ? ".mobile-header" : ".sidebar";
+  const where =
+    testInfo.project.name === "mobile" ? ".mobile-header" : ".sidebar";
   const brand = page.locator(`${where} .brand`);
 
   const expectLogo = async (file: string, hidden: string) => {
@@ -449,7 +498,9 @@ test("draws the brand from the logo kit, in the version for the theme", async ({
     await expect(brand.locator(`img[src="/brand/${hidden}"]`)).toBeHidden();
     // Really drawn, not a broken image the size of its attributes.
     await expect
-      .poll(() => shown.evaluate((image: HTMLImageElement) => image.naturalWidth))
+      .poll(() =>
+        shown.evaluate((image: HTMLImageElement) => image.naturalWidth),
+      )
       .toBeGreaterThan(0);
     const drawn = await shown.evaluate((image) => {
       const style = getComputedStyle(image);
@@ -645,9 +696,8 @@ test("declares an install manifest whose icons are all served", async ({
     expect(icon.headers()["content-type"], src).toContain("image/png");
     // The size it claims is the size it is: a PNG's IHDR carries both.
     const bytes = await icon.body();
-    expect(
-      `${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`,
-      src,
-    ).toBe(sizes);
+    expect(`${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`, src).toBe(
+      sizes,
+    );
   }
 });

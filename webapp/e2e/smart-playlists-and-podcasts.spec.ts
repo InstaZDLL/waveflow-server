@@ -61,10 +61,13 @@ type Rules = {
 /** What the mock answers for rules: the one condition it understands. */
 function evaluate(rules: Rules) {
   const contains = rules.conditions.find(
-    (condition) => condition.field === "title" && condition.operator === "contains",
+    (condition) =>
+      condition.field === "title" && condition.operator === "contains",
   );
   const needle = String(contains?.value ?? "").toLowerCase();
-  return catalogue.filter((track) => track.title.toLowerCase().includes(needle));
+  return catalogue.filter((track) =>
+    track.title.toLowerCase().includes(needle),
+  );
 }
 
 let smart: Array<Record<string, unknown> & { id: string; rules: Rules }> = [];
@@ -89,14 +92,20 @@ type Episode = {
 };
 
 let canManage = true;
-let channels: Array<Record<string, unknown> & { id: string; episodes: Episode[] }> = [];
+let channels: Array<
+  Record<string, unknown> & { id: string; episodes: Episode[] }
+> = [];
 let podcastWrites: string[] = [];
 let bookmarkWrites: Array<{ id: string; body: unknown }> = [];
 /** Held open by the tests that need a request in flight; instant otherwise. */
 let bookmarkGate: Promise<void> = Promise.resolve();
 let ticketGate: Promise<void> = Promise.resolve();
 
-const episode = (id: string, title: string, extra: Partial<Episode> = {}): Episode => ({
+const episode = (
+  id: string,
+  title: string,
+  extra: Partial<Episode> = {},
+): Episode => ({
   id,
   channel_id: "channel-1",
   channel_title: "Night Shift",
@@ -160,7 +169,11 @@ function listed(playlist: (typeof smart)[number]) {
 
 async function mockApi(page: Page) {
   await page.context().addCookies([
-    { name: "waveflow-csrf", value: "e2e-csrf", url: "http://127.0.0.1:4173" },
+    {
+      name: "waveflow-csrf",
+      value: "e2e-csrf",
+      url: "http://127.0.0.1:4173",
+    },
   ]);
   await page.route("**/api/v2/**", async (route) => {
     const request = route.request();
@@ -197,7 +210,11 @@ async function mockApi(page: Page) {
     if (path === "/api/v2/smart-playlists/preview") {
       const songs = evaluate(request.postDataJSON().rules);
       await route.fulfill({
-        json: { song_count: songs.length, duration_ms: songs.length * 200_000, songs },
+        json: {
+          song_count: songs.length,
+          duration_ms: songs.length * 200_000,
+          songs,
+        },
       });
       return;
     }
@@ -294,7 +311,9 @@ async function mockApi(page: Page) {
         json: {
           enabled: true,
           can_manage: canManage,
-          channels: channels.map(({ episodes: _episodes, ...channel }) => channel),
+          channels: channels.map(
+            ({ episodes: _episodes, ...channel }) => channel,
+          ),
         },
       });
       return;
@@ -314,17 +333,25 @@ async function mockApi(page: Page) {
       }
       const channel = channels.find((candidate) => candidate.id === id);
       await route.fulfill(
-        channel ? { json: channel } : { status: 404, json: { code: "not_found" } },
+        channel
+          ? { json: channel }
+          : { status: 404, json: { code: "not_found" } },
       );
       return;
     }
-    const download = path.match(/^\/api\/v2\/podcast-episodes\/([^/]+)\/download$/);
+    const download = path.match(
+      /^\/api\/v2\/podcast-episodes\/([^/]+)\/download$/,
+    );
     if (download) {
       podcastWrites.push(`download ${download[1]}`);
       for (const channel of channels) {
         for (const item of channel.episodes) {
           if (item.id === download[1]) {
-            Object.assign(item, { status: "completed", suffix: "wav", size: 8044 });
+            Object.assign(item, {
+              status: "completed",
+              suffix: "wav",
+              size: 8044,
+            });
           }
         }
       }
@@ -335,7 +362,10 @@ async function mockApi(page: Page) {
     if (ticket) {
       await ticketGate;
       await route.fulfill({
-        json: { url: `/api/v2/stream/ticket-${ticket[1]}`, expires_at: Date.now() + 3_600_000 },
+        json: {
+          url: `/api/v2/stream/ticket-${ticket[1]}`,
+          expires_at: Date.now() + 3_600_000,
+        },
       });
       return;
     }
@@ -387,7 +417,9 @@ test("writes a smart playlist's rules, previews them and keeps them", async ({
 }) => {
   await page.goto("/playlists");
   const section = page.locator(".smart-playlists");
-  await expect(section.getByRole("heading", { name: "Smart playlists" })).toBeVisible();
+  await expect(
+    section.getByRole("heading", { name: "Smart playlists" }),
+  ).toBeVisible();
   await expect(section.getByText("No smart playlists yet.")).toBeVisible();
 
   await section.getByRole("button", { name: "New smart playlist" }).click();
@@ -431,7 +463,9 @@ test("writes a smart playlist's rules, previews them and keeps them", async ({
       limit: 50,
     },
   });
-  const card = section.locator(".smart-playlist").filter({ hasText: "With a y" });
+  const card = section
+    .locator(".smart-playlist")
+    .filter({ hasText: "With a y" });
   await expect(card).toContainText("2 tracks");
 
   // Edited: the stored rules come back into the form, and a save replaces
@@ -439,13 +473,19 @@ test("writes a smart playlist's rules, previews them and keeps them", async ({
   await card.getByRole("button", { name: "Edit rules" }).click();
   const again = page.getByRole("form", { name: "Edit rules" });
   await expect(again.getByLabel("Value of condition 1")).toHaveValue("y");
-  await expect(again.getByLabel("Upper bound of condition 2")).toHaveValue("1999");
+  await expect(again.getByLabel("Upper bound of condition 2")).toHaveValue(
+    "1999",
+  );
   await again.getByRole("button", { name: "Remove condition 2" }).click();
   await again.getByRole("button", { name: "Save smart playlist" }).click();
   await expect(again).toHaveCount(0);
   expect(smartWrites[1]).toMatchObject({
     method: "PATCH",
-    body: { rules: { conditions: [{ field: "title", operator: "contains", value: "y" }] } },
+    body: {
+      rules: {
+        conditions: [{ field: "title", operator: "contains", value: "y" }],
+      },
+    },
   });
 
   await card.getByRole("button", { name: "Delete" }).click();
@@ -480,7 +520,9 @@ test("lists another account's smart playlist uncounted until it is opened", asyn
     },
   ];
   await page.goto("/playlists");
-  const card = page.locator(".smart-playlist").filter({ hasText: "Their y songs" });
+  const card = page
+    .locator(".smart-playlist")
+    .filter({ hasText: "Their y songs" });
   await expect(card).toContainText("Counted when opened");
   await expect(card).toContainText("By guest");
   await expect(card.getByRole("button", { name: "Edit rules" })).toHaveCount(0);
@@ -491,7 +533,12 @@ test("lists another account's smart playlist uncounted until it is opened", asyn
 });
 
 /** A smart playlist of this account's, as the listing answers it. */
-const ownSmart = (id: string, name: string, needle: string, counted: number | null) => ({
+const ownSmart = (
+  id: string,
+  name: string,
+  needle: string,
+  counted: number | null,
+) => ({
   id,
   owner_id: "user-1",
   owner_username: "listener",
@@ -512,7 +559,9 @@ const ownSmart = (id: string, name: string, needle: string, counted: number | nu
   duration_ms: counted === null ? null : counted * 200_000,
 });
 
-test("plays a smart playlist whose remembered count is zero", async ({ page }) => {
+test("plays a smart playlist whose remembered count is zero", async ({
+  page,
+}) => {
   // Counted at zero when last opened; matching tracks arrived since. A count
   // is only what was true then, so it must not keep the playlist from playing.
   smart = [ownSmart("smart-stale", "Was empty", "y", 0)];
@@ -532,16 +581,22 @@ test("starts a fresh editor for each playlist, and drops a preview that no longe
     ownSmart("smart-b", "Playlist B", "Iso", 1),
   ];
   await page.goto("/playlists");
-  const first = page.locator(".smart-playlist").filter({ hasText: "Playlist A" });
+  const first = page
+    .locator(".smart-playlist")
+    .filter({ hasText: "Playlist A" });
   await first.getByRole("button", { name: "Edit rules" }).click();
   const editor = page.getByRole("form", { name: "Edit rules" });
   await editor.getByRole("button", { name: "Preview" }).click();
   await expect(editor.getByRole("status")).toContainText("2 tracks match");
 
   // Another playlist: its own rules, and no preview of the first's.
-  const second = page.locator(".smart-playlist").filter({ hasText: "Playlist B" });
+  const second = page
+    .locator(".smart-playlist")
+    .filter({ hasText: "Playlist B" });
   await second.getByRole("button", { name: "Edit rules" }).click();
-  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue("Playlist B");
+  await expect(editor.getByLabel("Name", { exact: true })).toHaveValue(
+    "Playlist B",
+  );
   await expect(editor.getByLabel("Value of condition 1")).toHaveValue("Iso");
   await expect(editor.getByRole("status")).toHaveCount(0);
 
@@ -552,7 +607,9 @@ test("starts a fresh editor for each playlist, and drops a preview that no longe
   await expect(editor.getByRole("status")).toHaveCount(0);
 });
 
-test("chooses a library for a condition, by name, and sends its id", async ({ page }) => {
+test("chooses a library for a condition, by name, and sends its id", async ({
+  page,
+}) => {
   await page.goto("/playlists");
   const section = page.locator(".smart-playlists");
   await section.getByRole("button", { name: "New smart playlist" }).click();
@@ -562,8 +619,12 @@ test("chooses a library for a condition, by name, and sends its id", async ({ pa
   await expect(
     editor.getByLabel("Comparison of condition 1").locator("option"),
   ).toHaveText(["is", "is not"]);
-  await expect(editor.getByRole("button", { name: "Save smart playlist" })).toBeDisabled();
-  await editor.getByLabel("Value of condition 1").selectOption({ label: "Ma musique" });
+  await expect(
+    editor.getByRole("button", { name: "Save smart playlist" }),
+  ).toBeDisabled();
+  await editor
+    .getByLabel("Value of condition 1")
+    .selectOption({ label: "Ma musique" });
   await editor.getByRole("button", { name: "Save smart playlist" }).click();
   await expect(editor).toHaveCount(0);
   expect(smartWrites[0].body).toMatchObject({
@@ -583,7 +644,9 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   await expect(page.getByLabel("Feed address")).toHaveAccessibleDescription(
     /^Visible to every account/,
   );
-  await page.getByLabel("Feed address").fill("https://feeds.example.org/night.xml");
+  await page
+    .getByLabel("Feed address")
+    .fill("https://feeds.example.org/night.xml");
   await page.getByRole("button", { name: "Subscribe" }).click();
   // The route sees the write after the click returns, not before it: polled.
   await expect
@@ -591,7 +654,9 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
     .toEqual(["subscribe https://feeds.example.org/night.xml"]);
 
   const episodes = page.locator(".podcast-episodes");
-  await expect(episodes.getByRole("heading", { name: "Night Shift" })).toBeVisible();
+  await expect(
+    episodes.getByRole("heading", { name: "Night Shift" }),
+  ).toBeVisible();
   const first = episodes.locator("li").filter({ hasText: "First night" });
   await expect(first).toContainText("not downloaded");
   await first.getByRole("button", { name: "Download" }).click();
@@ -603,10 +668,14 @@ test("subscribes to a podcast, downloads, plays and keeps the place", async ({
   await expect(second).toContainText("resumes at 0:30");
   await expectNoWcagViolations(page);
   await first.getByRole("button", { name: "Play First night" }).click();
-  await expect(first.getByRole("button", { name: "Pause First night" })).toBeVisible();
+  await expect(
+    first.getByRole("button", { name: "Pause First night" }),
+  ).toBeVisible();
   await first.getByRole("button", { name: "Pause First night" }).click();
   // Pausing writes the place through the bookmark route, under the episode's id.
-  await expect.poll(() => bookmarkWrites.map((write) => write.id)).toContain("episode-1");
+  await expect
+    .poll(() => bookmarkWrites.map((write) => write.id))
+    .toContain("episode-1");
 
   await page.getByRole("button", { name: "Refresh every feed" }).click();
   await expect.poll(() => podcastWrites).toContain("refresh");
@@ -659,7 +728,10 @@ async function navigateWithin(page: Page, name: string) {
     return;
   }
   await bar.getByRole("button", { name: "More" }).click();
-  await page.getByRole("dialog").getByRole("link", { name, exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("link", { name, exact: true })
+    .click();
 }
 
 const ready = { status: "completed" as const, suffix: "wav", size: 8044 };
@@ -699,28 +771,38 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
   ];
   await page.goto("/podcasts");
   await page.getByRole("button", { name: "Episodes" }).click();
-  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  const first = page
+    .locator(".podcast-episodes li")
+    .filter({ hasText: "First night" });
   await first.getByRole("button", { name: "Play First night" }).click();
 
   const bar = page.locator(".player");
   await expect(bar.locator(".player-track strong")).toHaveText("First night");
   await expect(bar.locator(".player-track")).toContainText("Night Shift");
   await expect(bar.getByRole("button", { name: "Pause" })).toBeVisible();
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(false);
 
   // Away from the page that started it: still playing, still in the bar.
   await navigateWithin(page, "Playlists");
   await expect(page.locator(".smart-playlists")).toBeVisible();
   await expect(bar.locator(".player-track strong")).toHaveText("First night");
   await expect
-    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0)
+    .poll(
+      async () =>
+        (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0,
+    )
     .toBeGreaterThan(0.2);
   expect((await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
   // An episode has a line and a scrubber, and nothing the queue has: no next,
   // no previous, no shuffle, no repeat.
   const seek = bar.getByRole("slider", { name: "Seek" });
-  await expect(seek).toBeVisible();  await expect(bar.getByRole("button", { name: "Next track" })).toHaveCount(0);
-  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(0);
+  await expect(seek).toBeVisible();
+  await expect(bar.getByRole("button", { name: "Next track" })).toHaveCount(0);
+  await expect(bar.getByRole("button", { name: "Previous track" })).toHaveCount(
+    0,
+  );
   await expect(bar.getByRole("button", { name: "Shuffle" })).toHaveCount(0);
   await expectNoWcagViolations(page);
 
@@ -728,7 +810,10 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
   await seek.fill("12");
   await seek.dispatchEvent("mouseup");
   await expect
-    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0)
+    .poll(
+      async () =>
+        (await episodeElement(page, "ticket-episode-1"))?.currentTime ?? 0,
+    )
     .toBeGreaterThanOrEqual(12);
 
   // Pausing from the bar writes the place, under the episode's id. A seek
@@ -746,7 +831,9 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
   await expect.poll(() => placed(0)).toBe(true);
   const beforePause = bookmarkWrites.length;
   await bar.getByRole("button", { name: "Pause" }).click();
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(true);
   await expect.poll(() => placed(beforePause)).toBe(true);
 
   // Taken out of the bar, then started again from its page: it resumes where
@@ -757,8 +844,12 @@ test("plays an episode in the bar, across pages, and resumes it from its bookmar
   await page.getByRole("button", { name: "Episodes" }).click();
   await expect(first).toContainText("resumes at 0:1");
   await first.getByRole("button", { name: "Play First night" }).click();
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
-  expect((await episodeElement(page, "ticket-episode-1"))?.currentTime).toBeGreaterThanOrEqual(12);
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(false);
+  expect(
+    (await episodeElement(page, "ticket-episode-1"))?.currentTime,
+  ).toBeGreaterThanOrEqual(12);
 });
 
 /** A one-pixel PNG, for the covers the artwork route is asked for. */
@@ -793,14 +884,22 @@ test("shows a channel's cover in its list, above its episodes and in the bar", a
     channelOf("channel-2", "Day Shift", []),
   ];
   await page.goto("/podcasts");
-  const night = page.locator(".podcast-channels li").filter({ hasText: "Night Shift" });
-  const day = page.locator(".podcast-channels li").filter({ hasText: "Day Shift" });
+  const night = page
+    .locator(".podcast-channels li")
+    .filter({ hasText: "Night Shift" });
+  const day = page
+    .locator(".podcast-channels li")
+    .filter({ hasText: "Day Shift" });
   await expect(night.locator("img.resource-cover")).toBeVisible();
   await expect(day.locator(".resource-cover.cover-fallback svg")).toBeVisible();
 
   await night.getByRole("button", { name: "Episodes" }).click();
-  await expect(page.locator(".podcast-episodes img.podcast-cover")).toBeVisible();
-  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  await expect(
+    page.locator(".podcast-episodes img.podcast-cover"),
+  ).toBeVisible();
+  const first = page
+    .locator(".podcast-episodes li")
+    .filter({ hasText: "First night" });
   await first.getByRole("button", { name: "Play First night" }).click();
 
   const bar = page.locator(".player");
@@ -808,7 +907,9 @@ test("shows a channel's cover in its list, above its episodes and in the bar", a
   await expect(bar.locator("img.player-cover")).toBeVisible();
   await expect
     .poll(() =>
-      page.evaluate(() => navigator.mediaSession?.metadata?.artwork?.[0]?.src ?? ""),
+      page.evaluate(
+        () => navigator.mediaSession?.metadata?.artwork?.[0]?.src ?? "",
+      ),
     )
     .toMatch(/^blob:/);
   // One request for the hash, however many places show it.
@@ -821,25 +922,39 @@ test("keeps an episode playing when another channel is opened", async ({
 }) => {
   await recordPlayedElements(page);
   channels = [
-    channelOf("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
+    channelOf("channel-1", "Night Shift", [
+      episode("episode-1", "First night", ready),
+    ]),
     channelOf("channel-2", "Day Shift", [
       { ...episode("episode-9", "First day", ready), channel_id: "channel-2" },
     ]),
   ];
   await page.goto("/podcasts");
-  const night = page.locator(".podcast-channels li").filter({ hasText: "Night Shift" });
+  const night = page
+    .locator(".podcast-channels li")
+    .filter({ hasText: "Night Shift" });
   await night.getByRole("button", { name: "Episodes" }).click();
-  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  const first = page
+    .locator(".podcast-episodes li")
+    .filter({ hasText: "First night" });
   await first.getByRole("button", { name: "Play First night" }).click();
-  await expect(first.getByRole("button", { name: "Pause First night" })).toBeVisible();
+  await expect(
+    first.getByRole("button", { name: "Pause First night" }),
+  ).toBeVisible();
 
   // Another channel's list is only a list: the episode is the player's, and
   // the bar goes on showing it.
-  const day = page.locator(".podcast-channels li").filter({ hasText: "Day Shift" });
+  const day = page
+    .locator(".podcast-channels li")
+    .filter({ hasText: "Day Shift" });
   await day.getByRole("button", { name: "Episodes" }).click();
   await expect(page.getByRole("heading", { name: "Day Shift" })).toBeVisible();
-  await expect(page.locator(".player .player-track strong")).toHaveText("First night");
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+  await expect(page.locator(".player .player-track strong")).toHaveText(
+    "First night",
+  );
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(false);
 });
 
 /**
@@ -863,7 +978,9 @@ test("forgets an episode heard to the end even when a write before it was slow",
   await page.goto("/podcasts");
   await page.getByRole("button", { name: "Episodes" }).click();
   await page.getByRole("button", { name: "Play First night" }).click();
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(false);
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(false);
 
   let release = () => {};
   bookmarkGate = new Promise<void>((resolve) => {
@@ -875,13 +992,21 @@ test("forgets an episode heard to the end even when a write before it was slow",
   await seek.dispatchEvent("mouseup");
   await expect.poll(() => bookmarkWrites.length).toBe(1);
   // The episode ends while that write is still out.
-  await expect.poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused).toBe(true);
-  await expect(page.locator(".player").getByRole("button", { name: "Play" })).toBeVisible();
+  await expect
+    .poll(async () => (await episodeElement(page, "ticket-episode-1"))?.paused)
+    .toBe(true);
+  await expect(
+    page.locator(".player").getByRole("button", { name: "Play" }),
+  ).toBeVisible();
 
   release();
   // Both written, the forgetting last: what the server keeps is no place.
   await expect
-    .poll(() => bookmarkWrites.map((write) => (typeof write.body === "string" ? write.body : "PUT")))
+    .poll(() =>
+      bookmarkWrites.map((write) =>
+        typeof write.body === "string" ? write.body : "PUT",
+      ),
+    )
     .toEqual(["PUT", "DELETE"]);
   await expect
     .poll(() => channels[0].episodes[0].position_ms, { timeout: 3_000 })
@@ -902,7 +1027,9 @@ test("plays no episode whose ticket lands after the listener signed out", async 
   test.skip(testInfo.project.name !== "desktop", "signs out from the sidebar");
   await recordPlayedElements(page);
   channels = [
-    channelOf("channel-1", "Night Shift", [episode("episode-1", "First night", ready)]),
+    channelOf("channel-1", "Night Shift", [
+      episode("episode-1", "First night", ready),
+    ]),
   ];
   let release = () => {};
   ticketGate = new Promise<void>((resolve) => {
@@ -910,8 +1037,10 @@ test("plays no episode whose ticket lands after the listener signed out", async 
   });
   await page.goto("/podcasts");
   await page.getByRole("button", { name: "Episodes" }).click();
-  const asked = page.waitForRequest((request) =>
-    request.url().includes("/podcast-episodes/") || request.url().includes("/stream-ticket"),
+  const asked = page.waitForRequest(
+    (request) =>
+      request.url().includes("/podcast-episodes/") ||
+      request.url().includes("/stream-ticket"),
   );
   await page.getByRole("button", { name: "Play First night" }).click();
   await asked;
@@ -933,7 +1062,9 @@ test("plays no episode whose ticket lands after the listener signed out", async 
   expect(heard === null || heard.paused).toBe(true);
 });
 
-test("offers a listener no podcast control it may not use", async ({ page }) => {
+test("offers a listener no podcast control it may not use", async ({
+  page,
+}) => {
   canManage = false;
   channels = [
     {
@@ -956,10 +1087,16 @@ test("offers a listener no podcast control it may not use", async ({ page }) => 
   await page.goto("/podcasts");
   await expect(page.getByText("last fetch failed: http_500")).toBeVisible();
   await expect(page.getByLabel("Feed address")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Refresh every feed" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Unsubscribe" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Refresh every feed" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Unsubscribe" })).toHaveCount(
+    0,
+  );
   await page.getByRole("button", { name: "Episodes" }).click();
-  const first = page.locator(".podcast-episodes li").filter({ hasText: "First night" });
+  const first = page
+    .locator(".podcast-episodes li")
+    .filter({ hasText: "First night" });
   await expect(first).toContainText("not downloaded");
   await expect(first.getByRole("button", { name: "Download" })).toHaveCount(0);
 });

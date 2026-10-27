@@ -1,5 +1,5 @@
 // The rail's entries: their groups, labels, icons and addresses.
-import type { IconName } from "../components/icons";
+import type { IconName } from "../components/layout/icons";
 import type { TranslationKey } from "../state/i18n";
 
 /**
