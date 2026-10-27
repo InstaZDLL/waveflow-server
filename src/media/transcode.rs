@@ -23,7 +23,7 @@ use bytes::Bytes;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::Command,
-    sync::{mpsc, Mutex, OwnedSemaphorePermit, Semaphore},
+    sync::{mpsc, Mutex, OwnedMutexGuard, OwnedSemaphorePermit, Semaphore},
 };
 use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
@@ -176,7 +176,9 @@ impl MediaService {
     /// outlives the request**: a client that gives up before the encode ends
     /// still finds it in the cache at its next probe. **It holds the key's lock
     /// to the end**, so a burst of probes makes one encode, and the probes
-    /// behind the first are answered from its file.
+    /// behind the first are answered from its file. **The lock leaves the map
+    /// with its last holder** ([`HeldKey`]): a seek's key is one of as many as
+    /// there are offsets, which the caller chooses to the millisecond.
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn transcode_into_cache(
         &self,
@@ -193,10 +195,14 @@ impl MediaService {
         let lock = self
             .inner
             .cache_locks
-            .entry(key)
+            .entry(key.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
-        let guard = lock.lock_owned().await;
+        let held = HeldKey {
+            guard: Some(lock.lock_owned().await),
+            inner: Arc::clone(&self.inner),
+            key,
+        };
         if tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
             return Ok(());
         }
@@ -207,7 +213,7 @@ impl MediaService {
         let encode = tokio::spawn(async move {
             // The slots and the lock drop before the count, as in a fill.
             let _active = ActiveGuard(&inner.active_transcodes);
-            let _held = (global, user, guard);
+            let _held = (global, user, held);
             encode_into_cache(&inner, command, &source, cache_path, deadline).await
         });
         match encode.await {
@@ -444,6 +450,30 @@ async fn encode_into_cache(
     inner.cache_access.insert(cache_path, SystemTime::now());
     prune_cache(inner).await;
     true
+}
+
+/// A key's cache lock, held, whose entry leaves the map with its last holder.
+///
+/// The map keeps one lock per key it was ever asked for, and a seek's key is
+/// one per offset. Without this, every distinct offset an account sent — a
+/// refusal with 429 included, since the entry is made before the slots are
+/// asked for — would stay in memory until the server restarted. An entry is
+/// removed only when the map holds its sole reference: a request still waiting
+/// on the lock holds another, and the last of them removes it on its way out.
+struct HeldKey {
+    guard: Option<OwnedMutexGuard<()>>,
+    inner: Arc<MediaInner>,
+    key: String,
+}
+
+impl Drop for HeldKey {
+    fn drop(&mut self) {
+        // Released first, or the guard's own reference would always count.
+        drop(self.guard.take());
+        self.inner
+            .cache_locks
+            .remove_if(&self.key, |_, lock| Arc::strong_count(lock) == 1);
+    }
 }
 
 /// Releases a key's claim on the cache fill however the fill ends, so one that
