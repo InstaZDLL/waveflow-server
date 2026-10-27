@@ -3,7 +3,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use super::state::{chunk_body_limit, negotiation_body_limit, AppState};
+use super::state::{canvas_body_limit, chunk_body_limit, negotiation_body_limit, AppState};
 use crate::{
     auth::authentication, auth::security, auth::setup_token, library::link_roots, library::scanner,
     media, quality, remote::enrichment, remote::lrclib, remote::scrobblers, services,
@@ -199,9 +199,7 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         refresh_token_ttl: config.refresh_token_ttl,
         upload_batch_body_limit: negotiation_body_limit(&config.uploads),
         upload_chunk_body_limit: chunk_body_limit(&config.uploads),
-        // Refused at startup if it does not fit, so this conversion cannot be
-        // the place that decides what a ceiling falls back to.
-        canvas_body_limit: usize::try_from(config.canvas.max_bytes).unwrap_or(usize::MAX),
+        canvas_body_limit: canvas_body_limit(&config.canvas),
         trusted_proxies: config.trusted_proxies.clone().into(),
         setup,
     })

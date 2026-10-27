@@ -56,6 +56,18 @@ pub(super) fn negotiation_body_limit(limits: &config::UploadLimits) -> usize {
     limits.batch_limit.saturating_mul(160).saturating_add(1024)
 }
 
+/// The canvas route's body ceiling: the largest canvas, and nothing more.
+///
+/// `Config::from_env` refuses a size this platform cannot represent, but a
+/// `Config` built by hand never meets that check, and `max_bytes` is signed. A
+/// negative or oversized value lands on the default ceiling, never on
+/// `usize::MAX` — the reason `chunk_body_limit` below gives for its own
+/// fallback.
+pub(super) fn canvas_body_limit(limits: &config::CanvasLimits) -> usize {
+    const FALLBACK: usize = 4 * 1024 * 1024;
+    usize::try_from(limits.max_bytes).unwrap_or(FALLBACK)
+}
+
 /// One fragment, plus room for its framing.
 ///
 /// `Config` refuses a fragment size this platform cannot represent, so the
