@@ -7,7 +7,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     passWithNoTests: false,
-    include: ["src/**/*.test.ts"],
+    // `.tsx` as well: a component test written with JSX would otherwise be
+    // left out without a word, and the suite would pass over it.
+    include: ["src/**/*.test.{ts,tsx}"],
     // Vitest hands a CSS import back as an empty string by default, which is
     // sound for a component test and wrong for a test *about* the stylesheet:
     // the scale check read "" and passed over nothing. The sheet needs no
