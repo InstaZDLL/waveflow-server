@@ -88,10 +88,11 @@ jobs:
       - name: Build
         run: bun run build
 
-      # The browser tests have their own tsconfig (`e2e/tsconfig.json`, with
-      # the Node types the mocks need), which the build's check does not read.
-      - name: Typecheck end-to-end tests
-        run: bun run typecheck:e2e
+      # The build's check reads `tsconfig.json`, the browser code alone, with
+      # no Node types. The tool configs (`tsconfig.node.json`) and the
+      # browser tests (`e2e/tsconfig.json`) run under Node and have their own.
+      - name: Typecheck tool configs and end-to-end tests
+        run: bun run typecheck:node && bun run typecheck:e2e
 
       # Covers the redirect guards that keep the consent screen and the
       # post-login hop from navigating to attacker-supplied targets.
