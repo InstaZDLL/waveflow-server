@@ -577,9 +577,10 @@ by commas and compared exactly, case included, with the `c` parameter. It is
 `DSub` by default; set it empty to answer every client in full. A request from
 a listed client is answered without the OpenSubsonic fields the table below
 names: one pass over the finished response removes them from the elements
-listed there, before it is rendered in either encoding, and its JSON is not given back, as empty arrays, the ones it
-removed; the arrays a method is made of, such as the lyrics' `structuredLyrics`,
-keep their presence rule. What is removed:
+listed there, before it is rendered in either encoding, and its JSON is not
+given back, as empty arrays, the ones it removed; the arrays a method is made
+of, such as the lyrics' `structuredLyrics`, keep their presence rule. What is
+removed:
 
 | Element | Attributes removed | Child elements removed |
 |---|---|---|
@@ -627,11 +628,11 @@ Now `getShares` and `updateShare` carry the `url` of every share, the same one
 another account's shares, and the owner already reads every track the link
 plays. The native `GET /api/v2/shares` still omits it.
 
-**`createShare` refused an album's id with error 70.** The specification takes
-the id "of a song, album or video", and a share held tracks only. Now an
-album's id expands into the album's available tracks, in the album's order
+**`createShare` refused an album ID with error 70.** The specification takes
+the ID "of a song, album or video", and a share holds tracks only. Now an
+album ID expands into the album's available tracks, in the album's order
 (disc, then track). Albums and tracks can be mixed in one request, and the
-share keeps the order the ids were given in. An id that names neither, or an
+share keeps the order the IDs were given in. An ID that names neither, or an
 album of a library the caller cannot read, is still refused with 70. More than
 400 tracks once expanded is refused with 10, as too many tracks always were.
 
