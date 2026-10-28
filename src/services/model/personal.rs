@@ -90,8 +90,10 @@ pub struct ShareClear {
 pub struct ShareItem {
     pub id: Uuid,
     pub owner_id: Uuid,
-    /// Present only in the result of a newly-created share. Persistent reads
-    /// deliberately cannot recover the bearer token from its lookup hash.
+    /// Present in the result of a newly-created share, and wherever
+    /// [`DomainServices::reveal_share_link`](crate::services::DomainServices::reveal_share_link)
+    /// hands it back to the share's owner. Only its hash is stored: the token
+    /// is derived again from the instance key, never read back.
     pub url_token: Option<String>,
     pub description: Option<String>,
     pub expires_at: Option<i64>,

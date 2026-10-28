@@ -939,9 +939,12 @@ async fn subsonic_xml_json_auth_catalog_and_user_data_are_compatible() {
     assert_eq!(foreign_public_stream.status(), StatusCode::NOT_FOUND);
     let listed_shares = subsonic_json(&router, "getShares", api_key, "").await;
     assert_eq!(listed_shares["subsonic-response"]["status"], "ok");
-    assert!(listed_shares["subsonic-response"]["shares"]["share"][0]
-        .get("url")
-        .is_none());
+    // Required on a `share`, and handed to its owner on every read since the
+    // 2026-10-28 correction (DSub crashed on a share without one).
+    assert_eq!(
+        listed_shares["subsonic-response"]["shares"]["share"][0]["url"],
+        share_url
+    );
     assert_eq!(
         listed_shares["subsonic-response"]["shares"]["share"][0]["username"],
         "sub-admin"

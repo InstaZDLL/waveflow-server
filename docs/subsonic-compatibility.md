@@ -577,9 +577,10 @@ by commas and compared exactly, case included, with the `c` parameter. It is
 `DSub` by default; set it empty to answer every client in full. A request from
 a listed client is answered without the OpenSubsonic fields the table below
 names: one pass over the finished response removes them from the elements
-listed there, before it is rendered in either encoding, and its JSON is not given back, as empty arrays, the ones it
-removed; the arrays a method is made of, such as the lyrics' `structuredLyrics`,
-keep their presence rule. What is removed:
+listed there, before it is rendered in either encoding, and its JSON is not
+given back, as empty arrays, the ones it removed; the arrays a method is made
+of, such as the lyrics' `structuredLyrics`, keep their presence rule. What is
+removed:
 
 | Element | Attributes removed | Child elements removed |
 |---|---|---|
@@ -608,6 +609,39 @@ and JSON, over `getStarred`, `getMusicDirectory`, `getSong` and `getAlbum`. To
 check in the next campaign: that DSub lists only the artist that was starred,
 that the Session Work header shows the album's name, and that its browse and
 playback rows are otherwise unchanged.
+
+## Correction: every share carries its `url`, and `createShare` takes an album
+
+Found on 2026-10-28, in the third client campaign.
+
+**`getShares` sent no `url`.** DSub 5.5.3's share screen crashed on opening,
+with a `NullPointerException` in `Share.getName`, which rewrites the share's
+`url` without checking it is there. The schema makes `url` required on a
+`share`, and Navidrome always sends it. This façade sent it in the answer to
+`createShare` only. [RFC-020](rfcs/RFC-020-playlists-and-shares.md) had kept
+it out of later reads because only the token's hash is stored. But the token
+is derived from the instance key and the share's id, so the server can derive
+it again on any read without storing it.
+
+Now `getShares` and `updateShare` carry the `url` of every share, the same one
+`createShare` gave. Only the owner is ever handed it: no Subsonic method lists
+another account's shares, and the owner already reads every track the link
+plays. The native `GET /api/v2/shares` still omits it.
+
+**`createShare` refused an album ID with error 70.** The specification takes
+the ID "of a song, album or video", and a share holds tracks only. Now an
+album ID expands into the album's available tracks, in the album's order
+(disc, then track). Albums and tracks can be mixed in one request, and the
+share keeps the order the IDs were given in. An ID that names neither, or an
+album of a library the caller cannot read, is still refused with 70. More than
+400 tracks once expanded is refused with 10, as too many tracks always were.
+
+The share page that the link opens is not a `/rest` answer, but it changed the
+same day: its own play button now plays the first track. In Chrome on Android
+it answered "Unable to play media" until a row was touched, because the player
+had no source before one was. To check in the next campaign: that DSub opens
+its share screen and shares an album, and that the link plays from the
+player's own button on a phone.
 
 ## The replay this alignment required
 

@@ -326,6 +326,10 @@ pub(super) fn user_node(user: &crate::services::UserItem) -> Node {
         )
 }
 
+/// `url` is required on a `share`, and DSub's share screen crashes on one
+/// without it. Every share method hands the owner its token
+/// ([`crate::services::DomainServices::reveal_share_link`]), so the attribute
+/// stays optional here only because the type allows a share without one.
 pub(super) fn share_node(
     share: &crate::services::ShareItem,
     owner: &str,

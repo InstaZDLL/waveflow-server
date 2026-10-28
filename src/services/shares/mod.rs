@@ -79,6 +79,107 @@ impl DomainServices {
         Ok(shares)
     }
 
+    /// Hands a share its link again, when `user_id` owns it.
+    ///
+    /// Only the token's hash is stored, but the token itself is derived from
+    /// the instance key and the share's id
+    /// ([`crate::auth::security::SecretBox::derive_share_token`]), so its
+    /// owner can be given it on any read rather than only at creation.
+    /// Subsonic's `getShares` needs it there: `url` is required on a `share`,
+    /// and DSub crashes on a share without one. The owner already reads every
+    /// track the link plays, so the link grants them nothing new. Anyone else
+    /// is never handed it. A key rotation re-addresses every share under the
+    /// new key, so what this derives is always the address that opens it.
+    pub fn reveal_share_link(&self, user_id: Uuid, share: &mut ShareItem) {
+        if share.owner_id == user_id {
+            share.url_token = Some(self.secret_box.derive_share_token(share.id));
+        }
+    }
+
+    /// Creates a share from identifiers that may name tracks or albums
+    /// (Subsonic `createShare`).
+    ///
+    /// The specification takes the id "of a song, album or video"; a share
+    /// holds tracks only, so an album is expanded here into its available
+    /// tracks, in the album's order, and the share is then created from those
+    /// tracks by the one implementation every surface uses. An id that is
+    /// neither a track nor an album the caller can see answers
+    /// [`ServiceError::NotFound`]; more than [`MAX_SHARE_TRACKS`] tracks once
+    /// expanded answers [`ServiceError::Invalid`], as too many tracks do.
+    pub async fn create_share_of_items(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+        description: Option<&str>,
+        expires_at: Option<i64>,
+    ) -> Result<ShareItem, ServiceError> {
+        if ids.is_empty() || ids.len() > MAX_SHARE_TRACKS {
+            return Err(ServiceError::Invalid);
+        }
+        let track_ids = self.share_track_ids(user_id, ids).await?;
+        self.create_share(user_id, &track_ids, description, expires_at)
+            .await
+    }
+
+    /// The tracks `ids` name: a track for itself, an album for its available
+    /// tracks in sleeve order — the order [`Self::album`] lists them in.
+    async fn share_track_ids(
+        &self,
+        user_id: Uuid,
+        ids: &[Uuid],
+    ) -> Result<Vec<Uuid>, ServiceError> {
+        let ids_json = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
+        let mut connection = self.db.pool().acquire().await?;
+        let tracks = sqlx::query_scalar::<_, String>(
+            "SELECT t.id FROM track t JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND t.id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(user_id.to_string())
+        .bind(&ids_json)
+        .fetch_all(&mut *connection)
+        .await?
+        .into_iter()
+        .map(parse_uuid)
+        .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        if ids.iter().all(|id| tracks.contains(id)) {
+            return Ok(ids.to_vec());
+        }
+        let album_rows = sqlx::query(
+            "SELECT t.album_id, t.id FROM track t \
+             JOIN library_member m ON m.library_id=t.library_id \
+             WHERE m.user_id=? AND t.is_available=1 \
+               AND t.album_id IN (SELECT value FROM json_each(?)) \
+             ORDER BY t.album_id, t.disc_number NULLS LAST, t.track_number NULLS LAST, \
+                      t.title COLLATE NOCASE, t.id",
+        )
+        .bind(user_id.to_string())
+        .bind(&ids_json)
+        .fetch_all(&mut *connection)
+        .await?;
+        let mut albums = HashMap::<Uuid, Vec<Uuid>>::new();
+        for row in album_rows {
+            albums
+                .entry(parse_uuid(row.try_get("album_id")?)?)
+                .or_default()
+                .push(parse_uuid(row.try_get("id")?)?);
+        }
+        let mut expanded = Vec::new();
+        for id in ids {
+            if tracks.contains(id) {
+                expanded.push(*id);
+            } else {
+                // An album with no available track is answered like an id
+                // that names nothing: there is nothing in it to share.
+                expanded.extend(albums.get(id).ok_or(ServiceError::NotFound)?);
+            }
+            if expanded.len() > MAX_SHARE_TRACKS {
+                return Err(ServiceError::Invalid);
+            }
+        }
+        Ok(expanded)
+    }
+
     pub async fn create_share(
         &self,
         user_id: Uuid,

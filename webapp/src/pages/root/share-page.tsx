@@ -7,7 +7,7 @@ import {
   type PublicShareTrack,
 } from "../../api";
 import { Loading, Waiting } from "../../components/layout/page-shell";
-import { type CanPlayType, shareSource } from "../../lib/share-playback";
+import { type CanPlayType, sharePlayer } from "../../lib/share-playback";
 import { useI18n } from "../../state/i18n";
 
 /**
@@ -36,6 +36,11 @@ export function SharePage({ token }: { token: string }) {
     refetchOnReconnect: false,
   });
   const [current, setCurrent] = useState<number | null>(null);
+  // Counts the rows chosen, and keys the player: each choice is a fresh
+  // element that starts its track, even a repeated copy whose address is the
+  // one already loaded. Not bumped when the player's own button starts the
+  // first row, so that element keeps playing.
+  const [choices, setChoices] = useState(0);
   // A cover that would not load gives way to the plain square, rather than
   // a broken image beside the title.
   const [brokenCovers, setBrokenCovers] = useState<ReadonlySet<string>>(
@@ -72,9 +77,8 @@ export function SharePage({ token }: { token: string }) {
     );
   }
 
-  const tracks = data.tracks;
-  const playing: PublicShareTrack | null =
-    current === null ? null : (tracks[current] ?? null);
+  const tracks: PublicShareTrack[] = data.tracks;
+  const player = sharePlayer(tracks, current, canPlayType);
   // A share may hold a track twice, so the id alone does not name a row: each
   // copy is told apart by how many came before it, as the song table does.
   const seen = new Map<string, number>();
@@ -86,6 +90,7 @@ export function SharePage({ token }: { token: string }) {
 
   function play(position: number) {
     setCurrent(position);
+    setChoices((count) => count + 1);
   }
 
   return (
@@ -106,24 +111,26 @@ export function SharePage({ token }: { token: string }) {
       </header>
       {tracks.length ? (
         <>
-          {/* `autoPlay` only ever acts on a source a click put there: the
-              element has no source until a track is chosen. Keyed on the
-              position, so the next copy of a repeated track starts again
-              rather than finding its address unchanged and staying silent. */}
+          {/* Holds the first track before any row is chosen, so its own play
+              button plays it: with no source it answered "Unable to play
+              media". `autoPlay` only once a row was chosen, and nothing
+              preloaded before, so opening the page plays and fetches
+              nothing. Played from its own button, it marks the first row
+              as the one playing without a new element. */}
           <audio
-            key={current ?? "idle"}
+            key={choices}
             className="share-audio"
             aria-label={t("share.player")}
             controls
-            autoPlay
-            src={
-              playing
-                ? shareSource(playing.streamUrl, playing.suffix, canPlayType)
-                : undefined
-            }
+            autoPlay={player.autoPlay}
+            preload={player.preload}
+            src={player.src}
+            onPlay={() => {
+              if (current === null) setCurrent(player.position);
+            }}
             onEnded={() => {
-              if (current !== null && current + 1 < tracks.length) {
-                play(current + 1);
+              if (player.position + 1 < tracks.length) {
+                play(player.position + 1);
               }
             }}
           >
