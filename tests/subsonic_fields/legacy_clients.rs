@@ -545,3 +545,136 @@ async fn a_legacy_client_meets_the_root_files_of_get_indexes_bare() {
         );
     }
 }
+
+/// The `Content-Type` of a `/rest` answer as the client named `client`.
+async fn media_type(
+    fixture: &Fixture,
+    client: &str,
+    method: &str,
+    extra: &str,
+) -> (String, String) {
+    let response = fixture
+        .router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/rest/{method}.view?apiKey={}&v=1.16.1&c={client}{extra}",
+                fixture.api_key
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let media_type = response.headers()[axum::http::header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    (media_type, body_text(response).await)
+}
+
+/// A legacy client is answered in `text/xml`, errors included.
+///
+/// Found with DSub 5.5.3 on 2026-10-28: it tells an error in place of a stream
+/// from audio only by a type beginning `text/xml`, so the `application/xml`
+/// error 70 for a removed track went into its cache as a 234-byte FLAC and
+/// was requested again every second. The full wire keeps `application/xml`,
+/// and JSON is JSON on both.
+#[tokio::test]
+async fn a_legacy_client_is_answered_in_text_xml_errors_included() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    let gone = format!("&id={}", uuid::Uuid::new_v4());
+    for (client, expected) in [
+        ("DSub", "text/xml; charset=utf-8"),
+        ("Feishin", "application/xml; charset=utf-8"),
+    ] {
+        let (ping, body) = media_type(&fixture, client, "ping", "").await;
+        assert_eq!(ping, expected, "ping as {client}: {body}");
+        let (stream, body) = media_type(&fixture, client, "stream", &gone).await;
+        assert!(body.contains(r#"code="70""#), "stream as {client}: {body}");
+        assert_eq!(stream, expected, "stream error as {client}: {body}");
+        let (json, body) = media_type(&fixture, client, "stream", &format!("{gone}&f=json")).await;
+        assert!(body.contains(r#""code":70"#), "stream as {client}: {body}");
+        assert_eq!(json, "application/json; charset=utf-8", "{client}: {body}");
+    }
+}
+
+/// A legacy client that names itself in the query is answered as itself even
+/// when its `formPost` body cannot be read: the refusal is `text/xml` too.
+#[tokio::test]
+async fn a_legacy_client_keeps_text_xml_when_its_post_body_is_refused() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    for (client, expected) in [
+        ("DSub", "text/xml; charset=utf-8"),
+        ("Feishin", "application/xml; charset=utf-8"),
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/rest/ping.view?apiKey={}&v=1.16.1&c={client}",
+                    fixture.api_key
+                ))
+                .header(axum::http::header::CONTENT_TYPE, "text/plain")
+                .body(Body::from("f=json"))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let media_type = response.headers()[axum::http::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = body_text(response).await;
+        assert!(body.contains(r#"code="10""#), "{client}: {body}");
+        assert_eq!(media_type, expected, "refused POST as {client}: {body}");
+    }
+}
+
+/// A client that names itself only in a `formPost` body is answered as itself
+/// too: the wire is read again once the body is merged, so a `stream` error
+/// posted by DSub is `text/xml`.
+#[tokio::test]
+async fn a_legacy_client_naming_itself_in_its_post_body_is_answered_in_text_xml() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    let gone = uuid::Uuid::new_v4();
+    for (client, expected) in [
+        ("DSub", "text/xml; charset=utf-8"),
+        ("Feishin", "application/xml; charset=utf-8"),
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/rest/stream.view?apiKey={}&v=1.16.1",
+                    fixture.api_key
+                ))
+                .header(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(Body::from(format!("c={client}&id={gone}")))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let media_type = response.headers()[axum::http::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = body_text(response).await;
+        assert!(body.contains(r#"code="70""#), "{client}: {body}");
+        assert_eq!(
+            media_type, expected,
+            "posted stream error as {client}: {body}"
+        );
+    }
+}

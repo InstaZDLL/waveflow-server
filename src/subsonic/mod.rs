@@ -215,16 +215,21 @@ pub async fn handle(
     // extension `f=json` arrives in the body rather than the query string.
     // Collecting the parameters here, outside the fallible path, is what lets a
     // POST that fails to authenticate still answer in the format it asked for
-    // instead of falling back to XML.
+    // instead of falling back to XML. The wire survives the same way: a client
+    // naming itself in the query is answered as itself even when its body
+    // cannot be read.
     let mut wants_json = false;
+    let mut wire = Wire::OpenSubsonic;
     let params = match parse_pairs(&query) {
         Ok(mut params) => {
             wants_json = json_requested(&params);
+            wire = Wire::for_request(&state, &params);
             if request_method == Method::POST {
                 match form_params(request).await {
                     Ok(body) => {
                         params.0.extend(body.0);
                         wants_json = json_requested(&params);
+                        wire = Wire::for_request(&state, &params);
                         Ok(params)
                     }
                     Err(error) => Err(error),
@@ -254,12 +259,10 @@ pub async fn handle(
         Ok(response) => response,
         // A protocol failure is still an HTTP success: the Subsonic contract
         // puts the outcome in the body, never in the status line. An error
-        // envelope carries no media item, so it is the same on either wire.
-        Err(error) => render_protocol(
-            error_node(error.code, error.message),
-            wants_json,
-            Wire::OpenSubsonic,
-        ),
+        // envelope carries no media item, so its body is the same on either
+        // wire; its media type is not, and an old client in place of a stream
+        // tells the error from audio by that type alone.
+        Err(error) => render_protocol(error_node(error.code, error.message), wants_json, wire),
     }
 }
 

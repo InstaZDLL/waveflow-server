@@ -21,7 +21,7 @@ pub(super) fn render_protocol(node: Node, json: bool, wire: Wire) -> Response {
     } else {
         (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/xml; charset=utf-8")],
+            [(header::CONTENT_TYPE, wire.xml_content_type())],
             node_xml(&node),
         )
             .into_response()

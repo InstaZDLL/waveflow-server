@@ -602,10 +602,25 @@ on the root as it does elsewhere, and the methods only OpenSubsonic defines
 (`getOpenSubsonicExtensions`, `tokenInfo`, `getLyricsBySongId`) still answer a
 listed client that asks for them.
 
+**An XML answer to a listed client is `text/xml`**, errors included, where
+every other client keeps `application/xml`; JSON is `application/json` on both.
+Found in the DSub replay of 2026-10-28: DSub 5.5.3 tells an error in place of a
+stream from audio only by a type beginning `text/xml` or `text/html`
+(`RESTMusicService`, in its download and its byte reads). Asked to play a
+track removed from disk, it was answered error 70 in `application/xml`, wrote
+those 234 bytes to its cache as a FLAC, and requested the stream again once a
+second, 62 times in a minute, until it was stopped. Navidrome sends
+`application/xml` too, so the same loop is DSub's on that server as well; the
+type DSub tests for is the one the Subsonic server it was written against
+sent. Its other calls parse the body whatever the type, so nothing else
+changes for it. To check in the next campaign: that DSub reports the error on
+a removed track instead of looping.
+
 This changes the frozen v2.0-beta contract for DSub alone. Every other client,
 every other row of the table above included, receives exactly what it received
 before. Covered by `tests/subsonic_fields/legacy_clients.rs`, in XML
-and JSON, over `getStarred`, `getMusicDirectory`, `getSong` and `getAlbum`. To
+and JSON, over `getStarred`, `getMusicDirectory`, `getSong` and `getAlbum`, and
+for the media type over `ping` and a `stream` error. To
 check in the next campaign: that DSub lists only the artist that was starred,
 that the Session Work header shows the album's name, and that its browse and
 playback rows are otherwise unchanged.
