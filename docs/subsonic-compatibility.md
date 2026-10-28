@@ -509,6 +509,13 @@ the tracks that went. If the current track went, the current track and the
 position are dropped with it. An identifier that was never a track is still
 refused with 70, and the stored queue is left as it was.
 
+Checked in the DSub replay of 2026-10-28, read back from the database. With
+*Coda* removed, DSub's `unstar` and `setRating` on it were refused with 70, and
+DSub showed the error in a toast. The star set that morning survived, and no
+rating was written. A `savePlayQueue` still holding *Coda* was stored as the
+other three tracks, with its position. When the file came back, *Coda* came
+back under the same identifier, still starred.
+
 ## Correction: a search does not find an album by a removed track's title
 
 Found on 2026-10-28, in the same campaign, after the same removal. *Coda* was
@@ -525,6 +532,9 @@ Now an album is found only through a track that is available, on `search2`,
 by none of them, its own title included. When the file comes back, the ordinary
 rescan makes the title findable again; nothing is reindexed. No client is
 affected beyond the result itself: the response's shape is unchanged.
+Checked in the DSub replay of 2026-10-28: with *Coda* removed, its search for
+"Coda" found neither the track nor the album. Its search for "Verse" still
+found both the album and that track.
 
 ## Correction: a track with no album is a root file of `getIndexes`
 
@@ -549,8 +559,9 @@ it holds one track. A response with no album-less track to list is unchanged,
 with no `child` key at all, and `getArtists` is unchanged in every case, since
 `ArtistsID3` has no `child`.
 
-To check in the next campaign: that DSub, browsing by folders, lists and plays
-*Untitled Sketch* from the root, and that Feishin's folder view, the other
+Checked in the DSub replay of 2026-10-28: browsing by folders, DSub lists
+*Untitled Sketch* as a file at the root, after the six artist folders, and
+plays it. To check in the next campaign: that Feishin's folder view, the other
 client in this table that calls `getIndexes`, shows it the same way.
 
 ## Correction: DSub is answered without the OpenSubsonic fields
@@ -613,17 +624,23 @@ second, 62 times in a minute, until it was stopped. Navidrome sends
 `application/xml` too, so the same loop is DSub's on that server as well; the
 type DSub tests for is the one the Subsonic server it was written against
 sent. Its other calls parse the body whatever the type, so nothing else
-changes for it. To check in the next campaign: that DSub reports the error on
-a removed track instead of looping.
+changes for it. Checked in a second DSub replay, the same evening, with the
+logging proxy counting requests. Asked to play the removed track from its
+queue, DSub requested the stream 6 times within one second, then nothing more
+until it was stopped a minute later. It recognised each answer as error 70,
+cached nothing, and did not crash. It shows no message and does not move on
+to the next track; it stays loading until stopped. That is the client's
+choice once the error is received, and nothing on the wire changes it.
 
 This changes the frozen v2.0-beta contract for DSub alone. Every other client,
 every other row of the table above included, receives exactly what it received
 before. Covered by `tests/subsonic_fields/legacy_clients.rs`, in XML
 and JSON, over `getStarred`, `getMusicDirectory`, `getSong` and `getAlbum`, and
-for the media type over `ping` and a `stream` error. To
-check in the next campaign: that DSub lists only the artist that was starred,
-that the Session Work header shows the album's name, and that its browse and
-playback rows are otherwise unchanged.
+for the media type over `ping` and a `stream` error. Checked in the DSub
+replay of 2026-10-28: its starred screen lists the three starred artists and
+neither Bach nor Gounod, the Session Work header no longer shows a producer,
+and each track keeps its own artist line. The rest of the replay, browsing and
+playback included, went through on the same build.
 
 ## Correction: every share carries its `url`, and `createShare` takes an album
 
@@ -654,9 +671,10 @@ album of a library the caller cannot read, is still refused with 70. More than
 The share page that the link opens is not a `/rest` answer, but it changed the
 same day: its own play button now plays the first track. In Chrome on Android
 it answered "Unable to play media" until a row was touched, because the player
-had no source before one was. To check in the next campaign: that DSub opens
-its share screen and shares an album, and that the link plays from the
-player's own button on a phone.
+had no source before one was. Checked in the DSub replay of 2026-10-28: the
+share screen opens without crashing and shows each share's link; sharing *Late
+Additions* returned a link whose page lists its four tracks; and in Chrome on
+the same Android emulator, the player's own button started the first track.
 
 ## The replay this alignment required
 
