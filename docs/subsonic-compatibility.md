@@ -405,33 +405,81 @@ which show lyrics render a plain sheet.
 
 ## Correction: a seek probed by iOS is answered with a range
 
-Found on 2026-10-27, in the third client campaign. Juliet 8 on iOS crashed when
-a lyrics line was tapped on a track transcoded to Opus. Tapping a line is a
-seek, and Juliet seeks with `timeOffset`, which `transcodeOffset` advertises.
-The proxy log shows what followed. Each tap sent three
-`stream?…&timeOffset=…` requests with `Range: bytes=0-1`. That is the probe
-AVFoundation sends before it plays anything. The server answered all three
-with the whole live transcode, as a 200 with no `Content-Length` and
-`Accept-Ranges: none`. Juliet never asked for the stream itself.
+Found on 2026-10-27, in the third client campaign, while looking into a crash
+in Juliet 8 on iOS. **Juliet's crash turned out to have another cause**,
+described in the next section. This one is a server defect found while
+replaying Juliet's requests with valid credentials.
 
-A play from the start avoids this, because it fills the cache and every later
-request gets ranges. A seek had no cache entry of its own, so each probe started
-a new live transcode. Navidrome does not crash Juliet, because it caches a seek
-under a key that includes the offset.
+A seek through `timeOffset` on a transcode, probed with `Range: bytes=0-1`, got
+the whole live transcode back. That is the probe AVFoundation sends before it
+plays anything. The answer was a 200 with no `Content-Length` and
+`Accept-Ranges: none`, so it told the player nothing about how long the stream
+was. A play from the start is not affected, because it fills the cache and
+every later request gets ranges. A seek had no cache entry of its own, so each
+probe started a new live transcode. Navidrome caches a seek under a key that
+includes the offset.
 
 Now a seek requested with a bounded range from the first byte, such as
 `bytes=0-1`, is encoded whole into the cache first, under its own key. The
 probe then gets its two bytes and the total length as a 206. Every later range
 of that seek is served from the same file. A seek with no range, or with
 `bytes=0-` (browsers, Feishin), still streams live, so a listener hears it at
-once.
+once. Replayed through the campaign proxy after the fix, on a 45-second FLAC
+transcoded to Opus at 128 kbit/s:
+- the first probe of a seek got its 206 in 150 to 300 ms;
+- the probes after it, and a range further in, were served from the cache in
+  2 ms;
+- the total length shrank with the offset (724 614, 519 922 and 313 714 bytes
+  at 10, 20 and 30 s).
 
-`timeOffset` on the original, with no transcode, still returns error 10. That
-refusal is what Juliet falls back from: it then requests the whole file and
-seeks in it locally, and that worked in the same session. Ignoring the offset
-instead, as Navidrome does, would play the start of the track at a position the
-client believes is later. To check in the next campaign: a tap on a lyrics line
-in Juliet with Opus on.
+`timeOffset` on the original, with no transcode, still returns error 10.
+Ignoring the offset instead, as Navidrome does, would play the start of the
+track at a position the client believes is later. No validated client has yet
+received either answer, the 206 or the error 10.
+
+## Juliet sends the account password as `apiKey`
+
+Established on 2026-10-28, over four further sessions through the campaign
+proxy. Before each of the last two, the transcode cache was emptied. The proxy
+compared each `apiKey` with the campaign's credentials and logged only which
+one it matched, never the value.
+
+**What Juliet does.** Juliet 8 on iOS was configured with a username and a
+password only, and no API key was ever entered. Once it has called
+`getOpenSubsonicExtensions`, which advertises `apiKeyAuthentication` and
+`transcodeOffset`, it changes how it authenticates:
+- **it sends the account password as `apiKey`**, without `u` (204 requests in
+  one session, against 72 still sent with `u` and a token);
+- **it seeks through `timeOffset` on that path**, including into a track
+  already cached (`timeOffset=1` on a cached file went out that way).
+
+Before that call, Juliet seeks by byte range into the cached file, and every
+seek works. That is the session in which nothing failed.
+
+**What the server answers.** The server refuses each of those requests with
+error **40** ("Wrong username or password"), inside an HTTP 200, as it does for
+every authentication failure since the façade's statuses were aligned. Its
+sign-in counter recorded `wrong_credentials` equal to the number of `apiKey`
+requests in the same minute: 28 and 237 in two sessions. **Juliet crashes on
+that refusal** when a lyrics line is tapped, which is the crash the
+investigation started from. Once on that path, every later stream request is
+refused too, until the app restarts. Juliet writes no log of its own.
+
+**What the server should not do.** Accepting a password as an API key would
+make the account password a bearer token sent in the clear in every request's
+URL, where token authentication sends only a salted digest of it. The refusal is
+correct. The OpenSubsonic error
+table also defines code **44**, "Invalid API key", which this façade never
+returns: a refused key is reported as 40, like any other credential. Whether
+Juliet would recover from 44 has not been tested, and the code belongs to the
+frozen v2.0-beta contract.
+
+**For the next campaign:** Juliet's row stays at its 2026-09-16 result, which
+came from an earlier version. Juliet 8 passes everything except a seek made
+after it has read the extensions, and that limit is the client's. The defect is
+to be reported to Juliet's developer. The server's fix for the iOS seek probe
+(the previous section) has not been exercised by Juliet, since its seeks never
+get past authentication.
 
 ## The replay this alignment required
 
