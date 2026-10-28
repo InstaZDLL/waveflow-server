@@ -548,9 +548,9 @@ is given no OpenSubsonic field at all.
 **The change.** `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS` lists client names, separated
 by commas and compared exactly, case included, with the `c` parameter. It is
 `DSub` by default; set it empty to answer every client in full. A request from
-a listed client is answered in plain Subsonic 1.16.1: one pass over the finished
-response removes what OpenSubsonic added, before it is rendered in either
-encoding, and its JSON is not given back, as empty arrays, the ones it
+a listed client is answered without the OpenSubsonic fields the table below
+names: one pass over the finished response removes them from the elements
+listed there, before it is rendered in either encoding, and its JSON is not given back, as empty arrays, the ones it
 removed; the arrays a method is made of, such as the lyrics' `structuredLyrics`,
 keep their presence rule. What is removed:
 
