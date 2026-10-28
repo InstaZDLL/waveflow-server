@@ -30,6 +30,77 @@ impl DomainServices {
         time: Option<i64>,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.begin_write(&_writer).await?;
+        let Some(receipt) = self
+            .scrobble_on(
+                &_writer, &mut tx, user_id, track_id, submission, time, context,
+            )
+            .await?
+        else {
+            tx.rollback().await?;
+            return Ok(());
+        };
+        tx.commit().await?;
+        self.sync.publish(user_id, receipt);
+        Ok(())
+    }
+
+    /// Several listens in one request — a Subsonic `scrobble` names as many
+    /// tracks as it likes — recorded together or not at all.
+    ///
+    /// One transaction under one hold of the writer gate. Applied one listen at
+    /// a time, a refusal of the third left the first two recorded and the whole
+    /// request reported as failed, so a client retrying it recorded them
+    /// again; and checking every track first was not enough, because a scan
+    /// could take the gate between the check and the last write and make a
+    /// track unavailable in that gap.
+    pub async fn scrobble_all(
+        &self,
+        user_id: Uuid,
+        plays: &[(Uuid, Option<i64>)],
+        submission: bool,
+    ) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.begin_write(&_writer).await?;
+        let mut receipts = Vec::with_capacity(plays.len());
+        for (track_id, time) in plays {
+            if let Some(receipt) = self
+                .scrobble_on(
+                    &_writer,
+                    &mut tx,
+                    user_id,
+                    *track_id,
+                    submission,
+                    *time,
+                    MutationContext::server_generated(),
+                )
+                .await?
+            {
+                receipts.push(receipt);
+            }
+        }
+        tx.commit().await?;
+        for receipt in receipts {
+            self.sync.publish(user_id, receipt);
+        }
+        Ok(())
+    }
+
+    /// One listen, recorded in `tx` under `writer`, answering the receipt to
+    /// publish once `tx` commits — or `None` for a replay of an operation
+    /// already applied, which writes nothing.
+    #[allow(clippy::too_many_arguments)]
+    async fn scrobble_on(
+        &self,
+        writer: &tokio::sync::OwnedMutexGuard<()>,
+        tx: &mut SqliteConnection,
+        user_id: Uuid,
+        track_id: Uuid,
+        submission: bool,
+        time: Option<i64>,
+        context: MutationContext,
+    ) -> Result<Option<MutationReceipt>, ServiceError> {
         let intent = MutationIntent::new(
             if submission {
                 "scrobble"
@@ -39,25 +110,17 @@ impl DomainServices {
             &format!("track:{track_id}"),
             &serde_json::json!({ "submission": submission, "time": time }),
         );
-        let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.begin_write(&_writer).await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&_writer, &mut tx, user_id, context, intent)
+            .claim_operation(writer, &mut *tx, user_id, context, intent)
             .await?
         {
-            tx.rollback().await?;
             validate_replay_type(&receipt, "scrobble")?;
-            return Ok(());
+            return Ok(None);
         }
-        self.authorize_entity_on(&mut tx, user_id, "track", track_id)
+        self.authorize_entity_on(&mut *tx, user_id, "track", track_id)
             .await?;
-        let current_time = now_ms();
-        let now = time.unwrap_or(current_time);
-        const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
-        if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
-            return Err(ServiceError::Invalid);
-        }
+        let now = play_time(time)?;
         let recorded = sqlx::query(
             "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
         )
@@ -75,7 +138,7 @@ impl DomainServices {
             // queued — decision 3 — because delivering it late would announce a
             // track the listener left long ago.
             self.enqueue_scrobble_on(
-                &mut tx,
+                &mut *tx,
                 user_id,
                 recorded.last_insert_rowid(),
                 track_id,
@@ -93,7 +156,7 @@ impl DomainServices {
         let receipt = self
             .sync
             .complete_operation(
-                &mut tx,
+                &mut *tx,
                 user_id,
                 context,
                 "scrobble",
@@ -107,9 +170,7 @@ impl DomainServices {
                 Some(track_id),
             )
             .await?;
-        tx.commit().await?;
-        self.sync.publish(user_id, receipt);
-        Ok(())
+        Ok(Some(receipt))
     }
 
     pub async fn now_playing(
@@ -248,13 +309,23 @@ impl DomainServices {
         if position_ms < 0 {
             return Err(ServiceError::Invalid);
         }
-        // Counted rather than read: the queue holds as many tracks as a
-        // playlist, and hydrating every song under the writer gate to learn
-        // that it exists is what kept the ceiling at four hundred.
-        readable_on(&mut tx, user_id, ids).await?;
-        if let Some(current) = current {
-            readable_on(&mut tx, user_id, &[current]).await?;
-        }
+        // A track whose file went is left out rather than refused: the client
+        // keeps it in the queue it holds, and refusing the whole queue left it
+        // unable to save anything until the queue was cleared by hand (DSub,
+        // the 2026-10-28 campaign). A current track that went takes its
+        // position with it, which measured a place in that track.
+        let lookup_ids = current.iter().chain(ids).copied().collect::<Vec<_>>();
+        let available = available_on(&mut tx, user_id, &lookup_ids).await?;
+        let ids = ids
+            .iter()
+            .copied()
+            .filter(|id| available.contains(id))
+            .collect::<Vec<_>>();
+        let (current, position_ms) = match current {
+            Some(id) if !available.contains(&id) => (None, 0),
+            current => (current, position_ms),
+        };
+        let ids = ids.as_slice();
         sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
             .bind(user_id.to_string()).bind(current.map(|id| id.to_string())).bind(position_ms).bind(client).bind(now_ms()).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM play_queue_track WHERE user_id=?")
@@ -339,32 +410,52 @@ impl DomainServices {
     }
 }
 
-/// Whether every track of `ids` is one this account can read, refused as
-/// not-found otherwise — what `songs_by_ids_on` answers, without building a
-/// song per id. The predicate is `song_select!`'s own: a membership of the
-/// track's library, and the track available.
-async fn readable_on(
+/// When a scrobble says it was played: `time` if it gave one, now otherwise,
+/// refused as invalid when it is negative or more than five minutes ahead.
+fn play_time(time: Option<i64>) -> Result<i64, ServiceError> {
+    const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
+    let current_time = now_ms();
+    let played = time.unwrap_or(current_time);
+    if played < 0 || played > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
+        return Err(ServiceError::Invalid);
+    }
+    Ok(played)
+}
+
+/// Which tracks of `ids` this account can read now, with every id required to
+/// be a track of one of its libraries: an id it cannot see, or that never was
+/// a track, is refused as not found. One whose file went is a track of the
+/// library still, and is answered by being left out of the set.
+///
+/// Read in one statement rather than a song per id: the queue holds as many
+/// tracks as a playlist, and hydrating each one under the writer gate to learn
+/// that it exists is what kept the ceiling at four hundred.
+async fn available_on(
     connection: &mut SqliteConnection,
     user_id: Uuid,
     ids: &[Uuid],
-) -> Result<(), ServiceError> {
+) -> Result<std::collections::HashSet<Uuid>, ServiceError> {
     if ids.is_empty() {
-        return Ok(());
+        return Ok(std::collections::HashSet::new());
     }
     let distinct: std::collections::HashSet<&Uuid> = ids.iter().collect();
     let ids_json = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
-    let readable: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM track t JOIN library_member m ON m.library_id=t.library_id \
-         WHERE m.user_id=? AND t.is_available=1 \
-           AND t.id IN (SELECT DISTINCT value FROM json_each(?))",
+    let rows = sqlx::query(
+        "SELECT t.id, t.is_available FROM track t JOIN library_member m ON m.library_id=t.library_id \
+         WHERE m.user_id=? AND t.id IN (SELECT DISTINCT value FROM json_each(?))",
     )
     .bind(user_id.to_string())
     .bind(ids_json)
-    .fetch_one(&mut *connection)
+    .fetch_all(&mut *connection)
     .await?;
-    if usize::try_from(readable).ok() == Some(distinct.len()) {
-        Ok(())
-    } else {
-        Err(ServiceError::NotFound)
+    if rows.len() != distinct.len() {
+        return Err(ServiceError::NotFound);
     }
+    let mut available = std::collections::HashSet::new();
+    for row in rows {
+        if row.try_get::<i64, _>("is_available")? == 1 {
+            available.insert(parse_uuid(row.try_get("id")?)?);
+        }
+    }
+    Ok(available)
 }

@@ -25,6 +25,7 @@ mod bookmarks;
 mod playlists;
 mod radio;
 mod remaining_methods;
+mod removed_tracks;
 mod transcoding;
 
 // An account with a Subsonic API key drawn at run time, so no credential is

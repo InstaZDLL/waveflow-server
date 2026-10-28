@@ -42,6 +42,14 @@ impl DomainServices {
         Ok(unique)
     }
 
+    /// Whether `user_id` may write about the entity: a member of its library,
+    /// and, for a track, the track available.
+    ///
+    /// A track whose file went is not found to every read, so it is not found
+    /// to a write either: a bookmark, a scrobble, a star or a rating on it was
+    /// accepted while the read beside it answered 70 (the 2026-10-28 client
+    /// campaign). Refusing changes nothing already written — the rows stay, and
+    /// come back with the file.
     pub(super) async fn authorize_entity_on(
         &self,
         connection: &mut SqliteConnection,
@@ -50,7 +58,7 @@ impl DomainServices {
         id: Uuid,
     ) -> Result<(), ServiceError> {
         let query = match kind {
-            "track" => "SELECT 1 FROM track e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
+            "track" => "SELECT 1 FROM track e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=? AND e.is_available=1",
             "album" => "SELECT 1 FROM album e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
             "artist" => "SELECT 1 FROM artist e JOIN library_member m ON m.library_id=e.library_id WHERE e.id=? AND m.user_id=?",
             _ => return Err(ServiceError::Invalid),

@@ -71,14 +71,16 @@ pub(super) async fn set_star(
     params: &Params,
     starred: bool,
 ) -> Result<Node, ProtocolError> {
-    // Read before any of them is applied: a request refused halfway would leave
-    // the first few identifiers starred and report an error for the whole.
+    // Applied together or not at all (`set_stars`): a request refused halfway
+    // left the first few starred and reported an error for the whole, and a
+    // client retrying it starred them again.
     let tracks = params.uuids("id")?;
     let albums = params.uuids("albumId")?;
     let artists = params.uuids("artistId")?;
     if tracks.len() + albums.len() + artists.len() > MAX_IDENTIFIERS {
         return Err(invalid("Too many identifiers in one request"));
     }
+    let mut targets = Vec::with_capacity(tracks.len() + albums.len() + artists.len());
     for id in tracks {
         let kind = state
             .services
@@ -86,21 +88,15 @@ pub(super) async fn set_star(
             .await
             .map_err(service_protocol)?
             .ok_or_else(not_found)?;
-        state
-            .services
-            .set_star(principal.id, kind, id, starred)
-            .await
-            .map_err(service_protocol)?;
+        targets.push((kind, id));
     }
-    for (ids, kind) in [(albums, "album"), (artists, "artist")] {
-        for id in ids {
-            state
-                .services
-                .set_star(principal.id, kind, id, starred)
-                .await
-                .map_err(service_protocol)?;
-        }
-    }
+    targets.extend(albums.into_iter().map(|id| ("album", id)));
+    targets.extend(artists.into_iter().map(|id| ("artist", id)));
+    state
+        .services
+        .set_stars(principal.id, &targets, starred)
+        .await
+        .map_err(service_protocol)?;
     Ok(Node::new(if starred { "star" } else { "unstar" }))
 }
 
@@ -168,13 +164,18 @@ pub(super) async fn scrobble(
         .map(|value| value.parse::<i64>().map_err(|_| invalid("Invalid time")))
         .collect::<Result<Vec<_>, _>>()?;
     let submission = params.bool_optional("submission")?.unwrap_or(true);
-    for (index, id) in ids.into_iter().enumerate() {
-        state
-            .services
-            .scrobble(principal.id, id, submission, times.get(index).copied())
-            .await
-            .map_err(service_protocol)?;
-    }
+    // Recorded together or not at all (`scrobble_all`), for the reason
+    // `set_star` gives.
+    let plays = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| (id, times.get(index).copied()))
+        .collect::<Vec<_>>();
+    state
+        .services
+        .scrobble_all(principal.id, &plays, submission)
+        .await
+        .map_err(service_protocol)?;
     Ok(Node::new("scrobble"))
 }
 

@@ -488,6 +488,27 @@ to be reported to Juliet's developer. The server's fix for the iOS seek probe
 (the previous section) has not been exercised by Juliet, since its seeks never
 get past authentication.
 
+## Correction: a write on a removed track is refused like a read
+
+Found on 2026-10-28, in the third client campaign, after a file was removed and
+the library rescanned. The track became unavailable. `getSong` and `stream` on
+it answered 70, but `createBookmark`, `deleteBookmark`, `scrobble`, `star`,
+`unstar` and `setRating` answered `ok`. Symfonium and DSub both sent such writes
+from their caches. The check every one of them goes through confirmed that the
+account can see the track's library, and never that the track was still there.
+
+Now those writes on an unavailable track answer **70**, through the façade and
+the native API alike (404 there), and **write nothing, not even in part**. What
+was written before the file went is not deleted: the star, the rating and the
+bookmark stay, and come back when the file does, under the same identity.
+
+**`savePlayQueue` is the one exception.** A client keeps a removed track in the
+queue it holds. Refusing the whole queue left DSub unable to save any queue at
+all, and it showed three `not found` errors. The queue is now saved **without**
+the tracks that went. If the current track went, the current track and the
+position are dropped with it. An identifier that was never a track is still
+refused with 70, and the stored queue is left as it was.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist
