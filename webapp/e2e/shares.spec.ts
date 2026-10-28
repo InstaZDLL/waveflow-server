@@ -124,8 +124,13 @@ test("a share page's own play button plays the first track", async ({
   );
   expect(streamed).toEqual([]);
   // What the element's own button does: play it, for real, from the address
-  // it was given before anything was touched.
-  await player.evaluate((element) => (element as HTMLAudioElement).play());
+  // it was given before anything was touched. Muted, so no autoplay policy
+  // can refuse a play() that no gesture started.
+  await player.evaluate((element) => {
+    const audio = element as HTMLAudioElement;
+    audio.muted = true;
+    return audio.play();
+  });
   await expect
     .poll(() =>
       player.evaluate(
