@@ -76,6 +76,17 @@ impl Config {
                 )
             })?,
         };
+        // Unset is the default list; set and empty is no client at all, which
+        // is how an operator answers DSub in full too. A value that is not
+        // UTF-8 refuses to boot, like the proxies below, rather than quietly
+        // falling back to a list the operator did not write.
+        let subsonic_legacy_clients = match std::env::var("WAVEFLOW_SUBSONIC_LEGACY_CLIENTS") {
+            Ok(list) => parse_client_list(&list),
+            Err(std::env::VarError::NotPresent) => default_legacy_clients(),
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("WAVEFLOW_SUBSONIC_LEGACY_CLIENTS is not valid UTF-8")
+            }
+        };
         let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("ffmpeg"));
@@ -311,6 +322,7 @@ impl Config {
             purge_grace,
             link_roots,
             subsonic_replay_gain,
+            subsonic_legacy_clients,
             ffmpeg_path,
             ffprobe_path,
             transcode_cache_dir,
@@ -364,6 +376,23 @@ fn parse_link_roots(raw: Option<std::ffi::OsString>) -> anyhow::Result<Vec<PathB
         roots.push(root);
     }
     Ok(roots)
+}
+
+/// `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS` when it is not set: DSub, the client
+/// the setting was made for, as Navidrome's `subsonic.legacyclients` defaults.
+pub(super) fn default_legacy_clients() -> Vec<String> {
+    vec!["DSub".to_owned()]
+}
+
+/// A comma-separated list of client names, each trimmed, empty entries
+/// dropped. Nothing is refused: a client name is whatever a client sends as
+/// `c`, so no spelling is a typo this could recognise.
+pub(super) fn parse_client_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The acquire budget a deployment gets unless it says otherwise.

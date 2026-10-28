@@ -407,3 +407,25 @@ fn the_test_fixture_waits_longer_for_a_cold_database_than_a_deployment() {
         fixture.db_acquire_timeout
     );
 }
+
+/// `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`: names trimmed, empty entries dropped,
+/// and the spelling kept as written, because it is compared exactly with `c`.
+#[test]
+fn legacy_clients_are_a_trimmed_list_defaulting_to_dsub() {
+    use super::from_env::{default_legacy_clients, parse_client_list};
+
+    assert_eq!(default_legacy_clients(), ["DSub"]);
+    assert_eq!(
+        super::Config::for_data_dir(std::path::PathBuf::from("data")).subsonic_legacy_clients,
+        default_legacy_clients(),
+        "the suite answers DSub the way a deployment does"
+    );
+    // Set and empty is a list of nobody, which is how an operator answers
+    // DSub in full; it must not fall back to the default.
+    assert!(parse_client_list("").is_empty());
+    assert!(parse_client_list(" , ,").is_empty());
+    assert_eq!(
+        parse_client_list(" DSub , Subsonic Android,,audinaut "),
+        ["DSub", "Subsonic Android", "audinaut"]
+    );
+}

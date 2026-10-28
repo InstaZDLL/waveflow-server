@@ -509,6 +509,61 @@ the tracks that went. If the current track went, the current track and the
 position are dropped with it. An identifier that was never a track is still
 refused with 70, and the stored queue is left as it was.
 
+## Correction: DSub is answered without the OpenSubsonic fields
+
+Found again on 2026-10-28, in the third client campaign, with DSub 5.5.3. In
+XML a credit goes out as
+`<contributors role="producer"><artist id="…" name="Hal Brennan"/></contributors>`,
+and DSub's parser collects **every** `<artist>` element of a document, wherever
+it sits. Two of its screens showed what it collected:
+- in `getStarred`, the composers of a starred track (Bach and Gounod) were
+  listed as starred artists;
+- in `getMusicDirectory`, the header of the album Session Work showed
+  "Hal Brennan", the producer of one of its tracks.
+
+The 2026-08-23 replay recorded the same parser as a client limitation, and
+chose not to narrow the wire by the declared `v=` (see the replay section
+below). That reasoning stands for `v=`. This correction keys on the client's
+**name** instead, which is how Navidrome meets the same client: its
+`subsonic.legacyclients` setting is `DSub` by default, and a client named there
+is given no OpenSubsonic field at all.
+
+**The change.** `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS` lists client names, separated
+by commas and compared exactly, case included, with the `c` parameter. It is
+`DSub` by default; set it empty to answer every client in full. A request from
+a listed client is answered in plain Subsonic 1.16.1: one pass over the finished
+response removes what OpenSubsonic added, before it is rendered in either
+encoding, and its JSON is not given the empty arrays the presence rule would
+add back. What is removed:
+
+| Element | Attributes removed | Child elements removed |
+|---|---|---|
+| `song`, `entry`, `child`, `album`, `artist`, `similarArtist` | `bitDepth`, `bpm`, `channelCount`, `comment`, `displayAlbumArtist`, `displayArtist`, `displayComposer`, `explicitStatus`, `isCompilation`, `mediaType`, `musicBrainzId`, `played`, `samplingRate`, `sortName` | `albumArtists`, `artists`, `contributors`, `discTitles`, `genres`, `isrc`, `moods`, `originalReleaseDate`, `recordLabels`, `releaseDate`, `releaseTypes`, `replayGain`, `roles` |
+| `playlist` | `readonly`, `validUntil` (smart playlists) | — |
+
+**What stays.** Every attribute the 1.16.1 schema gives `Child`, `AlbumID3`,
+`ArtistID3` and `Artist`. One element name here stands for several of those
+types (`album` is an `AlbumID3` in `getAlbumList2` and a `Child` in
+`getAlbumList`), so `title` and `userRating`, which `Child` carries, stay on an
+album. The classic `genre` attribute stays; only the OpenSubsonic `genres`
+array goes. A playlist's `comment` stays, because it is a Subsonic field there.
+`getGenres`' `genres` container and `getAlbumInfo`'s `musicBrainzId` element
+stay as well, because the lists are per element.
+
+**The envelope keeps `openSubsonic="true"`**, as Navidrome's does. It describes
+the server rather than the answer, an old client ignores an unknown attribute
+on the root as it does elsewhere, and the methods only OpenSubsonic defines
+(`getOpenSubsonicExtensions`, `tokenInfo`, `getLyricsBySongId`) still answer a
+listed client that asks for them.
+
+This changes the frozen v2.0-beta contract for DSub alone. Every other client,
+every other row of the table above included, receives exactly what it received
+before. Covered by `tests/subsonic_fields/legacy_clients.rs`, in XML
+and JSON, over `getStarred`, `getMusicDirectory`, `getSong` and `getAlbum`. To
+check in the next campaign: that DSub lists only the artist that was starred,
+that the Session Work header shows the album's name, and that its browse and
+playback rows are otherwise unchanged.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist
@@ -537,7 +592,9 @@ would mean maintaining two shapes of every response and diverging from the
 reference. DSub 5.5.3 pays for it: its parser lifts a nested `artist` out of a
 `contributor`, so two of its screens show names the server never offered at
 that level. Recorded as a client limitation, not repaired by narrowing the
-wire.
+wire. (Since 2026-10-28, DSub is answered without the OpenSubsonic fields,
+by its client name rather than by `v=`; see "Correction: DSub is answered
+without the OpenSubsonic fields" above.)
 
 What changed on the wire, and why a green matrix from before it says nothing
 about after it:

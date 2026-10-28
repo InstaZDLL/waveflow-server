@@ -43,6 +43,9 @@ pub struct AppState {
     /// `WAVEFLOW_TRUSTED_PROXIES`: whose `X-Forwarded-For` names the client a
     /// sign-in is counted under (RFC-017 decision 2).
     pub trusted_proxies: Arc<[ipnet::IpNet]>,
+    /// `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`: the `c` values the Subsonic façade
+    /// answers in plain Subsonic 1.16.1, without the OpenSubsonic additions.
+    pub subsonic_legacy_clients: Arc<[String]>,
     /// The one-time token first-run setup asks for while no account exists
     /// (RFC-019 decision 1).
     pub setup: Arc<setup_token::SetupGate>,

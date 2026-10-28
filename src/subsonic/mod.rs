@@ -29,6 +29,7 @@ mod admin;
 mod auth;
 mod browse;
 mod errors;
+mod legacy;
 mod lyrics;
 mod media;
 mod nodes;
@@ -44,6 +45,7 @@ use admin::*;
 use auth::*;
 use browse::*;
 use errors::*;
+use legacy::*;
 use lyrics::*;
 use media::*;
 use nodes::*;
@@ -251,8 +253,13 @@ pub async fn handle(
     match outcome {
         Ok(response) => response,
         // A protocol failure is still an HTTP success: the Subsonic contract
-        // puts the outcome in the body, never in the status line.
-        Err(error) => render_protocol(error_node(error.code, error.message), wants_json),
+        // puts the outcome in the body, never in the status line. An error
+        // envelope carries no media item, so it is the same on either wire.
+        Err(error) => render_protocol(
+            error_node(error.code, error.message),
+            wants_json,
+            Wire::OpenSubsonic,
+        ),
     }
 }
 
@@ -296,7 +303,7 @@ async fn handle_inner(
     let method = raw_method.strip_suffix(".view").unwrap_or(raw_method);
     let wants_json = json_requested(params);
     if is_symfonium_discovery_probe(method, request_method, params) {
-        return Ok(render_protocol(ok_node(), wants_json));
+        return Ok(render_protocol(ok_node(), wants_json, Wire::OpenSubsonic));
     }
     let principal = authenticate(state, params, address).await?;
 
@@ -313,7 +320,11 @@ async fn handle_inner(
     } else {
         ok_node().child(payload)
     };
-    Ok(render_protocol(root, wants_json))
+    Ok(render_protocol(
+        root,
+        wants_json,
+        Wire::for_request(state, params),
+    ))
 }
 
 fn is_symfonium_discovery_probe(method: &str, request_method: &Method, params: &Params) -> bool {
