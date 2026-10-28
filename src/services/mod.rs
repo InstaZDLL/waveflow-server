@@ -280,7 +280,6 @@ pub use library_lifecycle::{
 pub use library_tree::{DiskFolder, DiskListing, DiskTrack};
 pub use lyrics_uploads::{LyricsFile, MAX_UPLOAD_BYTES as MAX_LYRICS_UPLOAD_BYTES};
 pub use mixes::{Mix, MixQuery, MixSummary, DEFAULT_MIX_SIZE, MAX_MIX_SIZE};
-pub use playback::play_time;
 pub use podcasts::{
     EpisodeBookmark, PodcastChannelItem, PodcastEpisodeItem, PodcastFailure, PodcastOverview,
     MAX_EPISODES_LISTED, NEWEST_EPISODES_DEFAULT,

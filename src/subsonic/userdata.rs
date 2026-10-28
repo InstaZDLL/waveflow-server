@@ -71,11 +71,9 @@ pub(super) async fn set_star(
     params: &Params,
     starred: bool,
 ) -> Result<Node, ProtocolError> {
-    // Every identifier is resolved and authorized before any of them is
-    // applied: a request refused halfway left the first few starred and
-    // reported an error for the whole, and a client retrying it starred them
-    // again. Reading them all first was not enough — each is applied as its
-    // own mutation, so the refusal has to come before the first one.
+    // Applied together or not at all (`set_stars`): a request refused halfway
+    // left the first few starred and reported an error for the whole, and a
+    // client retrying it starred them again.
     let tracks = params.uuids("id")?;
     let albums = params.uuids("albumId")?;
     let artists = params.uuids("artistId")?;
@@ -96,16 +94,9 @@ pub(super) async fn set_star(
     targets.extend(artists.into_iter().map(|id| ("artist", id)));
     state
         .services
-        .authorize_entities(principal.id, &targets)
+        .set_stars(principal.id, &targets, starred)
         .await
         .map_err(service_protocol)?;
-    for (kind, id) in targets {
-        state
-            .services
-            .set_star(principal.id, kind, id, starred)
-            .await
-            .map_err(service_protocol)?;
-    }
     Ok(Node::new(if starred { "star" } else { "unstar" }))
 }
 
@@ -173,25 +164,18 @@ pub(super) async fn scrobble(
         .map(|value| value.parse::<i64>().map_err(|_| invalid("Invalid time")))
         .collect::<Result<Vec<_>, _>>()?;
     let submission = params.bool_optional("submission")?.unwrap_or(true);
-    // Every track and every time is checked before the first listen is
-    // recorded, for the reason `set_star` gives: each listen is its own
-    // mutation, and one refused after the others left them recorded.
-    let tracks = ids.iter().map(|id| ("track", *id)).collect::<Vec<_>>();
+    // Recorded together or not at all (`scrobble_all`), for the reason
+    // `set_star` gives.
+    let plays = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| (id, times.get(index).copied()))
+        .collect::<Vec<_>>();
     state
         .services
-        .authorize_entities(principal.id, &tracks)
+        .scrobble_all(principal.id, &plays, submission)
         .await
         .map_err(service_protocol)?;
-    for index in 0..ids.len() {
-        crate::services::play_time(times.get(index).copied()).map_err(service_protocol)?;
-    }
-    for (index, id) in ids.into_iter().enumerate() {
-        state
-            .services
-            .scrobble(principal.id, id, submission, times.get(index).copied())
-            .await
-            .map_err(service_protocol)?;
-    }
     Ok(Node::new("scrobble"))
 }
 

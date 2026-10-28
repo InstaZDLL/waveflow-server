@@ -30,23 +30,92 @@ impl DomainServices {
         starred: bool,
         context: MutationContext,
     ) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.begin_write(&_writer).await?;
+        let Some(receipt) = self
+            .set_star_on(
+                &_writer,
+                &mut tx,
+                user_id,
+                entity_type,
+                entity_id,
+                starred,
+                context,
+            )
+            .await?
+        else {
+            tx.rollback().await?;
+            return Ok(());
+        };
+        tx.commit().await?;
+        self.sync.publish(user_id, receipt);
+        Ok(())
+    }
+
+    /// Several stars or unstars in one request — a Subsonic `star` names
+    /// tracks, albums and artists together — applied together or not at all,
+    /// in one transaction under one hold of the writer gate. See
+    /// [`Self::scrobble_all`] for why checking them all first was not enough.
+    pub async fn set_stars(
+        &self,
+        user_id: Uuid,
+        entities: &[(&str, Uuid)],
+        starred: bool,
+    ) -> Result<(), ServiceError> {
+        let _writer = self.db.writer_guard().await;
+        let mut tx = self.db.begin_write(&_writer).await?;
+        let mut receipts = Vec::with_capacity(entities.len());
+        for (entity_type, entity_id) in entities {
+            if let Some(receipt) = self
+                .set_star_on(
+                    &_writer,
+                    &mut tx,
+                    user_id,
+                    entity_type,
+                    *entity_id,
+                    starred,
+                    MutationContext::server_generated(),
+                )
+                .await?
+            {
+                receipts.push(receipt);
+            }
+        }
+        tx.commit().await?;
+        for receipt in receipts {
+            self.sync.publish(user_id, receipt);
+        }
+        Ok(())
+    }
+
+    /// One star or unstar, written in `tx` under `writer`, answering the
+    /// receipt to publish once `tx` commits — or `None` for a replay of an
+    /// operation already applied, which writes nothing.
+    #[allow(clippy::too_many_arguments)]
+    async fn set_star_on(
+        &self,
+        writer: &tokio::sync::OwnedMutexGuard<()>,
+        tx: &mut SqliteConnection,
+        user_id: Uuid,
+        entity_type: &str,
+        entity_id: Uuid,
+        starred: bool,
+        context: MutationContext,
+    ) -> Result<Option<MutationReceipt>, ServiceError> {
         let intent = MutationIntent::new(
             if starred { "star" } else { "unstar" },
             &format!("{entity_type}:{entity_id}"),
             &serde_json::json!({ "starred": starred }),
         );
-        let _writer = self.db.writer_guard().await;
-        let mut tx = self.db.begin_write(&_writer).await?;
         if let OperationClaim::Replayed(receipt) = self
             .sync
-            .claim_operation(&_writer, &mut tx, user_id, context, intent)
+            .claim_operation(writer, &mut *tx, user_id, context, intent)
             .await?
         {
-            tx.rollback().await?;
             validate_replay_type(&receipt, "favorite")?;
-            return Ok(());
+            return Ok(None);
         }
-        self.authorize_entity_on(&mut tx, user_id, entity_type, entity_id)
+        self.authorize_entity_on(&mut *tx, user_id, entity_type, entity_id)
             .await?;
         if starred {
             sqlx::query("INSERT INTO user_star (user_id, entity_type, entity_id, starred_at) VALUES (?, ?, ?, ?) ON CONFLICT DO UPDATE SET starred_at=excluded.starred_at")
@@ -63,7 +132,7 @@ impl DomainServices {
         let receipt = self
             .sync
             .complete_operation(
-                &mut tx,
+                &mut *tx,
                 user_id,
                 context,
                 "favorite",
@@ -77,9 +146,7 @@ impl DomainServices {
                 Some(entity_id),
             )
             .await?;
-        tx.commit().await?;
-        self.sync.publish(user_id, receipt);
-        Ok(())
+        Ok(Some(receipt))
     }
 
     pub async fn entity_kind(

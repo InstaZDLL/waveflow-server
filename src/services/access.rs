@@ -42,27 +42,6 @@ impl DomainServices {
         Ok(unique)
     }
 
-    /// Whether `user_id` may write about every one of `entities`, checked
-    /// before any of them is written.
-    ///
-    /// A Subsonic `star` or `scrobble` names several identifiers, and each is
-    /// its own mutation with its own transaction. Applied one after another, a
-    /// refusal on the third left the first two written and reported the whole
-    /// request as failed — and a client retrying it wrote them twice. Checking
-    /// them all first makes the refusal leave nothing behind.
-    pub async fn authorize_entities(
-        &self,
-        user_id: Uuid,
-        entities: &[(&str, Uuid)],
-    ) -> Result<(), ServiceError> {
-        let mut connection = self.db.pool().acquire().await?;
-        for (kind, id) in entities {
-            self.authorize_entity_on(&mut connection, user_id, kind, *id)
-                .await?;
-        }
-        Ok(())
-    }
-
     /// Whether `user_id` may write about the entity: a member of its library,
     /// and, for a track, the track available.
     ///
