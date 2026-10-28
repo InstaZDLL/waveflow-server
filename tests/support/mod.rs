@@ -184,6 +184,41 @@ pub fn write_test_wav_of_len(path: &std::path::Path, sample_count: usize) {
     std::fs::write(path, bytes).unwrap();
 }
 
+/// A FLAC file tagged with a title, an album and an artist, its tone chosen by
+/// `frequency` so no two fixtures share their bytes.
+///
+/// What [`write_test_wav_of_len`] cannot give: a WAV carries no tags, so its
+/// track belongs to no album, and a test about an album needs this instead.
+pub fn write_tagged_flac(path: &std::path::Path, title: &str, album: &str, frequency: usize) {
+    let output = std::process::Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("sine=frequency={frequency}:duration=0.1"),
+            "-metadata",
+            &format!("title={title}"),
+            "-metadata",
+            &format!("album={album}"),
+            "-metadata",
+            "artist=Lifecycle Artist",
+            "-c:a",
+            "flac",
+        ])
+        .arg(path)
+        .output()
+        .expect("FFmpeg is required for tagged fixtures");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 pub fn write_test_dsf(path: &std::path::Path) {
     let samples_per_channel = 32_768u64;
     let channels = 2u32;

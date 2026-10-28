@@ -139,11 +139,9 @@ impl DomainServices {
         attach_song_relations(&mut *self.db.pool().acquire().await?, user_id, &mut songs).await?;
         let mut albums = sqlx::query(concat!(
             album_select!(),
-            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?))) \
-              AND al.id IN (SELECT t.album_id FROM track t \
-                WHERE t.album_id IS NOT NULL \
-                  AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?)) \
-              ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
+            " AND (? IS NULL OR al.library_id IN (SELECT value FROM json_each(?)))",
+            album_search_clause!(),
+            " ORDER BY al.title COLLATE NOCASE, al.id LIMIT ? OFFSET ?"
         ))
         .bind(user_id.to_string())
         .bind(folders.as_deref())
