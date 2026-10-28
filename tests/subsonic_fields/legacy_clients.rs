@@ -448,3 +448,27 @@ async fn the_legacy_list_is_the_operators() {
         );
     }
 }
+
+/// What the legacy wire removes is the media items' additions, not the arrays
+/// a method is made of: `getLyricsBySongId`, which a legacy client may still
+/// ask for, keeps its empty `structuredLyrics` rather than answering a list
+/// without the list.
+#[tokio::test]
+async fn a_legacy_client_keeps_the_lyrics_list_shape() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    let body = ask(
+        &fixture,
+        "DSub",
+        "getLyricsBySongId",
+        &format!("&id={}", fixture.song),
+        true,
+    )
+    .await;
+    let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        value["subsonic-response"]["lyricsList"]["structuredLyrics"],
+        serde_json::json!([]),
+        "{body}"
+    );
+}

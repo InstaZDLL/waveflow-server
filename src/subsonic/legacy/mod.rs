@@ -73,6 +73,16 @@ impl Wire {
         }
         node
     }
+
+    /// Whether the JSON presence rule may put `field` back on `element` as an
+    /// empty array: always on the full wire, and on the legacy wire only when
+    /// [`Self::shape`] does not remove it there. An `artists: []` put back on a
+    /// song would be the field just taken away, but `structuredLyrics` and
+    /// `line` are the shape of `getLyricsBySongId`, which a legacy client may
+    /// still ask for, and an empty answer without them is no list at all.
+    pub(super) fn keeps_required_array(self, element: &str, field: &str) -> bool {
+        self == Self::OpenSubsonic || !open_subsonic_additions(element).1.contains(&field)
+    }
 }
 
 /// The attributes OpenSubsonic added to a media item, on any of the element

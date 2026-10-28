@@ -5,8 +5,8 @@
 use super::*;
 
 /// Renders a response for the wire its client is given. The legacy wire
-/// strips the OpenSubsonic additions first, and its JSON is not handed the
-/// empty arrays the presence rule would put back.
+/// strips the OpenSubsonic additions first, and its JSON is not handed back,
+/// as empty arrays, the ones it removed.
 pub(super) fn render_protocol(node: Node, json: bool, wire: Wire) -> Response {
     let node = wire.shape(node);
     if json {
@@ -83,13 +83,13 @@ pub(super) fn node_json(node: &Node, parent: &str, wire: Wire) -> Value {
         (_, true) => EntryKind::Album,
         _ => EntryKind::Song,
     };
-    // The presence rule is OpenSubsonic's, so the legacy wire does not apply
-    // it: an `artists: []` put back here would be the field it just removed.
-    let required: &[&str] = match wire {
-        Wire::OpenSubsonic => json_required_array_fields(parent, &node.name),
-        Wire::Legacy => &[],
-    };
-    for name in required {
+    for name in json_required_array_fields(parent, &node.name) {
+        // The legacy wire puts back none of the arrays it removed, and keeps
+        // the rest: the lyrics' `structuredLyrics` and `line` are no addition
+        // to a 1.16.1 element, so `getLyricsBySongId` keeps its shape.
+        if !wire.keeps_required_array(&node.name, name) {
+            continue;
+        }
         let injected = match entry_kind {
             // An artist keeps its own array and takes nobody else's: a folder
             // entry answering `isrc: []` would say the server read a recording
