@@ -51,6 +51,9 @@ impl Config {
             purge_grace: Duration::from_secs(168 * 60 * 60),
             link_roots: Vec::new(),
             subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode::Off,
+            // Production's default, so the suite answers DSub as a deployment
+            // does and every other client in full.
+            subsonic_legacy_clients: super::from_env::default_legacy_clients(),
             ffmpeg_path: PathBuf::from("ffmpeg"),
             ffprobe_path: PathBuf::from("ffprobe"),
             transcode_cache_dir,

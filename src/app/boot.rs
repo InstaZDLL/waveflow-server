@@ -201,6 +201,7 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         upload_chunk_body_limit: chunk_body_limit(&config.uploads),
         canvas_body_limit: canvas_body_limit(&config.canvas),
         trusted_proxies: config.trusted_proxies.clone().into(),
+        subsonic_legacy_clients: config.subsonic_legacy_clients.clone().into(),
         setup,
     })
 }

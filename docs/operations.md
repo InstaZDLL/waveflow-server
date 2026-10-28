@@ -651,6 +651,18 @@ full scale. A client may ask for itself with `replayGain=off|track|album` on
 `stream`. The original file is never re-encoded for it: a request for the
 original is served as it is.
 
+## Older Subsonic clients
+
+Some older clients misread the fields OpenSubsonic added. DSub, for one,
+collects every `<artist>` element in an answer, including those nested inside a
+track's credits, and then shows a composer as a starred artist. The clients
+named in **`WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`** are answered in plain Subsonic
+1.16.1 instead, without credits, artist arrays, ReplayGain or any other
+OpenSubsonic field. Give client names separated by commas, as the client sends
+them in its `c` parameter; the comparison is exact, case included. The default
+is `DSub`, as in Navidrome. Set it empty to answer every client in full, or
+add a client that shows the same kind of confusion.
+
 ## Offline listening in the web client
 
 The web client registers a service worker, `/sw.js`, that keeps its own shell
