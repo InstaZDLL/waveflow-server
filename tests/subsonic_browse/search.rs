@@ -293,3 +293,182 @@ async fn search_pages_each_kind_in_sql_and_bounds_what_one_request_may_name() {
         Err(ServiceError::Invalid)
     ));
 }
+
+/// A track whose file was removed takes its title out of the album search.
+///
+/// Found in the 2026-10-28 client campaign: after *Coda* was removed from
+/// *Late Additions*, `search2 query=Coda` still answered the album — with no
+/// song, since the song search already left the removed track out. The album
+/// search matched through `track_fts`, which keeps the removed track's row,
+/// without asking whether the track is still there. Every surface reached the
+/// same two queries, so each is asked here: `search2`, `search3` and the
+/// native `/api/v2/search`. And the file comes back, to show the title is
+/// findable again from the ordinary rescan, with no index rebuilt.
+#[tokio::test]
+async fn an_album_is_not_found_by_the_title_of_a_track_whose_file_went() {
+    let (_temp, config, state) = test_app().await;
+    // Drawn at run time: a literal reaching the hash is what CodeQL reports.
+    let password = Uuid::new_v4().to_string();
+    let owner = state
+        .db
+        .create_account(
+            "removed-search",
+            &security::hash_password(&password).unwrap(),
+            AccountRole::User,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let api_key = format!("wfsk_{}", Uuid::new_v4().simple());
+    state
+        .db
+        .set_subsonic_credential(
+            owner,
+            owner,
+            &state
+                .secret_box
+                .encrypt(Uuid::new_v4().to_string().as_bytes())
+                .unwrap(),
+            &security::token_hash(&api_key),
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let music = config.data_dir.join("removed-search-music");
+    std::fs::create_dir_all(&music).unwrap();
+    // Two tones, so the two files differ in content as well as in name.
+    write_tagged_flac(
+        &music.join("Overture.flac"),
+        "Overture",
+        "Late Additions",
+        440,
+    );
+    write_tagged_flac(&music.join("Coda.flac"), "Coda", "Late Additions", 660);
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library = state
+        .db
+        .create_library(
+            owner,
+            "Removed search",
+            &root,
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let record = waveflow_server::storage::catalog::LibraryRecord {
+        id: library,
+        name: "Removed search".into(),
+        root_path: root,
+    };
+    run_scan(&state, owner, record.clone()).await;
+    let album_of = |path: &'static str| {
+        let state = state.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT album_id FROM track WHERE relative_path=?")
+                .bind(path)
+                .fetch_one(state.db.pool())
+                .await
+                .unwrap()
+        }
+    };
+    let album = album_of("Coda.flac").await;
+    assert_eq!(
+        album_of("Overture.flac").await,
+        album,
+        "the precondition: one album of two tracks"
+    );
+    let router = waveflow_server::app(&config, state.clone());
+    let token = login_token(&router, "removed-search", &password).await;
+
+    // The album ids and song titles one query answers, surface by surface.
+    let found = |query: &'static str| {
+        let router = router.clone();
+        let api_key = api_key.clone();
+        let token = token.clone();
+        async move {
+            let values = |list: &serde_json::Value, field: &str| -> Vec<String> {
+                list.as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|item| item[field].as_str().unwrap().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let mut answers = Vec::new();
+            for (method, result) in [("search2", "searchResult2"), ("search3", "searchResult3")] {
+                let body = subsonic_json(
+                    &router,
+                    method,
+                    &api_key,
+                    &format!("&query={query}&albumCount=10&songCount=10"),
+                )
+                .await;
+                let result = &body["subsonic-response"][result];
+                answers.push((
+                    method,
+                    values(&result["album"], "id"),
+                    values(&result["song"], "title"),
+                ));
+            }
+            let response = send_json(
+                &router,
+                "GET",
+                &format!("/api/v2/search?q={query}"),
+                &token,
+                None,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = json_body(response).await;
+            answers.push((
+                "/api/v2/search",
+                values(&body["albums"], "id"),
+                values(&body["songs"], "title"),
+            ));
+            answers
+        }
+    };
+    let assert_found = |answers: Vec<(&str, Vec<String>, Vec<String>)>, song: &str| {
+        for (surface, albums, songs) in answers {
+            assert_eq!(
+                albums,
+                std::slice::from_ref(&album),
+                "{surface}: the album is found"
+            );
+            assert_eq!(songs, [song.to_owned()], "{surface}: the song is found");
+        }
+    };
+
+    // Both titles find the album while both files are there.
+    assert_found(found("Coda").await, "Coda");
+    assert_found(found("Overture").await, "Overture");
+
+    std::fs::remove_file(music.join("Coda.flac")).unwrap();
+    run_scan(&state, owner, record.clone()).await;
+    let available: i64 =
+        sqlx::query_scalar("SELECT is_available FROM track WHERE relative_path='Coda.flac'")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(available, 0, "the precondition: the track is unavailable");
+
+    // The removed title finds nothing: neither its song nor its album.
+    for (surface, albums, songs) in found("Coda").await {
+        assert!(songs.is_empty(), "{surface}: no song by a removed title");
+        assert!(
+            albums.is_empty(),
+            "{surface}: the album is found by the title of a track it no longer holds"
+        );
+    }
+    // The album is still there, and found by the title it still holds.
+    assert_found(found("Overture").await, "Overture");
+
+    // The file comes back, and so does the match.
+    write_tagged_flac(&music.join("Coda.flac"), "Coda", "Late Additions", 660);
+    run_scan(&state, owner, record).await;
+    assert_found(found("Coda").await, "Coda");
+    assert_found(found("Overture").await, "Overture");
+}

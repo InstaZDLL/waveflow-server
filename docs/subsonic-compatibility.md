@@ -509,6 +509,23 @@ the tracks that went. If the current track went, the current track and the
 position are dropped with it. An identifier that was never a track is still
 refused with 70, and the stored queue is left as it was.
 
+## Correction: a search does not find an album by a removed track's title
+
+Found on 2026-10-28, in the same campaign, after the same removal. *Coda* was
+removed from *Late Additions*, which kept its three other tracks, none of them
+named Coda. `search2 query=Coda` still answered the album *Late Additions*, and
+no song. The song half of a search already left an unavailable track out. The
+album half found its albums through the tracks the full-text index matched, and
+that index keeps the row of a removed track, because the track itself is kept
+for the file's return. Nothing asked whether the matching track was still there.
+`search3` and the native `/api/v2/search` used the same query.
+
+Now an album is found only through a track that is available, on `search2`,
+`search3` and the native search alike. An album whose every track went is found
+by none of them, its own title included. When the file comes back, the ordinary
+rescan makes the title findable again; nothing is reindexed. No client is
+affected beyond the result itself: the response's shape is unchanged.
+
 ## Correction: DSub is answered without the OpenSubsonic fields
 
 Found again on 2026-10-28, in the third client campaign, with DSub 5.5.3. In
@@ -533,8 +550,9 @@ by commas and compared exactly, case included, with the `c` parameter. It is
 `DSub` by default; set it empty to answer every client in full. A request from
 a listed client is answered in plain Subsonic 1.16.1: one pass over the finished
 response removes what OpenSubsonic added, before it is rendered in either
-encoding, and its JSON is not given the empty arrays the presence rule would
-add back. What is removed:
+encoding, and its JSON is not given back, as empty arrays, the ones it
+removed; the arrays a method is made of, such as the lyrics' `structuredLyrics`,
+keep their presence rule. What is removed:
 
 | Element | Attributes removed | Child elements removed |
 |---|---|---|

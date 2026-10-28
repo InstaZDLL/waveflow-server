@@ -143,6 +143,29 @@ macro_rules! album_select {
     };
 }
 
+/// Restricts [`album_select!`] to the albums a full-text search reaches
+/// through their tracks. Binds the FTS expression once.
+///
+/// Only a track that is there counts. `track_fts` keeps the row of a track
+/// whose file has gone, because the track itself is kept — its favourites,
+/// ratings and plays wait for the file to come back — and the song projection
+/// hides it with `t.is_available=1`. The album search read the same index
+/// without that predicate, so an album stayed findable by the title of a song
+/// it no longer held, and a search answered the album with none of the songs
+/// that had matched (2026-10-28 campaign). Filtering here rather than deleting
+/// the index row is what lets the file's return need nothing: the next scan
+/// marks the track available and the match comes back with it.
+///
+/// One literal for both searches, the Subsonic one and the native one, so the
+/// predicate cannot be restored on one surface and forgotten on the other.
+macro_rules! album_search_clause {
+    () => {
+        " AND al.id IN (SELECT t.album_id FROM track t \
+            WHERE t.album_id IS NOT NULL AND t.is_available=1 \
+              AND t.id IN (SELECT track_id FROM track_fts WHERE track_fts MATCH ?))"
+    };
+}
+
 /// [`album_select!`] narrowed to an optional set of libraries and wrapped so a
 /// caller can filter and order on the projected aggregates — `play_count`,
 /// `last_played_at`, `song_count` — instead of repeating their subqueries.
