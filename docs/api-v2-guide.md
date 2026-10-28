@@ -946,9 +946,10 @@ Other user-data routes:
 | Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks, repeats allowed; optional `max_visits` ≥ 1) |
 
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
-idempotent replay. Later list, snapshot and update responses omit it because
-only its hash is stored. Preserve the first response if the URL must be shown
-again. Public access uses `GET /share/{token}` and needs no account credential.
+idempotent replay. Later list, snapshot and update responses omit it; only its
+hash is stored. Preserve the first response if the URL must be shown again.
+(Subsonic's `getShares` hands the owner the URL on every read, derived again
+from the instance key: see the 2026-10-28 amendment of RFC-020.) Public access uses `GET /share/{token}` and needs no account credential.
 
 What `/share/{token}` answers depends on who asks
 ([RFC-020](rfcs/RFC-020-playlists-and-shares.md)):

@@ -214,6 +214,41 @@ type), and the MP3 otherwise.
 - The sync contract of RFC-003: playlist and share payloads gain fields, and
   lose none.
 
+> **Amended 2026-10-28, after the third client campaign: two Subsonic share
+> methods changed, and the share page.** The first item above no longer holds
+> as written.
+>
+> - **`getShares` and `updateShare` hand the owner the share's `url`.** It was
+>   given at creation and on an idempotent replay only, on the reasoning that
+>   only the token's hash is stored. That reasoning never applied to the
+>   token's derivation: `derive_share_token(id)` is a keyed hash of the
+>   instance key and the share's id, so the server can derive it again on any
+>   read. The schema makes `url` required on a `share`, Navidrome always sends
+>   it, and DSub 5.5.3 crashes on its share screen without it (a
+>   `NullPointerException` in `Share.getName`). The owner already reads every
+>   track the link plays, so handing them the link grants nothing new; nobody
+>   else is ever handed it, since no Subsonic method lists another account's
+>   shares. The native `GET /api/v2/shares` is unchanged and still omits it.
+>   After a key rotation, the link derived is the share's new address, because
+>   the rotation re-addresses every share under the new key.
+> - **`createShare` takes an album's id.** The specification takes the id "of
+>   a song, album or video"; an album answered error 70. An album now expands
+>   into its available tracks, in the album's order (disc, then track), beside
+>   any track named in the same request, in the order the ids were given. An
+>   id that names neither, or an album of a library the caller cannot read,
+>   is still 70; more than 400 tracks once expanded is error 10, as too many
+>   tracks were. The expansion sits in `DomainServices`, ahead of the one
+>   share creation every surface calls; the native route still takes track
+>   ids only.
+> - **The share page's own play button plays.** The page's `<audio>` had no
+>   source until a row was touched, so its play button answered "Unable to
+>   play media" at 0:00 / 0:00 in Chrome on Android. It now holds the first
+>   row's address before anything is chosen, with `preload="none"` and no
+>   `autoplay`, so opening the page still fetches and plays nothing, and
+>   pressing it plays what touching the first row plays.
+>
+> Recorded in `docs/subsonic-compatibility.md`.
+
 ## Logging
 
 Nothing new is logged per visit or per stream. The traces keep recording
