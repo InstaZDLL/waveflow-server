@@ -140,38 +140,6 @@ async fn settled(
     panic!("scan timed out");
 }
 
-/// A FLAC file tagged with a title, an album and an artist, its tone chosen by
-/// `frequency` so no two fixtures share their bytes.
-fn write_tagged_flac(path: &std::path::Path, title: &str, album: &str, frequency: usize) {
-    let output = std::process::Command::new("ffmpeg")
-        .args([
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            &format!("sine=frequency={frequency}:duration=0.1"),
-            "-metadata",
-            &format!("title={title}"),
-            "-metadata",
-            &format!("album={album}"),
-            "-metadata",
-            "artist=Lifecycle Artist",
-            "-c:a",
-            "flac",
-        ])
-        .arg(path)
-        .output()
-        .expect("FFmpeg is required for tagged fixtures");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
 /// Two tracks in an album, one in another, scanned.
 async fn library_with_albums(
     name: &str,
