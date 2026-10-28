@@ -203,7 +203,7 @@ impl DomainServices {
         Ok(songs)
     }
 
-    /// The available tracks of one library that belong to no album.
+    /// The available tracks of the given libraries that belong to no album.
     ///
     /// A track without an album has no album id to be the `parent` of its
     /// Subsonic `child`, so it names its library instead. That was a
@@ -212,29 +212,39 @@ impl DomainServices {
     /// by no amount of browsing. Answering here is what makes the `parent`
     /// it already advertised true.
     ///
-    /// `getMusicDirectory` has no offset to page a folder with, so the caller
-    /// asks for a ceiling instead of a page: everything up to `limit`, in one
-    /// answer. A library that holds more album-less tracks than that would
-    /// build an unbounded response out of a request that cannot say how much
-    /// it wants, so the ceiling is what keeps the answer finite — and the
-    /// caller says so in the log rather than truncating in silence. The artist
-    /// list this tail follows is still bounded only by the library.
+    /// `library_ids` follows the `musicFolderId` convention: empty means every
+    /// library the account belongs to, and a library it does not belong to
+    /// contributes nothing, since membership is enforced by the projection.
+    /// `getMusicDirectory` asks for one folder; `getIndexes`, which is where a
+    /// client browsing by folders actually enters, asks for the root of every
+    /// folder it was given.
+    ///
+    /// Neither method has an offset to page with, so the caller asks for a
+    /// ceiling instead of a page: everything up to `limit`, in one answer. A
+    /// library that holds more album-less tracks than that would build an
+    /// unbounded response out of a request that cannot say how much it wants,
+    /// so the ceiling is what keeps the answer finite — and the caller says so
+    /// in the log rather than truncating in silence. The artist list this tail
+    /// follows is still bounded only by the library.
     pub async fn songs_without_album(
         &self,
         user_id: Uuid,
-        library_id: Uuid,
+        library_ids: &[Uuid],
         limit: i64,
     ) -> Result<Vec<SongItem>, ServiceError> {
         if limit <= 0 {
             return Err(ServiceError::Invalid);
         }
+        let folders = folder_filter(library_ids);
         let mut songs = sqlx::query(concat!(
             song_select!(),
-            " AND t.library_id=? AND t.album_id IS NULL \
+            song_folder_clause!(),
+            " AND t.album_id IS NULL \
               ORDER BY t.title COLLATE NOCASE, t.id LIMIT ?"
         ))
         .bind(user_id.to_string())
-        .bind(library_id.to_string())
+        .bind(folders.as_deref())
+        .bind(folders.as_deref())
         .bind(limit)
         .fetch_all(self.db.pool())
         .await?
