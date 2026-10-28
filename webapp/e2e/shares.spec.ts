@@ -67,6 +67,66 @@ test("a share link opens a player that plays what the share hands out", async ({
   expect(results.violations).toEqual([]);
 });
 
+/**
+ * The player's own play button plays the first track (2026-10-28, Chrome on
+ * Android): the element had no source until a row was touched, so that
+ * button answered "Unable to play media" at 0:00 / 0:00 while a row played.
+ * It now holds the first row's address, preloads nothing and plays nothing by
+ * itself, and starting it marks the first row as the one playing.
+ */
+test("a share page's own play button plays the first track", async ({
+  page,
+}) => {
+  await page.route("**/share/wfs_button", async (route) => {
+    if (route.request().resourceType() === "document") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        id: "share-4",
+        description: "Play button",
+        expiresAt: null,
+        visitCount: 1,
+        tracks: [
+          {
+            ...song(1, "Hidden Place", 5, true),
+            streamUrl: "/share/wfs_button/tracks/song-1/stream?visit=pass-1",
+          },
+          {
+            ...song(2, "Cocoon", 0, false),
+            streamUrl: "/share/wfs_button/tracks/song-2/stream?visit=pass-2",
+          },
+        ],
+      },
+    });
+  });
+  const streamed: string[] = [];
+  await page.route("**/share/wfs_button/tracks/**", (route) => {
+    streamed.push(route.request().url());
+    return route.fulfill({ status: 204, body: "" });
+  });
+  await page.goto("/share/wfs_button");
+  const player = page.getByLabel("Player");
+  // What touching the first row would put there, before anything is touched.
+  await expect(player).toHaveAttribute(
+    "src",
+    /\/share\/wfs_button\/tracks\/song-1\/stream\?visit=pass-1/,
+  );
+  await expect(player).toHaveAttribute("preload", "none");
+  expect(await player.evaluate((audio) => audio.hasAttribute("autoplay"))).toBe(
+    false,
+  );
+  expect(streamed).toEqual([]);
+  // The element's own button, as the browser reports pressing it.
+  await player.evaluate((audio) => audio.dispatchEvent(new Event("play")));
+  await expect(
+    page.locator("li[aria-current='true']").getByRole("button", {
+      name: /^Hidden Place/,
+    }),
+  ).toBeVisible();
+});
+
 test("a share link that opens nothing says so", async ({ page }) => {
   await page.route("**/share/wfs_gone", async (route) => {
     if (route.request().resourceType() === "document") {
