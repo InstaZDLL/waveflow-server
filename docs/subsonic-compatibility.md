@@ -410,8 +410,8 @@ in Juliet 8 on iOS. **Juliet's crash turned out to have another cause**,
 described in the next section. This one is a server defect found while
 replaying Juliet's requests with valid credentials.
 
-A seek through `timeOffset` on a transcode, probed with `Range: bytes=0-1`, got
-the whole live transcode back. That is the probe AVFoundation sends before it
+A `timeOffset` seek into a transcode, probed with `Range: bytes=0-1`, got the
+whole live transcode back. That is the probe AVFoundation sends before it
 plays anything. The answer was a 200 with no `Content-Length` and
 `Accept-Ranges: none`, so it told the player nothing about how long the stream
 was. A play from the start is not affected, because it fills the cache and
