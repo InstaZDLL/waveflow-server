@@ -248,13 +248,23 @@ impl DomainServices {
         if position_ms < 0 {
             return Err(ServiceError::Invalid);
         }
-        // Counted rather than read: the queue holds as many tracks as a
-        // playlist, and hydrating every song under the writer gate to learn
-        // that it exists is what kept the ceiling at four hundred.
-        readable_on(&mut tx, user_id, ids).await?;
-        if let Some(current) = current {
-            readable_on(&mut tx, user_id, &[current]).await?;
-        }
+        // A track whose file went is left out rather than refused: the client
+        // keeps it in the queue it holds, and refusing the whole queue left it
+        // unable to save anything until the queue was cleared by hand (DSub,
+        // the 2026-10-28 campaign). A current track that went takes its
+        // position with it, which measured a place in that track.
+        let lookup_ids = current.iter().chain(ids).copied().collect::<Vec<_>>();
+        let available = available_on(&mut tx, user_id, &lookup_ids).await?;
+        let ids = ids
+            .iter()
+            .copied()
+            .filter(|id| available.contains(id))
+            .collect::<Vec<_>>();
+        let (current, position_ms) = match current {
+            Some(id) if !available.contains(&id) => (None, 0),
+            current => (current, position_ms),
+        };
+        let ids = ids.as_slice();
         sqlx::query("INSERT INTO play_queue (user_id, current_track_id, position_ms, changed_by, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (user_id) DO UPDATE SET current_track_id=excluded.current_track_id, position_ms=excluded.position_ms, changed_by=excluded.changed_by, updated_at=excluded.updated_at")
             .bind(user_id.to_string()).bind(current.map(|id| id.to_string())).bind(position_ms).bind(client).bind(now_ms()).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM play_queue_track WHERE user_id=?")
@@ -339,32 +349,40 @@ impl DomainServices {
     }
 }
 
-/// Whether every track of `ids` is one this account can read, refused as
-/// not-found otherwise — what `songs_by_ids_on` answers, without building a
-/// song per id. The predicate is `song_select!`'s own: a membership of the
-/// track's library, and the track available.
-async fn readable_on(
+/// Which tracks of `ids` this account can read now, with every id required to
+/// be a track of one of its libraries: an id it cannot see, or that never was
+/// a track, is refused as not found. One whose file went is a track of the
+/// library still, and is answered by being left out of the set.
+///
+/// Read in one statement rather than a song per id: the queue holds as many
+/// tracks as a playlist, and hydrating each one under the writer gate to learn
+/// that it exists is what kept the ceiling at four hundred.
+async fn available_on(
     connection: &mut SqliteConnection,
     user_id: Uuid,
     ids: &[Uuid],
-) -> Result<(), ServiceError> {
+) -> Result<std::collections::HashSet<Uuid>, ServiceError> {
     if ids.is_empty() {
-        return Ok(());
+        return Ok(std::collections::HashSet::new());
     }
     let distinct: std::collections::HashSet<&Uuid> = ids.iter().collect();
     let ids_json = serde_json::to_string(ids).map_err(|_| ServiceError::Invalid)?;
-    let readable: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM track t JOIN library_member m ON m.library_id=t.library_id \
-         WHERE m.user_id=? AND t.is_available=1 \
-           AND t.id IN (SELECT DISTINCT value FROM json_each(?))",
+    let rows = sqlx::query(
+        "SELECT t.id, t.is_available FROM track t JOIN library_member m ON m.library_id=t.library_id \
+         WHERE m.user_id=? AND t.id IN (SELECT DISTINCT value FROM json_each(?))",
     )
     .bind(user_id.to_string())
     .bind(ids_json)
-    .fetch_one(&mut *connection)
+    .fetch_all(&mut *connection)
     .await?;
-    if usize::try_from(readable).ok() == Some(distinct.len()) {
-        Ok(())
-    } else {
-        Err(ServiceError::NotFound)
+    if rows.len() != distinct.len() {
+        return Err(ServiceError::NotFound);
     }
+    let mut available = std::collections::HashSet::new();
+    for row in rows {
+        if row.try_get::<i64, _>("is_available")? == 1 {
+            available.insert(parse_uuid(row.try_get("id")?)?);
+        }
+    }
+    Ok(available)
 }
