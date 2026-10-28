@@ -6,7 +6,8 @@
 //! `contributors` credit became a starred artist in `getStarred` and the
 //! header of an album in `getMusicDirectory`. The fixture is that catalogue in
 //! small: one starred track by The Nocturnes on the album Session Work,
-//! composed by Bach and Gounod and produced by Hal Brennan.
+//! composed by Bach and Gounod and produced by Hal Brennan, and a sketch with
+//! no album and the same credits, which `getIndexes` lists at the root.
 
 use super::*;
 
@@ -143,6 +144,18 @@ async fn starred_session(
         .apply_catalog_track(library, scan, &input, None, false)
         .await
         .unwrap();
+    // The same credits on a file tagged with no album: a root `child` of
+    // `getIndexes` (#372), the one media item no other method here reaches.
+    let mut loose = browse_input(1, "Loose Sketch", "", "The Nocturnes", None, None);
+    loose.album = None;
+    loose.album_artist = None;
+    loose.relative_path = "Loose/sketch.flac".into();
+    loose.roles = input.roles.clone();
+    state
+        .db
+        .apply_catalog_track(library, scan, &loose, None, false)
+        .await
+        .unwrap();
     state
         .db
         .consolidate_catalog_derivations(library)
@@ -152,11 +165,12 @@ async fn starred_session(
     state.db.finish_scan_job(scan, 0).await.unwrap();
     let router = waveflow_server::app(config, state.clone());
 
-    let song: String = sqlx::query_scalar("SELECT id FROM track WHERE library_id=?")
-        .bind(library.to_string())
-        .fetch_one(state.db.pool())
-        .await
-        .unwrap();
+    let song: String =
+        sqlx::query_scalar("SELECT id FROM track WHERE library_id=? AND title='Ave Maria'")
+            .bind(library.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
     let full = subsonic_json(&router, "getSong", &api_key, &format!("&id={song}")).await;
     let item = &full["subsonic-response"]["song"];
     let album = item["albumId"].as_str().expect("the album id").to_owned();
@@ -471,4 +485,63 @@ async fn a_legacy_client_keeps_the_lyrics_list_shape() {
         serde_json::json!([]),
         "{body}"
     );
+}
+
+/// The root files `getIndexes` lists (#372) are media items like any other:
+/// a legacy client meets the sketch there without its credits, in XML and in
+/// JSON, while every other client still reads them.
+#[tokio::test]
+async fn a_legacy_client_meets_the_root_files_of_get_indexes_bare() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    let full = ask(&fixture, "Feishin", "getIndexes", "", false).await;
+    assert!(
+        full.contains("Loose Sketch") && full.contains("Hal Brennan"),
+        "the full wire lists the sketch with its credits: {full}"
+    );
+
+    let xml = ask(&fixture, "DSub", "getIndexes", "", false).await;
+    for credited in CREDITED {
+        assert!(
+            !xml.contains(credited),
+            "getIndexes as DSub names {credited}: {xml}"
+        );
+    }
+    let document = roxmltree::Document::parse(&xml).unwrap();
+    let children: Vec<_> = document
+        .descendants()
+        .filter(|node| node.has_tag_name("child"))
+        .collect();
+    assert_eq!(children.len(), 1, "the sketch is a root file: {xml}");
+    assert_eq!(
+        children[0].attribute("title"),
+        Some("Loose Sketch"),
+        "{xml}"
+    );
+    for attribute in children[0].attributes() {
+        assert!(
+            SUBSONIC_ITEM_ATTRIBUTES.contains(&attribute.name()),
+            "getIndexes: <child {}> is not a Subsonic 1.16.1 attribute: {xml}",
+            attribute.name()
+        );
+    }
+    assert_eq!(
+        children[0]
+            .children()
+            .filter(|node| node.is_element())
+            .count(),
+        0,
+        "getIndexes: the root file carries a child element: {xml}"
+    );
+
+    let json = ask(&fixture, "DSub", "getIndexes", "", true).await;
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let child = &value["subsonic-response"]["indexes"]["child"];
+    assert_eq!(child.as_array().map(Vec::len), Some(1), "{json}");
+    for (key, _) in child[0].as_object().unwrap() {
+        assert!(
+            SUBSONIC_ITEM_ATTRIBUTES.contains(&key.as_str()),
+            "getIndexes: `{key}` is not a Subsonic 1.16.1 attribute: {json}"
+        );
+    }
 }
