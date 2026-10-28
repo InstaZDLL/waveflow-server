@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 
 import { resetAndMockApi } from "./fixtures/api";
 import { song } from "./fixtures/catalogue";
+import { silentWav } from "./fixtures/media";
 
 test.beforeEach(resetAndMockApi);
 
@@ -101,10 +102,14 @@ test("a share page's own play button plays the first track", async ({
       },
     });
   });
+  const audio = silentWav(60);
   const streamed: string[] = [];
   await page.route("**/share/wfs_button/tracks/**", (route) => {
     streamed.push(route.request().url());
-    return route.fulfill({ status: 204, body: "" });
+    return route.fulfill({
+      body: audio,
+      headers: { "content-type": "audio/wav" },
+    });
   });
   await page.goto("/share/wfs_button");
   const player = page.getByLabel("Player");
@@ -118,8 +123,21 @@ test("a share page's own play button plays the first track", async ({
     false,
   );
   expect(streamed).toEqual([]);
-  // The element's own button, as the browser reports pressing it.
-  await player.evaluate((audio) => audio.dispatchEvent(new Event("play")));
+  // What the element's own button does: play it, for real, from the address
+  // it was given before anything was touched.
+  await player.evaluate((element) => (element as HTMLAudioElement).play());
+  await expect
+    .poll(() =>
+      player.evaluate(
+        (element) =>
+          !(element as HTMLAudioElement).paused &&
+          (element as HTMLAudioElement).currentTime > 0,
+      ),
+    )
+    .toBe(true);
+  expect(streamed[0]).toMatch(
+    /\/share\/wfs_button\/tracks\/song-1\/stream\?visit=pass-1$/,
+  );
   await expect(
     page.locator("li[aria-current='true']").getByRole("button", {
       name: /^Hidden Place/,
