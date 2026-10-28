@@ -468,11 +468,18 @@ refused too, until the app restarts. Juliet writes no log of its own.
 **What the server should not do.** Accepting a password as an API key would
 make the account password a bearer token sent in the clear in every request's
 URL, where token authentication sends only a salted digest of it. The refusal is
-correct. The OpenSubsonic error
-table also defines code **44**, "Invalid API key", which this façade never
-returns: a refused key is reported as 40, like any other credential. Whether
-Juliet would recover from 44 has not been tested, and the code belongs to the
-frozen v2.0-beta contract.
+correct, and Navidrome and Ampache refuse the same key.
+
+**The error code is not the cause.** The OpenSubsonic error table defines code
+**44**, "Invalid API key". Navidrome (`ec2e0a9e`) and Ampache (`aa31bde65d`)
+use it for a refused key, and Navidrome uses 43 for a key sent together with
+`u`, `p`, `t` or `s`. This façade reports both as 40, like any other credential.
+To rule the difference out, the campaign proxy rewrote to 44 every refusal of
+an `apiKey` request, and the test was repeated with an empty cache. All 37 of
+Juliet's `apiKey` requests received 44, and Juliet crashed in the same way.
+Returning 44 would still align the façade with the specification and both
+servers, but it would change the frozen v2.0-beta contract, and it would not fix
+Juliet.
 
 **For the next campaign:** Juliet's row stays at its 2026-09-16 result, which
 came from an earlier version. Juliet 8 passes everything except a seek made
