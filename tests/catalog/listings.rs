@@ -304,7 +304,7 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
     // own or a library of loose files answers with all of them at once.
     let capped = state
         .services
-        .songs_without_album(admin, library, 1)
+        .songs_without_album(admin, &[library], 1)
         .await
         .unwrap();
     assert_eq!(
@@ -317,13 +317,16 @@ async fn the_catalogue_answers_for_sort_names_and_for_songs_without_an_album() {
     );
     let whole = state
         .services
-        .songs_without_album(admin, library, 2_000)
+        .songs_without_album(admin, &[library], 2_000)
         .await
         .unwrap();
     assert_eq!(whole.len(), 2, "a ceiling above the library cuts nothing");
     assert!(
         matches!(
-            state.services.songs_without_album(admin, library, 0).await,
+            state
+                .services
+                .songs_without_album(admin, &[library], 0)
+                .await,
             Err(ServiceError::Invalid)
         ),
         "a ceiling of nothing is a caller error, not an empty folder"

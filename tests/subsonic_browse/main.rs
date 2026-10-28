@@ -22,5 +22,6 @@ use support::*;
 
 mod album_lists;
 mod browse;
+mod indexes;
 mod search;
 mod top_songs;

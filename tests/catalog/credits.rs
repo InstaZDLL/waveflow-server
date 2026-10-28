@@ -337,7 +337,7 @@ async fn a_contributor_is_not_one_of_the_track_artists() {
     // ...and none of them is one of the track's artists.
     let songs = state
         .services
-        .songs_without_album(owner, library, 100)
+        .songs_without_album(owner, &[library], 100)
         .await
         .unwrap();
     let song = state

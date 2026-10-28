@@ -23,6 +23,40 @@ pub(super) async fn overview(
         .map_err(internal)
 }
 
+/// The tracks of these libraries that belong to no album, up to the folder
+/// ceiling — the root files of a folder, in the browsing-by-folders model.
+///
+/// An empty `library_ids` is every library the account belongs to, as it is
+/// for `musicFolderId`. Neither caller can page, so a listing that reaches the
+/// ceiling says so in the log rather than truncating in silence.
+async fn album_less_songs(
+    state: &AppState,
+    principal: &Principal,
+    library_ids: &[Uuid],
+) -> Result<Vec<SongItem>, ProtocolError> {
+    let songs = state
+        .services
+        .songs_without_album(principal.id, library_ids, MAX_DIRECTORY_SONGS)
+        .await
+        .map_err(service_protocol)?;
+    if songs.len() as i64 == MAX_DIRECTORY_SONGS {
+        tracing::warn!(
+            libraries = ?library_ids,
+            limit = MAX_DIRECTORY_SONGS,
+            "album-less tracks reached the folder ceiling; the listing may be short"
+        );
+    }
+    Ok(songs)
+}
+
+/// `getIndexes` and `getArtists`.
+///
+/// `getIndexes` is the root of browsing by folders, and its `child` elements
+/// are the files that sit at that root: here, the tracks that belong to no
+/// album. A client that browses by folders — DSub with "Browse By Tags" off —
+/// enters here and never asks `getMusicDirectory` for the folder itself, so
+/// without them such a track was reachable by search alone. `getArtists` is
+/// the ID3 model, whose schema has no `child`, and stays artists only.
 pub(super) async fn indexes(
     state: &AppState,
     principal: &Principal,
@@ -30,6 +64,11 @@ pub(super) async fn indexes(
     id3: bool,
 ) -> Result<Node, ProtocolError> {
     let overview = overview(state, principal, params).await?;
+    let orphans = if id3 {
+        Vec::new()
+    } else {
+        album_less_songs(state, principal, &params.uuids("musicFolderId")?).await?
+    };
     let mut groups: BTreeMap<char, Vec<ArtistSummary>> = BTreeMap::new();
     for artist in overview.artists {
         let initial = artist
@@ -56,7 +95,10 @@ pub(super) async fn indexes(
                     // first credit.
                     artist_node(&artist.artist, artist.album_count as usize)
                 }))
-        })))
+        }))
+        // After the indexes, as the schema orders them: shortcuts, indexes,
+        // then the children of the root.
+        .children(orphans.iter().map(|song| song_node(song).renamed("child"))))
 }
 
 pub(super) async fn get_artist(
@@ -225,18 +267,7 @@ pub(super) async fn music_directory(
         // Those name this folder as their `parent` for want of an album id, so
         // this is the level that has to answer for them — otherwise a track
         // advertises a parent that does not contain it.
-        let orphans = state
-            .services
-            .songs_without_album(principal.id, id, MAX_DIRECTORY_SONGS)
-            .await
-            .map_err(service_protocol)?;
-        if orphans.len() as i64 == MAX_DIRECTORY_SONGS {
-            tracing::warn!(
-                library_id = %id,
-                limit = MAX_DIRECTORY_SONGS,
-                "album-less tracks reached the folder ceiling; the listing may be short"
-            );
-        }
+        let orphans = album_less_songs(state, principal, &[id]).await?;
         directory = directory
             .attr("name", folder.name.clone())
             .children(

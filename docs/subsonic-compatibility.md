@@ -526,6 +526,33 @@ by none of them, its own title included. When the file comes back, the ordinary
 rescan makes the title findable again; nothing is reindexed. No client is
 affected beyond the result itself: the response's shape is unchanged.
 
+## Correction: a track with no album is a root file of `getIndexes`
+
+Found on 2026-10-28, in the third client campaign, with DSub 5.5.3 browsing by
+folders ("Browse By Tags" off). A track tagged with no album — *Untitled
+Sketch* by Ivy Trench, filed under `Loose/` in the trap catalogue — could be
+reached by search and by nothing else. It was in no artist's directory, since
+an artist's directory lists albums, and `getIndexes` answered artists only.
+This was not a regression: the folder level of `getMusicDirectory` has listed
+such tracks since #123, because they name their library as their `parent`.
+DSub never asks for that level. It enters at `getIndexes` and walks down from
+the artists it lists.
+
+`getIndexes` now carries those tracks as `child` elements after its `index`
+elements, which is where the Subsonic schema puts the files at the root of the
+folders. The projection, order and ceiling are the ones the folder level of
+`getMusicDirectory` uses: the same media item, sorted by title, at most 2 000
+tracks, with a warning in the log when a listing reaches the ceiling.
+`musicFolderId` restricts them as it restricts the artists, and only libraries
+the account belongs to contribute any. In JSON, `child` is an array even when
+it holds one track. A response with no album-less track to list is unchanged,
+with no `child` key at all, and `getArtists` is unchanged in every case, since
+`ArtistsID3` has no `child`.
+
+To check in the next campaign: that DSub, browsing by folders, lists and plays
+*Untitled Sketch* from the root, and that Feishin's folder view, the other
+client in this table that calls `getIndexes`, shows it the same way.
+
 ## The replay this alignment required
 
 These rows had all been re-run on 2026-08-19, against a catalogue whose artist

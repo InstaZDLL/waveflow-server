@@ -212,6 +212,11 @@ pub(super) fn json_array_field(parent: &str, name: &str) -> bool {
             | ("album", "song")
             | ("genres", "genre")
             | ("directory", "child")
+            // The root files of `getIndexes`: empty until it listed the tracks
+            // that belong to no album, so nothing had told them apart from an
+            // object. One loose track is the common case, and the one that
+            // would have collapsed.
+            | ("indexes", "child")
             | ("albumList", "album")
             | ("albumList2", "album")
             | ("randomSongs", "song")
