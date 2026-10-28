@@ -1,6 +1,9 @@
 //! Share methods.
 //!
-//! Split out of `subsonic.rs`; the wire contract is frozen, so this moved nothing.
+//! Split out of `subsonic.rs`. Two corrections since the contract was frozen,
+//! recorded in `docs/subsonic-compatibility.md`: every share these methods
+//! answer carries its `url`, and `createShare` takes an album's id as well as
+//! a track's.
 
 use super::*;
 
@@ -11,19 +14,25 @@ pub(super) async fn shares(
     params: &Params,
 ) -> Result<Node, ProtocolError> {
     match method {
-        "getShares" => Ok(Node::new("shares").children(
-            state
+        "getShares" => {
+            let mut shares = state
                 .services
                 .shares(principal.id)
                 .await
-                .map_err(internal)?
-                .iter()
-                .map(|share| share_node(share, &principal.username, state.public_url.as_deref())),
-        )),
+                .map_err(internal)?;
+            for share in &mut shares {
+                state.services.reveal_share_link(principal.id, share);
+            }
+            Ok(Node::new("shares").children(
+                shares.iter().map(|share| {
+                    share_node(share, &principal.username, state.public_url.as_deref())
+                }),
+            ))
+        }
         "createShare" => {
             let share = state
                 .services
-                .create_share(
+                .create_share_of_items(
                     principal.id,
                     &params.uuids("id")?,
                     params.first("description"),
@@ -38,7 +47,7 @@ pub(super) async fn shares(
             )))
         }
         "updateShare" => {
-            let share = state
+            let mut share = state
                 .services
                 .update_share(
                     principal.id,
@@ -49,6 +58,7 @@ pub(super) async fn shares(
                 )
                 .await
                 .map_err(service_protocol)?;
+            state.services.reveal_share_link(principal.id, &mut share);
             Ok(Node::new("shares").child(share_node(
                 &share,
                 &principal.username,
