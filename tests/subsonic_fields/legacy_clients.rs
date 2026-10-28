@@ -600,3 +600,38 @@ async fn a_legacy_client_is_answered_in_text_xml_errors_included() {
         assert_eq!(json, "application/json; charset=utf-8", "{client}: {body}");
     }
 }
+
+/// A legacy client that names itself in the query is answered as itself even
+/// when its `formPost` body cannot be read: the refusal is `text/xml` too.
+#[tokio::test]
+async fn a_legacy_client_keeps_text_xml_when_its_post_body_is_refused() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    for (client, expected) in [
+        ("DSub", "text/xml; charset=utf-8"),
+        ("Feishin", "application/xml; charset=utf-8"),
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/rest/ping.view?apiKey={}&v=1.16.1&c={client}",
+                    fixture.api_key
+                ))
+                .header(axum::http::header::CONTENT_TYPE, "text/plain")
+                .body(Body::from("f=json"))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let media_type = response.headers()[axum::http::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = body_text(response).await;
+        assert!(body.contains(r#"code="10""#), "{client}: {body}");
+        assert_eq!(media_type, expected, "refused POST as {client}: {body}");
+    }
+}
