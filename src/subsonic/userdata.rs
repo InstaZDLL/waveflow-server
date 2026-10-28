@@ -71,14 +71,18 @@ pub(super) async fn set_star(
     params: &Params,
     starred: bool,
 ) -> Result<Node, ProtocolError> {
-    // Read before any of them is applied: a request refused halfway would leave
-    // the first few identifiers starred and report an error for the whole.
+    // Every identifier is resolved and authorized before any of them is
+    // applied: a request refused halfway left the first few starred and
+    // reported an error for the whole, and a client retrying it starred them
+    // again. Reading them all first was not enough — each is applied as its
+    // own mutation, so the refusal has to come before the first one.
     let tracks = params.uuids("id")?;
     let albums = params.uuids("albumId")?;
     let artists = params.uuids("artistId")?;
     if tracks.len() + albums.len() + artists.len() > MAX_IDENTIFIERS {
         return Err(invalid("Too many identifiers in one request"));
     }
+    let mut targets = Vec::with_capacity(tracks.len() + albums.len() + artists.len());
     for id in tracks {
         let kind = state
             .services
@@ -86,20 +90,21 @@ pub(super) async fn set_star(
             .await
             .map_err(service_protocol)?
             .ok_or_else(not_found)?;
+        targets.push((kind, id));
+    }
+    targets.extend(albums.into_iter().map(|id| ("album", id)));
+    targets.extend(artists.into_iter().map(|id| ("artist", id)));
+    state
+        .services
+        .authorize_entities(principal.id, &targets)
+        .await
+        .map_err(service_protocol)?;
+    for (kind, id) in targets {
         state
             .services
             .set_star(principal.id, kind, id, starred)
             .await
             .map_err(service_protocol)?;
-    }
-    for (ids, kind) in [(albums, "album"), (artists, "artist")] {
-        for id in ids {
-            state
-                .services
-                .set_star(principal.id, kind, id, starred)
-                .await
-                .map_err(service_protocol)?;
-        }
     }
     Ok(Node::new(if starred { "star" } else { "unstar" }))
 }
@@ -168,6 +173,18 @@ pub(super) async fn scrobble(
         .map(|value| value.parse::<i64>().map_err(|_| invalid("Invalid time")))
         .collect::<Result<Vec<_>, _>>()?;
     let submission = params.bool_optional("submission")?.unwrap_or(true);
+    // Every track and every time is checked before the first listen is
+    // recorded, for the reason `set_star` gives: each listen is its own
+    // mutation, and one refused after the others left them recorded.
+    let tracks = ids.iter().map(|id| ("track", *id)).collect::<Vec<_>>();
+    state
+        .services
+        .authorize_entities(principal.id, &tracks)
+        .await
+        .map_err(service_protocol)?;
+    for index in 0..ids.len() {
+        crate::services::play_time(times.get(index).copied()).map_err(service_protocol)?;
+    }
     for (index, id) in ids.into_iter().enumerate() {
         state
             .services

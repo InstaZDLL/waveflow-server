@@ -52,12 +52,7 @@ impl DomainServices {
         }
         self.authorize_entity_on(&mut tx, user_id, "track", track_id)
             .await?;
-        let current_time = now_ms();
-        let now = time.unwrap_or(current_time);
-        const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
-        if now < 0 || now > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
-            return Err(ServiceError::Invalid);
-        }
+        let now = play_time(time)?;
         let recorded = sqlx::query(
             "INSERT INTO play_event (user_id, track_id, submission, played_at) VALUES (?, ?, ?, ?)",
         )
@@ -347,6 +342,21 @@ impl DomainServices {
             songs,
         }))
     }
+}
+
+/// When a scrobble says it was played: `time` if it gave one, now otherwise,
+/// refused as invalid when it is negative or more than five minutes ahead.
+///
+/// Public so the façade can check every time of a multi-track scrobble before
+/// recording any of them, as it checks every track.
+pub fn play_time(time: Option<i64>) -> Result<i64, ServiceError> {
+    const MAX_FUTURE_SKEW_MS: i64 = 5 * 60 * 1_000;
+    let current_time = now_ms();
+    let played = time.unwrap_or(current_time);
+    if played < 0 || played > current_time.saturating_add(MAX_FUTURE_SKEW_MS) {
+        return Err(ServiceError::Invalid);
+    }
+    Ok(played)
 }
 
 /// Which tracks of `ids` this account can read now, with every id required to

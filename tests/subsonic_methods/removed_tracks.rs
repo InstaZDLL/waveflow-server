@@ -221,6 +221,43 @@ async fn writes_on_a_removed_track_are_refused_and_its_data_survives() {
         );
     }
 
+    // Several identifiers in one request, the track that is there first: the
+    // refusal of the one that went must not leave the first written. Each
+    // identifier is its own mutation, so checking them all comes before the
+    // first is applied — or the first is recorded, and recorded again when the
+    // client retries.
+    let kept_before = held_about(&state, owner, kept).await;
+    let far_future = now_ms() + 24 * 60 * 60 * 1_000;
+    for (method, extra, code) in [
+        (
+            "scrobble",
+            format!("&id={kept}&id={gone}&submission=true"),
+            70,
+        ),
+        ("star", format!("&id={kept}&id={gone}"), 70),
+        // And a time that is refused, on the second of two tracks that are there.
+        (
+            "scrobble",
+            format!(
+                "&id={kept}&id={kept}&time={}&time={far_future}&submission=true",
+                now_ms()
+            ),
+            10,
+        ),
+    ] {
+        let response = call(method, extra.clone()).await;
+        assert_eq!(response["status"], "failed", "{method}{extra}: {response}");
+        assert_eq!(
+            response["error"]["code"], code,
+            "{method}{extra}: {response}"
+        );
+        assert_eq!(
+            held_about(&state, owner, kept).await,
+            kept_before,
+            "{method}{extra} wrote the track that is there"
+        );
+    }
+
     // And through the native API, which reaches the same services.
     for (verb, uri, body) in [
         ("PUT", format!("/api/v2/favorites/track/{gone}"), None),
