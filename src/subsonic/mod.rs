@@ -236,6 +236,9 @@ pub async fn handle(
         Err(error) => Err(error),
     };
 
+    let wire = params.as_ref().map_or(Wire::OpenSubsonic, |params| {
+        Wire::for_request(&state, params)
+    });
     let outcome = match params {
         Ok(params) => {
             handle_inner(
@@ -254,12 +257,10 @@ pub async fn handle(
         Ok(response) => response,
         // A protocol failure is still an HTTP success: the Subsonic contract
         // puts the outcome in the body, never in the status line. An error
-        // envelope carries no media item, so it is the same on either wire.
-        Err(error) => render_protocol(
-            error_node(error.code, error.message),
-            wants_json,
-            Wire::OpenSubsonic,
-        ),
+        // envelope carries no media item, so its body is the same on either
+        // wire; its media type is not, and an old client in place of a stream
+        // tells the error from audio by that type alone.
+        Err(error) => render_protocol(error_node(error.code, error.message), wants_json, wire),
     }
 }
 

@@ -74,6 +74,23 @@ impl Wire {
         node
     }
 
+    /// The media type of an XML answer on this wire.
+    ///
+    /// `text/xml` on the legacy wire, as the Subsonic server these clients
+    /// were written against sent it. DSub 5.5.3 recognises an error in place
+    /// of a stream only by a type beginning `text/xml` or `text/html`
+    /// (`RESTMusicService`), so the `application/xml` error 70 for a removed
+    /// track was written to its cache as audio and requested again every
+    /// second. Its other calls read the body whatever the type, so nothing
+    /// else changes for it; the full wire keeps `application/xml`, which the
+    /// clients validated against it already accept.
+    pub(super) fn xml_content_type(self) -> &'static str {
+        match self {
+            Self::OpenSubsonic => "application/xml; charset=utf-8",
+            Self::Legacy => "text/xml; charset=utf-8",
+        }
+    }
+
     /// Whether the JSON presence rule may put `field` back on `element` as an
     /// empty array: always on the full wire, and on the legacy wire only when
     /// [`Self::shape`] does not remove it there. An `artists: []` put back on a
