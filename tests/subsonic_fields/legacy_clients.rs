@@ -635,3 +635,46 @@ async fn a_legacy_client_keeps_text_xml_when_its_post_body_is_refused() {
         assert_eq!(media_type, expected, "refused POST as {client}: {body}");
     }
 }
+
+/// A client that names itself only in a `formPost` body is answered as itself
+/// too: the wire is read again once the body is merged, so a `stream` error
+/// posted by DSub is `text/xml`.
+#[tokio::test]
+async fn a_legacy_client_naming_itself_in_its_post_body_is_answered_in_text_xml() {
+    let (_temp, config, state) = test_app().await;
+    let fixture = starred_session(&config, &state).await;
+    let gone = uuid::Uuid::new_v4();
+    for (client, expected) in [
+        ("DSub", "text/xml; charset=utf-8"),
+        ("Feishin", "application/xml; charset=utf-8"),
+    ] {
+        let response = fixture
+            .router
+            .clone()
+            .oneshot(
+                Request::post(format!(
+                    "/rest/stream.view?apiKey={}&v=1.16.1",
+                    fixture.api_key
+                ))
+                .header(
+                    axum::http::header::CONTENT_TYPE,
+                    "application/x-www-form-urlencoded",
+                )
+                .body(Body::from(format!("c={client}&id={gone}")))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let media_type = response.headers()[axum::http::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let body = body_text(response).await;
+        assert!(body.contains(r#"code="70""#), "{client}: {body}");
+        assert_eq!(
+            media_type, expected,
+            "posted stream error as {client}: {body}"
+        );
+    }
+}
