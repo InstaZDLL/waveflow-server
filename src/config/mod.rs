@@ -117,6 +117,20 @@ pub struct Config {
     /// `album`. A request overrides it with `replayGain=`; the original file
     /// is never transcoded to apply it.
     pub subsonic_replay_gain: crate::media::replay_gain::ReplayGainMode,
+    /// The Subsonic clients answered without the OpenSubsonic additions:
+    /// plain Subsonic 1.16.1, with no `contributors`, `artists`, `roles`,
+    /// `replayGain` or any other field OpenSubsonic added to an existing
+    /// element. `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`, client names separated by
+    /// commas, compared exactly — case included — with the `c` parameter of
+    /// each request. `DSub` by default, as Navidrome's `LegacyClients` is;
+    /// set it empty to answer every client in full.
+    ///
+    /// It exists because an old parser does not stop at the fields it does
+    /// not know. DSub 5.5.3 collects every `<artist>` element of a document
+    /// wherever it sits, so the one nested inside a `contributors` credit
+    /// became a starred artist in `getStarred` and an album's header in
+    /// `getMusicDirectory`.
+    pub subsonic_legacy_clients: Vec<String>,
     pub ffmpeg_path: PathBuf,
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
@@ -293,6 +307,7 @@ impl std::fmt::Debug for Config {
             .field("purge_grace", &self.purge_grace)
             .field("link_roots", &self.link_roots)
             .field("subsonic_replay_gain", &self.subsonic_replay_gain)
+            .field("subsonic_legacy_clients", &self.subsonic_legacy_clients)
             .field("ffmpeg_path", &self.ffmpeg_path)
             .field("ffprobe_path", &self.ffprobe_path)
             .field("transcode_cache_dir", &self.transcode_cache_dir)

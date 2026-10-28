@@ -20,4 +20,5 @@ use support::*;
 
 mod albums;
 mod credits;
+mod legacy_clients;
 mod media_items;

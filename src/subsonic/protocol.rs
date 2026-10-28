@@ -4,10 +4,14 @@
 
 use super::*;
 
-pub(super) fn render_protocol(node: Node, json: bool) -> Response {
+/// Renders a response for the wire its client is given. The legacy wire
+/// strips the OpenSubsonic additions first, and its JSON is not handed back,
+/// as empty arrays, the ones it removed.
+pub(super) fn render_protocol(node: Node, json: bool, wire: Wire) -> Response {
+    let node = wire.shape(node);
     if json {
         let mut root = Map::new();
-        root.insert(node.name.clone(), node_json(&node, ""));
+        root.insert(node.name.clone(), node_json(&node, "", wire));
         (
             StatusCode::OK,
             [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
@@ -24,7 +28,7 @@ pub(super) fn render_protocol(node: Node, json: bool) -> Response {
     }
 }
 
-pub(super) fn node_json(node: &Node, parent: &str) -> Value {
+pub(super) fn node_json(node: &Node, parent: &str, wire: Wire) -> Value {
     // An array-typed element is its children, not an object wrapping them —
     // whether it holds none or several. Applying this only when empty would
     // hand a strictly typed client `[]` on an empty catalogue and an object on
@@ -33,7 +37,7 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
         return Value::Array(
             node.children
                 .iter()
-                .map(|child| node_json(child, &node.name))
+                .map(|child| node_json(child, &node.name, wire))
                 .collect(),
         );
     }
@@ -54,12 +58,12 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
     }
     for (name, children) in grouped {
         let value = if children.len() == 1 && !json_array_field(&node.name, name) {
-            node_json(children[0], &node.name)
+            node_json(children[0], &node.name, wire)
         } else {
             Value::Array(
                 children
                     .into_iter()
-                    .map(|child| node_json(child, &node.name))
+                    .map(|child| node_json(child, &node.name, wire))
                     .collect(),
             )
         };
@@ -80,6 +84,12 @@ pub(super) fn node_json(node: &Node, parent: &str) -> Value {
         _ => EntryKind::Song,
     };
     for name in json_required_array_fields(parent, &node.name) {
+        // The legacy wire puts back none of the arrays it removed, and keeps
+        // the rest: the lyrics' `structuredLyrics` and `line` are no addition
+        // to a 1.16.1 element, so `getLyricsBySongId` keeps its shape.
+        if !wire.keeps_required_array(&node.name, name) {
+            continue;
+        }
         let injected = match entry_kind {
             // An artist keeps its own array and takes nobody else's: a folder
             // entry answering `isrc: []` would say the server read a recording
