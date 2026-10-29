@@ -5,7 +5,7 @@ JSON API. The generated contract remains the source for exact schemas:
 
 - `GET /openapi.json` — OpenAPI document;
 - `GET /reference` — interactive Scalar reference;
-- [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md) — durable synchronization
+- [RFC-003](../rfcs/RFC-003-waveflow-sync-v2.md) — durable synchronization
   semantics.
 
 Examples use `https://music.example.com` as the server and placeholders such as
@@ -53,7 +53,7 @@ quietly ignored.
 On a new data directory, `GET /api/v2/setup` returns `{"required":true}`. The
 embedded browser UI can then create the first administrator. The setup write
 requires an exact same-origin `Origin` header **and the one-time setup token**
-([RFC-019](rfcs/RFC-019-exposure-hardening.md)): the content of `setup-token`
+([RFC-019](../rfcs/RFC-019-exposure-hardening.md)): the content of `setup-token`
 in the data directory, or the value of `WAVEFLOW_SETUP_TOKEN` when the operator
 chose one.
 
@@ -222,6 +222,13 @@ All catalogue queries are filtered by the authenticated account's library
 memberships. An inaccessible or foreign UUID normally returns `404`, not a
 distinguishing permission error.
 
+A track whose file is gone, and an album whose files all went, are treated the
+same way: `GET /api/v2/tracks/{track_id}` or `GET /api/v2/albums/{album_id}`
+answers `404`, and they leave every catalogue listing and search until the files
+come back. The account's own data about them is not a catalogue listing:
+`GET /api/v2/favorites` and `GET /api/v2/ratings` keep their ids, so a client
+should not drop a local favourite or rating because the item went missing.
+
 ```bash
 # Visible libraries
 curl https://music.example.com/api/v2/libraries \
@@ -258,7 +265,7 @@ every other genre filter, and both are the native form of a Subsonic method
 
 `GET /api/v2/artists/{artist_id}` carries an `enrichment` object: what metadata
 providers said about the artist, when an operator switched enrichment on
-([RFC-011](rfcs/RFC-011-metadata-enrichment.md)). It is always present, and its
+([RFC-011](../rfcs/RFC-011-metadata-enrichment.md)). It is always present, and its
 `state` says which of four situations holds, because absence could not:
 
 | `state` | meaning |
@@ -340,7 +347,7 @@ listing never has to load the tracks to size it, plus `is_compilation`,
 from its available tracks.
 
 It carries `release_types` as the files spelled them, and since
-[RFC-022](rfcs/RFC-022-playback-and-web-client.md) a `release_group` derived
+[RFC-022](../rfcs/RFC-022-playback-and-web-client.md) a `release_group` derived
 from them: one of `album`, `ep`, `single`, `live` or `compilation`. Group a
 discography by that field rather than by the raw types, whose vocabulary and
 separators vary by tagger. The rule, applied in order: a compilation flag or
@@ -457,14 +464,14 @@ Once an operator sets `WAVEFLOW_LYRICS_PROVIDERS=lrclib`, a track with no
 lyrics of its own — none embedded, no sidecar, no upload — is looked up on
 LRCLIB the first time it is asked for, and its sheet carries
 `"source": "lrclib"`, synced when LRCLIB has timings, in language `xxx`
-([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). The request waits at most
+([RFC-024](../rfcs/RFC-024-lyrics-stats-and-mixes.md)). The request waits at most
 four seconds for LRCLIB; a slower answer is in the next one. A track with
 lyrics of its own is never looked up.
 
 ## Statistics, mixes and similar songs
 
 What an account's own listening and the catalogue suggest
-([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). Nothing here leaves the
+([RFC-024](../rfcs/RFC-024-lyrics-stats-and-mixes.md)). Nothing here leaves the
 server.
 
 ```bash
@@ -529,7 +536,7 @@ curl "https://music.example.com/api/v2/tracks/TRACK_UUID/stream?format=opus&bitr
 
 Valid formats are `raw`, `mp3`, `opus` and `aac`. `aac` is AAC-LC in an ADTS
 stream (`audio/aac`), added by
-[RFC-022](rfcs/RFC-022-playback-and-web-client.md); a client that must work
+[RFC-022](../rfcs/RFC-022-playback-and-web-client.md); a client that must work
 against an older server reads `formats` from `GET /api/v2/transcode/status`
 before offering it. Any other value is refused with `400`: unlike the Subsonic
 façade, this API does not fall back to a format nobody asked for. Byte ranges
@@ -685,7 +692,7 @@ watermark of what was removed, not the oldest row that survives — a feed whose
 first event sits at a high cursor has not lost anything, it started late, and the
 two are indistinguishable from the rows alone.
 
-See [RFC-007](rfcs/RFC-007-library-event-stream.md) for the reasoning.
+See [RFC-007](../rfcs/RFC-007-library-event-stream.md) for the reasoning.
 
 ### When a transcode is refused
 
@@ -736,7 +743,7 @@ revoked-access ticket returns `404`.
 ### A track's canvas
 
 A canvas is a short video loop attached to a track and played without sound
-over it ([RFC-009](rfcs/RFC-009-track-canvas.md)). A person gives it, so no
+over it ([RFC-009](../rfcs/RFC-009-track-canvas.md)). A person gives it, so no
 scan finds one, and it lives in a store of the server's rather than in the
 library's folder.
 
@@ -822,7 +829,7 @@ name `comment` in `clear`. Shares use the same rule for `description`,
 `expires_at` and `max_visits`.
 
 A playlist holds a track as many times as it is given, in one request or
-across several ([RFC-020](rfcs/RFC-020-playlists-and-shares.md) decision 1), so
+across several ([RFC-020](../rfcs/RFC-020-playlists-and-shares.md) decision 1), so
 a position is the only way to say which copy goes. **A position in
 `remove_indexes` is a position in the list the playlist answers**, which leaves
 out the tracks the account cannot currently read — a file gone from disk, a
@@ -945,6 +952,18 @@ Other user-data routes:
 | Queue | `GET/PUT /api/v2/queue` (`track_ids` allows repeated tracks; maximum 400) |
 | Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks, repeats allowed; optional `max_visits` ≥ 1) |
 
+A track whose file is gone is not found to a write any more than to a read: a
+favourite, a rating, a bookmark or a scrobble on it answers `404` and writes
+nothing, and so do a favourite or a rating on an album whose files all went.
+What was written before stays, and comes back with the files under the same
+identifier, so `GET /api/v2/favorites` and `GET /api/v2/ratings` keep listing
+it. `PUT /api/v2/queue` is the exception: it saves the queue without the
+tracks that went, and drops the current track and its position if it is one
+of them. An id that was never a track is still `404`. A replay is not a new
+write: the same mutation sent again with the `X-WaveFlow-Operation-Id` of one
+that succeeded before the files went answers as that one did, since the
+replay is recognised before availability is checked.
+
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
 idempotent replay. Later list, snapshot and update responses omit it; only its
 hash is stored. Preserve the first response if the URL must be shown again.
@@ -952,7 +971,7 @@ hash is stored. Preserve the first response if the URL must be shown again.
 from the instance key: see the 2026-10-28 amendment of RFC-020.) Public access uses `GET /share/{token}` and needs no account credential.
 
 What `/share/{token}` answers depends on who asks
-([RFC-020](rfcs/RFC-020-playlists-and-shares.md)):
+([RFC-020](../rfcs/RFC-020-playlists-and-shares.md)):
 
 - **A browser** — a request whose `Accept` names `text/html` — is handed the web
   client, which plays the share. That costs no visit, so a link preview never
@@ -1285,7 +1304,7 @@ is reserved to the `owner` and `manager` roles; a `listener` gets `404`, the
 same answer as for a library that does not exist. Reading the catalogue is
 unaffected.
 
-A library's lifecycle ([RFC-021](rfcs/RFC-021-library-lifecycle-and-scan.md)
+A library's lifecycle ([RFC-021](../rfcs/RFC-021-library-lifecycle-and-scan.md)
 decision 5) splits the same way. `PATCH /api/v2/libraries/{library_id}` with a
 `name` is open to the library's owner; with a `path` or `follow_links` it needs
 an administrator on an administrative credential, and it queues a scan whose id
@@ -1298,7 +1317,13 @@ with what purging each would cost, by
 `GET /api/v2/libraries/{library_id}/unavailable-tracks`, and purged by
 `POST /api/v2/libraries/{library_id}/unavailable-tracks/purge` with
 `{"track_ids": […]}` or `{"all": true}`. Both are for the library's owners,
-managers and administrators; a purge is not reversible (RFC-021 decision 4).
+managers and administrators. A purge can be taken back while the operator's
+grace window lasts (`WAVEFLOW_PURGE_GRACE_HOURS`, a week by default): the
+purge answers `restorable_until`, the tracks leave the listing at once,
+`GET /api/v2/libraries/{library_id}/purged-tracks` lists them, and
+`POST /api/v2/libraries/{library_id}/purged-tracks/restore` with the same body
+puts them back. Once the window has passed, or at once when it is `0`, the
+deletion is final (RFC-021 decision 4).
 
 A scan job also says what its walk left out: `excluded` (built-in exclusions
 and `.waveflowignore`) and `skipped_links` (symbolic links not followed).

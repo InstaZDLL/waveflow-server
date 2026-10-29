@@ -6,7 +6,13 @@
   links, missing tracks and their purge, the library lifecycle, the watcher),
   and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (everything *What is still open* listed: the journal on a
   deletion, link roots, undoing a purge, the per-library watch and scoped
-  watched scans). The *Status* field above never flips in this project; this line is the one
+  watched scans). Then [#370](https://github.com/InstaZDLL/waveflow-server/pull/370)
+  and [#377](https://github.com/InstaZDLL/waveflow-server/pull/377): a new write
+  on an unavailable track, or on an album whose tracks are all unavailable, is
+  refused as not found and deletes nothing (a replay under the operation id of
+  a write that succeeded earlier answers as that write did), and such an album
+  leaves the catalogue listings, while the account's favourites and ratings
+  keep its id. The *Status* field above never flips in this project; this line is the one
   that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -298,7 +304,7 @@ inotify limit `fs.inotify.max_user_watches` reached), that is logged once with
 the library's identifier and the library is left to the periodic scan. Network
 mounts are the known case: NFS and SMB report changes made by this machine and
 usually not those made by another, so a library on a share should not count on
-the watcher. `docs/operations.md` says so.
+the watcher. `docs/guides/operations.md` says so.
 
 ## Decision 7 — what the scan job says
 
@@ -334,7 +340,7 @@ foreign keys off, so the rows that reference it (`scan_error`,
      leaves no empty album; a moved root keeps identities; a deletion leaves no
      row behind; a watched change triggers a scan, and none starts while one
      runs;
-   - `docs/operations.md`.
+   - `docs/guides/operations.md`.
 
 ## What is still open
 

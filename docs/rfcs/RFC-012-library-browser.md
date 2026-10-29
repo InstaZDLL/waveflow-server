@@ -10,9 +10,17 @@
   [#300](https://github.com/InstaZDLL/waveflow-server/pull/300) (uploaded
   lyrics: `track_lyrics_upload`, the TTML parser, the order, and the lyrics
   download), [#301](https://github.com/InstaZDLL/waveflow-server/pull/301) (the
-  disk tree, `GET /libraries/{id}/tree`, and the Folders page) and the pull
-  request adding the filed tree (`library_folder`, `track_placement`, their
-  routes, "Move to folder…", drag and drop, and uploads into a folder). The
+  disk tree, `GET /libraries/{id}/tree`, and the Folders page) and
+  [#302](https://github.com/InstaZDLL/waveflow-server/pull/302) (the filed
+  tree: `library_folder`, `track_placement`, their routes, "Move to folder…",
+  drag and drop, and uploads into a folder). Then, after use:
+  [#303](https://github.com/InstaZDLL/waveflow-server/pull/303) (numbered
+  names sorted by value in both trees),
+  [#304](https://github.com/InstaZDLL/waveflow-server/pull/304) and
+  [#305](https://github.com/InstaZDLL/waveflow-server/pull/305) (the web client
+  draws the filed tree only; see *Revised* below) and
+  [#306](https://github.com/InstaZDLL/waveflow-server/pull/306) (the unfiled
+  tracks labelled "To sort"; the API keeps `unfiled`). The
   *Status* field above never flips in this project; this line is the one that
   says what is running.
 - **Date**: 2026-10-21

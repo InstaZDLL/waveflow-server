@@ -3,6 +3,18 @@
 Scope: `main` at `1eecc10`, that is PRs #121 and #122 (21 commits) on top of the
 32 of the earlier passes. This document replaces the fourth-pass report.
 
+> Survey of 2026-08-19, read-only against `main` at `1eecc10`; the addenda in
+> §3 follow it to 2026-08-24.
+>
+> **Status as of 2026-10-29, `main` at `4ccf395`:** nothing in §3 or §5 is
+> open. The four points of §3 were closed by #123 and #126 and on 2026-08-24,
+> `getLicense`'s date excepted, which stays by decision; the four-clients
+> question was settled by the campaigns of 2026-08-23 and 2026-09-16, and
+> `v2.0.0-beta.1` was tagged on 2026-09-16. A third campaign ran on 2026-10-27
+> and 2026-10-28 (Juliet 8, Feishin 1.17.0, Symfonium 15.1.0, DSub 5.5.3); its
+> fixes are #367 to #377, one of them a deliberate change to the frozen
+> contract for DSub alone (#374, `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`).
+
 Static verification. `cargo clippy` and `cargo test` cannot run here —
 `index.crates.io` is blocked by the network egress policy and no registry is
 cached. `CI (Rust)` passed on `4110f22`, the merge of #121; it was still running
@@ -128,7 +140,7 @@ is the kind of defect that shows itself only in production, at one user's, once.
 >
 > The framing question of §5.1 is closed: the four clients were replayed on 23
 > August 2026 against the aligned model, and
-> [`subsonic-compatibility.md`](subsonic-compatibility.md) carries the result.
+> [`subsonic-compatibility.md`](../compatibility/subsonic-compatibility.md) carries the result.
 
 > **Addendum of 2026-08-24.** Point 2 below is closed. The five album output
 > fields the previous day's addendum left open are delivered:
@@ -146,25 +158,32 @@ is the kind of defect that shows itself only in production, at one user's, once.
 Nothing structural. The list fits in four lines, and two of them are named debts
 rather than defects.
 
-1. **The durable OAuth fix** — carrying the scopes through the grant. Two
-   columns, two migrations. The path is closed today; what remains is for the
-   property to be structural rather than local to one route.
+1. ~~**The durable OAuth fix** — carrying the scopes through the grant.~~
+   Delivered by PR #123: `scopes_json` on `oauth_authorization` and on
+   `session` (`migrations-v2/20260819000000_oauth_authorization_scopes.sql`,
+   `20260819010000_session_scopes.sql`).
 2. ~~**`AlbumID3` and `ArtistID3` fields** needing columns.~~ Delivered:
    `sortName` by PR #123, `moods[]`, `explicitStatus`, `roles[]`,
    `contributors[]` and `displayComposer` by PR #126, then
    `originalReleaseDate`, `releaseDate`, `releaseTypes[]`, `recordLabels[]` and
    `discTitles[]` on 24 August 2026.
-3. **`song.parent` falls back to `library_id`** with no album
-   (`src/subsonic.rs:1706`): a `getMusicDirectory` on that identifier will not
-   return the track.
+3. ~~**`song.parent` falls back to `library_id`** with no album: a
+   `getMusicDirectory` on that identifier will not return the track.~~
+   Delivered by PR #123; `getIndexes` also lists album-less tracks as root
+   children since #372 (2026-10-28).
 4. **Two surface inaccuracies**: `getLicense` expires at a hard-coded
-   2099-12-31, and `search_catalog` does not annotate its 400 for a missing `q`
-   where `/api/v2/songs/by-genre` has just done so.
+   2099-12-31, and ~~`search_catalog` does not annotate its 400 for a missing
+   `q`~~ (annotated by PR #123, `src/api/catalog.rs`). The date stays, by
+   decision.
 
 A framing point rather than a defect: the next tag will rest on **four**
 replayed clients, not five. The document says so itself and does not try to make
 Substreamer count. If five is the intended threshold, a fifth current client is
 missing; if four is enough, that is worth writing down as a decision.
+
+> **State on 2026-10-29.** Settled as four: the four clients were replayed on
+> 2026-08-23 and 2026-09-16, `v2.0.0-beta.1` was tagged on 2026-09-16, and the
+> same four ran again on 2026-10-27 and 2026-10-28.
 
 ---
 
@@ -185,6 +204,11 @@ The first four passes of this audit described gaps. This one describes a finish.
 What remains in §3 does not hold a tag back: optional fields correctly declared
 absent, one named architectural debt, and two cosmetic details.
 
+> **State on 2026-10-29.** The debt and one of the two details were paid by
+> #123; the verdict held for `v2.0.0-beta.1`. "No validation debt" was true of
+> the contract surveyed: the 2026-10-27/28 campaign still found defects no
+> automated test reached, fixed by #367 to #377.
+
 ---
 
 ## 5. Proposed priorities
@@ -192,7 +216,8 @@ absent, one named architectural debt, and two cosmetic details.
 > **Stale as of 2026-08-23, kept as written.** Points 1 and 2 are done: the four
 > clients have been replayed, and `sortName` is delivered. See the addendum in
 > §3. This list describes what remained at the time of the audit, not what
-> remains today.
+> remains today. **On 2026-10-29 points 3 and 4 are done as well** (#123), the
+> hard-coded `getLicense` date excepted, kept by decision.
 
 1. Settle the four-clients-against-five question explicitly, since it is the
    only thing between the current state and a tag.

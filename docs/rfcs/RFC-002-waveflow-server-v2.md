@@ -93,7 +93,7 @@ Original downloads and streams use repository authorization and the M2 path guar
 The freeze exists to protect clients validated against v2.0-beta, not to preserve
 divergences from the specification. Where the two conflict, WaveFlow now follows
 OpenSubsonic. Four such deviations are accepted and all four are implemented. Each
-requires the compatibility matrix in `docs/subsonic-compatibility.md` to be
+requires the compatibility matrix in `docs/compatibility/subsonic-compatibility.md` to be
 re-run before the next tag.
 
 **Every `/rest` answer is HTTP 200.** The Subsonic contract carries the outcome

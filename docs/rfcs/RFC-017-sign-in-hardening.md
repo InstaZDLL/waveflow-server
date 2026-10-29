@@ -151,11 +151,11 @@ to the left of the last proxy's own entry are whatever the client sent, and the
 walk never reaches them while a non-trusted entry stands to their right.
 
 A trusted proxy that forwards a client-supplied header without appending lets
-the client choose its address. `docs/operations.md` says, beside the setting,
+the client choose its address. `docs/guides/operations.md` says, beside the setting,
 that only such appending proxies may be listed.
 
 Without the setting, behind a proxy, every client shares a budget per account.
-That is no worse than today's Subsonic limit, and `docs/operations.md` says to
+That is no worse than today's Subsonic limit, and `docs/guides/operations.md` says to
 set it.
 
 ## Decision 3 — every attempt costs the same, and the cost is bounded
@@ -233,7 +233,7 @@ attack in progress.
      afterwards is not refused by the limiter; 31 accounts then a 32nd from one address leave exactly 32
      windows, the 32nd counting in the overflow; `Alice` and `alice` share
      one window;
-   - `docs/operations.md`.
+   - `docs/guides/operations.md`.
 
 ## What is still open
 

@@ -8,12 +8,23 @@
 > says so.
 >
 > No code was modified during this survey.
+>
+> **Status as of 2026-10-29, `main` at `4ccf395`:** every issue in §5 is closed
+> — #206 and #207 by #220 on 2026-09-15, #208 to #213 on 2026-10-11 (#245,
+> #243, #244, #246, #247, #250), #214 to #217 and #222 on 2026-10-12 (#251,
+> #252, #253, #258, #254). The artist page's biography and similar artists
+> came with RFC-011 (#270 to #276), smart playlists and podcasts with RFC-025
+> (#333). Still open: per-user transcoding profiles, animated artwork, and in
+> the Subsonic façade jukebox, chat, video, upload and the legacy `search`.
 
 ## 1. Two real defects, found in the console
 
 These are the only observations from this session that describe faulty
 behaviour. The rest of the document describes work not done, which is not the
 same thing.
+
+> **State on 2026-10-29.** Both fixed by #220 (`ccb3ae5`, 2026-09-15), which
+> closed #206 and #207.
 
 ### The canvas ticket is asked for again on every mount
 
@@ -230,6 +241,16 @@ along the way.
 > external source, and it is **#218** — the plugin-engine RFC — that settles the
 > source, not this ticket.
 
+> **State on 2026-10-29.** The rest of the table is filled too. #218 was
+> settled by [RFC-011](../rfcs/RFC-011-metadata-enrichment.md) (#262,
+> 2026-10-14) as native enrichment with no plugin engine; `getArtistInfo` and
+> `getArtistInfo2` read its cache since #272, `getSimilarSongs` and
+> `getSimilarSongs2` draw from the artist and their neighbours since #273 and
+> #274 (all 2026-10-15), portraits came with #275 and the artist page with #276
+> (2026-10-16). Biographies stay empty until an operator turns enrichment on,
+> which is off by default. Album notes (`getAlbumInfo`) are still not enriched,
+> one of RFC-011's open questions.
+
 ### What the server already knows, and does not say
 
 The technical metadata is **stored and already projected in SQL** — `codec`,
@@ -393,7 +414,15 @@ that package, or lay the scale here.
   > identifier twice violates `playlist_track`'s primary key and answers 500. The
   > import cannot fall into it — it deduplicates and reports the duplicate — but
   > the creation route stays exposed. Its fix is its own.
+  >
+  > **State on 2026-10-29.** The 500 is gone: RFC-020 (#327, 2026-10-25) allows
+  > a track twice in a playlist, and `playlist_track` is now keyed by position
+  > (`migrations-v2/20261026000000_playlists_and_shares.sql`).
 - No smart playlists, no transcoding profiles.
+
+  > **State on 2026-10-29.** Smart playlists exist since RFC-025 (#333,
+  > 2026-10-25). Transcoding profiles are **still absent**: the server has only
+  > its concurrency ceilings, and no per-user format or bitrate.
 
 ### In the Subsonic facade
 
@@ -427,7 +456,7 @@ protocol leaves, so a client could not read the absence as one.
 > allowlist, no timeout and no egress policy to get wrong.
 >
 > **Two deviations from the reference server**, both deliberate and both now in
-> `docs/subsonic-compatibility.md`: the list is per account rather than global
+> `docs/compatibility/subsonic-compatibility.md`: the list is per account rather than global
 > and administrator-only, because WaveFlow has no global library setting of any
 > kind; and `homePageUrl` is returned with a capital `P` while `homepageUrl`
 > sets it, which is the specification's own asymmetry.
@@ -444,14 +473,25 @@ protocol leaves, so a client could not read the absence as one.
 > scrobble, and a stream has none of the three; carrying radio into the player
 > bar is a transport change, not a wiring change.
 
+> **State on 2026-10-29.** Podcasts have left this table too: RFC-025 (#333,
+> 2026-10-25) serves the eight podcast methods, one list per instance, and
+> `podcastRole` is now set per account. That transport change was made as well:
+> web radio and podcast episodes play through the play bar since #338
+> (2026-10-26). By a count of the method names in the dispatch
+> (`src/subsonic/mod.rs`), 72 are now routed, `getAvatar` among them answering
+> "not found". **Still absent**, each still declared `false` or unrouted:
+> jukebox, chat, video, upload through Subsonic, and the legacy `search`.
+
 ### In the server
 
 - **Nothing is compressed.** `tower-http` is compiled with `cors`,
   `request-id`, `timeout`, `trace`; no compression layer exists. The client
   leaves raw: **497 kB instead of about 152 kB**. One feature and one layer. No
-  gain on a local network, decisive from outside.
+  gain on a local network, decisive from outside. **State on 2026-10-29:** done
+  by #243 (#209, 2026-10-11), one `CompressionLayer` in `src/app/router.rs`.
 - **Animated artwork does not exist.** The video canvas, on the other hand, is
-  delivered (RFC-009) — the two are regularly confused.
+  delivered (RFC-009) — the two are regularly confused. Still true on
+  2026-10-29.
 - **External scrobbling is complete in the code**: `lastfm`, `listenbrainz`,
   `maloja`. What blocks Last.fm is registering an application with them, not a
   line to write.
@@ -546,13 +586,15 @@ speed** — and a split by route must not be sold as an optimisation.
 6. **An artist's most played tracks**, computed from local history — the one
    half of the artist page that needs no external source, and it fills
    `getTopSongs` along the way. **Biography and similar artists leave this
-   list**: they require an RFC on an external metadata source.
+   list**: they require an RFC on an external metadata source. *(That RFC is
+   RFC-011, carried out by #270 to #276 on 2026-10-15 and 2026-10-16.)*
 7. **The design pass** — spacings, hierarchy. To be treated as a subject, not as
    a list.
 8. **File information, a quality bar, a lyrics view, an immersive view.**
 9. **`.m3u` import**, then internet radio. *(Both done on 2026-10-12, #216
    and #217.)*
-10. Smart playlists, jukebox, podcasts: real projects.
+10. Smart playlists, jukebox, podcasts: real projects. *(Smart playlists and
+    podcasts done on 2026-10-25, #333; jukebox still open.)*
 
 ## 5. The split into pull requests
 

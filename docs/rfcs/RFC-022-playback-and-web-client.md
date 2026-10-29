@@ -201,7 +201,7 @@ already learns it.
 - **The frozen contract.** This changes observable behaviour on `/rest`: a
   request answered error 10 now answers audio. No client validated against the
   contract can depend on that error — it is a refusal to play — and
-  `docs/subsonic-compatibility.md` records the change beside the others.
+  `docs/compatibility/subsonic-compatibility.md` records the change beside the others.
 
 ## Decision 7 — the form body holds the largest playlist
 

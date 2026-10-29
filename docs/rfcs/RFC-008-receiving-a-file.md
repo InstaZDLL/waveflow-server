@@ -32,7 +32,7 @@ follows from that sentence.
 Two locks, and they answer two different questions.
 
 The role says **who**: `Owner` or `Manager`, the same pair as
-[`may_scan`](../../src/database.rs) and as metadata correction, because a member
+[`may_scan`](../../src/storage/database/libraries.rs) and as metadata correction, because a member
 who can already spend the owner's disk on a rescan is the same level of trust.
 
 A `library.accepts_uploads` flag, false by default, says **where**. An existing

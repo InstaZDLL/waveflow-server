@@ -658,7 +658,7 @@ ever specified.
   (decision 5). The transcode semaphores are not shared.
 - **`src/services/attention.rs`**: the `probable_fake_lossless` category.
 - **`src/config.rs`**: `WAVEFLOW_QUALITY_PARALLELISM`.
-- **The Subsonic façade**: nothing. `docs/subsonic-compatibility.md` needs no
+- **The Subsonic façade**: nothing. `docs/compatibility/subsonic-compatibility.md` needs no
   row.
 - **The desktop app** (`InstaZDLL/WaveFlow`): nothing. Its own analysis keeps
   running on its own copies. Reading a server's verdicts is its own change,

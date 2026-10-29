@@ -97,7 +97,7 @@ value. A dedicated table makes the row's existence the fact itself.
 ## Decision 3 — the ticket says what it opens
 
 `<video src>` cannot carry an `Authorization` header. That is the problem
-[`src/stream_ticket.rs`](../../src/stream_ticket.rs) already solved for audio,
+[`src/auth/stream_ticket/`](../../src/auth/stream_ticket/mod.rs) already solved for audio,
 and it has to be solved a second time without writing a second module.
 
 The ticket's payload is fixed today at 40 bytes,

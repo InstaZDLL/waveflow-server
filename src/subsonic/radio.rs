@@ -7,7 +7,7 @@
 //! makes that container mean what it says.
 //!
 //! **Two deliberate deviations from the reference server**, both recorded in
-//! `docs/subsonic-compatibility.md`:
+//! `docs/compatibility/subsonic-compatibility.md`:
 //!
 //! 1. The list is **per account**, not global. The reference server keeps one
 //!    list and lets only the administrator change it; WaveFlow has no global

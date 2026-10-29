@@ -8,10 +8,25 @@
 > not from memory.
 >
 > No code was modified during this survey.
+>
+> **Status as of 2026-10-29, `main` at `4ccf395`:** the four batches are
+> delivered, batch C included, and of Navidrome's five server gaps four are
+> closed — smart playlists by #333 on 2026-10-25. Still open: jukebox,
+> per-account transcoding profiles, a third language, a screen for
+> `GET /transcode/status`, and any use of the library event stream by the web
+> client.
 
 ## What was found
 
 **The server declares 63 paths under `/api/v2`. The web client calls 26.**
+
+> **State on 2026-10-29, counted the same way.** The server declares **124**
+> distinct `/api/v2` path templates in `#[utoipa::path]` annotations, now under
+> `src/api/` and `src/media/`. The web client names **105** distinct ones: the
+> `/api/v2/…` string literals in the non-test sources under `webapp/src/`,
+> comments excluded, each `${…}` read as one parameter and query strings
+> removed. The two figures are not a match path for path; they say the gap of
+> this section is no longer the governing fact.
 
 That is the fact which governs this whole document. What the interface is
 missing is mostly not to be built: it is to be wired up. Of the fifteen families
@@ -62,8 +77,8 @@ the same day.
 
 | | State in WaveFlow |
 | --- | --- |
-| **Smart playlists** (dynamic, iTunes style) | nothing |
-| **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/ui-and-missing-features-plan.md` |
+| **Smart playlists** (dynamic, iTunes style) | **done on 2026-10-25** (#333, RFC-025), server, Subsonic and screen |
+| **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/plans/ui-and-missing-features-plan.md` |
 | **External scrobbling** — Last.fm, ListenBrainz, Maloja | done, RFC-010; server and screen, see point 15 |
 | **Internet radio** | **done on 2026-10-12** (#217), one list per account, the four Subsonic methods, `/api/v2/radio-stations` and a page |
 | **Jukebox mode** | `jukeboxRole` is declared `false` (`src/subsonic/nodes.rs:319`) |
@@ -72,6 +87,11 @@ Two gaps of degree come on top. Navidrome's **transcoding** is configured per
 user and per player; WaveFlow has only concurrency ceilings,
 `WAVEFLOW_TRANSCODE_GLOBAL_LIMIT` and `..._PER_USER_LIMIT`, with no per-account
 format or bitrate profile. And **translation**: 34 languages against two.
+
+> **State on 2026-10-29.** Of the "two still not begun" above, smart playlists
+> are done (#333); **jukebox is the one left**, still declared `false`. Both
+> gaps of degree are **still open**: no per-account transcoding profile, and
+> the client still carries English and French only (`webapp/src/state/i18n/`).
 
 ### What Navidrome does, the server already knows how to do, and the screen ignores
 
@@ -92,17 +112,23 @@ This is the bulk of the gap, and it costs client work only.
 | API tokens | `GET`/`POST /admin/users/{u}/tokens`, `DELETE .../{id}` |
 | Transcoding state | `GET /transcode/status` |
 
+> **State on 2026-10-29.** Every row is wired except the last: **nothing under
+> `webapp/src/` calls `GET /transcode/status`**, so the transcoding state still
+> has no screen. Member management also gained the list route it lacked,
+> `GET /libraries/{id}/members` (`d4cbb27`, 2026-09-10), and API tokens are now
+> an account's own through `/api/v2/api-tokens` (#247, 2026-10-11).
+
 ### What WaveFlow does and Navidrome does not
 
 The gap is not one-way, and these four have no screen either.
 
-- **Receiving a file** — [RFC-008](rfcs/RFC-008-receiving-a-file.md), fragmented
+- **Receiving a file** — [RFC-008](../rfcs/RFC-008-receiving-a-file.md), fragmented
   negotiation, quota, commit. `POST /libraries/{id}/uploads` and the session
   routes.
-- **The per-track canvas** — [RFC-009](rfcs/RFC-009-track-canvas.md), six
+- **The per-track canvas** — [RFC-009](../rfcs/RFC-009-track-canvas.md), six
   routes.
 - **The library event stream** —
-  [RFC-007](rfcs/RFC-007-library-event-stream.md), with the originating device,
+  [RFC-007](../rfcs/RFC-007-library-event-stream.md), with the originating device,
   retention and acknowledgement.
 - **A tag correction that survives a rescan** — `PATCH /tracks/{id}`, backed by
   `track_override`.
@@ -110,6 +136,11 @@ The gap is not one-way, and these four have no screen either.
 A fifth, invisible but structural: album and artist identifiers are **derived**
 from the tags (`src/pid.rs`, UUID v8), hence stable from one installation to the
 next.
+
+> **State on 2026-10-29.** Three of the four have a screen since batch D
+> (2026-09-11): tag correction, upload and canvas. **The library event stream
+> still has none**: no file under `webapp/src/` calls
+> `/libraries/{id}/events` or `/sync/*`.
 
 ### What is not a goal
 
@@ -179,7 +210,7 @@ Heavier, because the interaction has to be designed as much as called.
     an RFC before any code.
 
     > **The RFC has existed since 2026-09-13**:
-    > [RFC-010](rfcs/RFC-010-external-scrobbling.md). It settles the attachment
+    > [RFC-010](../rfcs/RFC-010-external-scrobbling.md). It settles the attachment
     > point, the durable queue that freezes what was listened to, what is not
     > queued, the two tiers of credentials, the atomicity boundary — a
     > transactional queue is atomic with ours, never with a third party — and
@@ -205,7 +236,7 @@ Heavier, because the interaction has to be designed as much as called.
     >   unreachable.
     >
     > The "External scrobbling" section of the
-    > [API guide](api-v2-guide.md#external-scrobbling) describes all four.
+    > [API guide](../guides/api-v2-guide.md#external-scrobbling) describes all four.
     >
     > **The four are done, on 2026-09-14** by
     > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), in
@@ -416,6 +447,12 @@ progress, now playing, members, tokens. **Plus the library selector**, left over
 from batch B, now decided and therefore writable: one active library, hidden if
 there is only one, remembered from one visit to the next.
 
+> **State on 2026-10-29: batch C was delivered on 2026-09-07** — the player's
+> modes, volume and way back (`9083688`), scan progress, now playing and API
+> tokens (`f70a69a`), the active library (`18ca7d2`) — and members once their
+> list route existed (`d4cbb27`, 2026-09-10). The transcoding state was not
+> part of it and still has no screen.
+
 **Batch D — the recent surfaces.** Tag correction, then upload, then canvas. In
 that order: the upload is a machine, and the canvas assumes batch C's player
 exists.
@@ -459,7 +496,7 @@ exists.
 External scrobbling fits in no batch. It needs an RFC.
 
 > **It got one, and it is closed — 2026-09-14.**
-> [RFC-010](rfcs/RFC-010-external-scrobbling.md), written on 2026-09-13 and
+> [RFC-010](../rfcs/RFC-010-external-scrobbling.md), written on 2026-09-13 and
 > implemented the next day on the server, then on the screen the same day. So it
 > never joined a batch: it followed its own path, from the decision to the
 > button.
@@ -585,6 +622,11 @@ Nothing in this plan touches the Subsonic facade, frozen for `v2.0-beta`, nor
 does it come before this version's one remaining lock: replaying Symfonium,
 Feishin and DSub against the current model, as Juliet was on 2026-08-31. The web
 client is not on that critical path.
+
+> **State on 2026-10-29.** That lock is gone: all four clients, Juliet
+> included, were replayed on 2026-09-16 and `v2.0.0-beta.1` was tagged the same day. A third campaign ran
+> on 2026-10-27 and 2026-10-28, and its fixes, #367 to #377, include one
+> deliberate change to the frozen contract, for DSub alone (#374).
 
 ## What is still open
 

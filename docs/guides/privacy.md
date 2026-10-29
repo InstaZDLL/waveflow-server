@@ -105,7 +105,7 @@ scores; image files, under `artwork/` in the data directory by content hash.
 ## Lyrics: LRCLIB
 
 **Off by default.** On only when `WAVEFLOW_LYRICS_PROVIDERS` names `lrclib`
-([RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md)). It is a separate switch
+([RFC-024](../rfcs/RFC-024-lyrics-stats-and-mixes.md)). It is a separate switch
 from `WAVEFLOW_METADATA_PROVIDERS`, and naming a metadata provider does not turn
 it on. With the list empty the lookup is never built.
 
@@ -190,7 +190,7 @@ application, with a callback to `WAVEFLOW_PUBLIC_URL`; the server then calls
 ## Podcasts: the feeds an administrator subscribes to
 
 **Off by default.** On only with `WAVEFLOW_PODCASTS=on`
-([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)). Off, no feed is
+([RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md)). Off, no feed is
 fetched and no episode is downloaded, whatever is stored.
 
 **Which hosts.** The ones an administrator names: the feed address they
@@ -237,7 +237,7 @@ the log.
 ## Podcast covers and station images
 
 **On by default; `WAVEFLOW_REMOTE_ARTWORK=off` stops both**
-([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md), amended). Off, the
+([RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md), amended). Off, the
 addresses are still stored and nothing is fetched; images already fetched stay
 shown.
 

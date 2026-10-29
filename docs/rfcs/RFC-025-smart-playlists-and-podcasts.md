@@ -4,7 +4,10 @@
 - **Implemented by**: [#333](https://github.com/InstaZDLL/waveflow-server/pull/333)
   (this RFC and its implementation, together), and
   [#342](https://github.com/InstaZDLL/waveflow-server/pull/342) (the amendment
-  on artwork for podcasts and radio stations). The *Status* field above never
+  on artwork for podcasts and radio stations), and
+  [#345](https://github.com/InstaZDLL/waveflow-server/pull/345) (a channel lists
+  its newest 500 episodes plus any stored past that, and an https address may
+  never redirect to http). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -436,7 +439,7 @@ default), `getPodcastEpisode` (OpenSubsonic), `refreshPodcasts`,
   arrays at any length, from their first answer.
 - `podcastRole` is reported by decision 8. **This is a wire change**: it was
   always `false`, and is now `true` for an administrator of a server with the
-  switch on. Recorded in `docs/subsonic-compatibility.md`.
+  switch on. Recorded in `docs/compatibility/subsonic-compatibility.md`.
 - No OpenSubsonic extension is advertised for it; none is defined.
 
 ## Decision 13 — progress is a bookmark
@@ -590,7 +593,7 @@ when it is off: the addresses are still stored, nothing is fetched, and images
 already stored stay shown. On by default because nothing here happens on its
 own: a cover only while `WAVEFLOW_PODCASTS` — off by default — is on, and a
 station image only when an account sets one. That makes a station image the
-one request a server at its defaults can be asked to make; `docs/privacy.md`
+one request a server at its defaults can be asked to make; `docs/guides/privacy.md`
 says so.
 
 **A7 — the sweep.** `sweep_artwork_store` counts `podcast_channel.artwork_hash`

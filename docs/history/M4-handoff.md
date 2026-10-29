@@ -8,7 +8,7 @@
 > The decision is stated here so that the language reads as a choice and not
 > as an oversight; reversing it costs one translation and no risk. See the
 > "In the documentation" section of
-> [`ui-and-missing-features-plan.md`](ui-and-missing-features-plan.md).
+> [`ui-and-missing-features-plan.md`](../plans/ui-and-missing-features-plan.md).
 
 > Note de suivi mise à jour le 2026-08-18. **Le plan M0 à M6 est fermé** : le
 > serveur, la façade Subsonic, l'intégration WaveFlow Desktop, la réconciliation
@@ -16,7 +16,7 @@
 > Le socle est fusionné en `14aec76`, son complément en `6716df9` (PR #94), et
 > le contrat consommé par Desktop inclut désormais les artistes de piste et les
 > paroles. Voir
-> [`desktop-v2-integration-gap.md`](desktop-v2-integration-gap.md).
+> [`desktop-v2-integration-gap.md`](../analyses/desktop-v2-integration-gap.md).
 >
 > Ce document décrit ce qui est fait, les décisions non évidentes à ne pas
 > défaire, et ce qui reste. Aucun tag de release ne doit être créé sans demande
@@ -154,7 +154,7 @@ migrations PostgreSQL et 21 fichiers de tests. Tout était déjà mort (non déc
 dans `lib.rs` / `Cargo.toml`).
 
 **Synchronisation des données utilisateur** (`src/sync.rs`), spécifiée par
-[RFC-003](rfcs/RFC-003-waveflow-sync-v2.md). Le serveur reste l'autorité du
+[RFC-003](../rfcs/RFC-003-waveflow-sync-v2.md). Le serveur reste l'autorité du
 catalogue ; le protocole ne synchronise que l'état possédé par le compte —
 playlists, favoris, notes, historique, file d'attente et partages. Il n'importe
 jamais une piste serveur dans le catalogue local et ne devine jamais une

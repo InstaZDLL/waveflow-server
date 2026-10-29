@@ -3,7 +3,9 @@
 - **Status**: Proposed
 - **Implemented by**: [#334](https://github.com/InstaZDLL/waveflow-server/pull/334)
   (this RFC, LRCLIB lyrics, statistics, mixes, the local similar-songs
-  fallback, and the web client's statistics page and shelf). The *Status*
+  fallback, and the web client's statistics page and shelf), then
+  [#336](https://github.com/InstaZDLL/waveflow-server/pull/336) (artwork in the
+  statistics lists, client only). The *Status*
   field above never flips in this project; this line is the one that says
   what is running.
 - **Date**: 2026-10-25
@@ -310,7 +312,7 @@ provider configured, both methods answered an empty container for any id;
 they now answer tracks. Filling a container the specification defines is
 meeting it, not deviating from it — the argument RFC-011 decision 10 made for
 the same two methods — and a client that calls them wants songs. The
-compatibility matrix in `docs/subsonic-compatibility.md` records the change
+compatibility matrix in `docs/compatibility/subsonic-compatibility.md` records the change
 and names it among the things to re-check in the next campaign.
 
 ## What this RFC changes elsewhere
@@ -318,12 +320,12 @@ and names it among the things to re-check in the next campaign.
 - **RFC-002** — the sentence saying both similar-songs methods answer the
   empty container with no provider configured stops being true; this RFC is
   where that is said.
-- **`docs/privacy.md`** — a section for LRCLIB: what is sent, when, and the
+- **`docs/guides/privacy.md`** — a section for LRCLIB: what is sent, when, and the
   variable that turns it off.
-- **`docs/operations.md`** — switching LRCLIB on.
-- **`docs/subsonic-compatibility.md`** — the lyrics methods (unchanged by
+- **`docs/guides/operations.md`** — switching LRCLIB on.
+- **`docs/compatibility/subsonic-compatibility.md`** — the lyrics methods (unchanged by
   default) and the similar-songs methods (changed by default).
-- **`docs/api-v2-guide.md`** — the statistics, mixes and similar-songs routes.
+- **`docs/guides/api-v2-guide.md`** — the statistics, mixes and similar-songs routes.
 
 ## What is still open
 

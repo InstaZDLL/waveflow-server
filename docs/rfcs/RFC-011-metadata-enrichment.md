@@ -1,15 +1,17 @@
 # RFC-011 — Server-side metadata enrichment
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of
-  [the implementation plan](../metadata-enrichment-plan.md):
+- **Implemented by**: in the order of
+  [the implementation plan](../plans/metadata-enrichment-plan.md):
   InstaZDLL/WaveFlow#855 (the core's clients accept a client, an address and a
   key), #270 (the pin moved onto them), #271 (the cache and the engine that
   fills it), #272 (`getArtistInfo`, `getArtistInfo2` and the native artist
   page read it), #273 and #274 (`getSimilarSongs` and `getSimilarSongs2` draw
-  from it), #275 (portraits from Deezer), and the pull request closing #269
-  (the web client's artist page, and `enrichment.image` on the native API,
-  which #275 had left out). The compatibility campaign is still to come. The
+  from it), #275 (portraits from Deezer), and #276, which closed #269 (the web
+  client's artist page, and `enrichment.image` on the native API, which #275
+  had left out). The compatibility campaign of 2026-10-27/28 exercised
+  `getSimilarSongs`, `getSimilarSongs2` and `getArtistInfo2` (see
+  [the compatibility matrix](../compatibility/subsonic-compatibility.md)). The
   *Status* field
   above never flips in this project; this line is the one that says what is
   running.
@@ -480,7 +482,7 @@ them empty.
 
 **The compatibility matrix must be re-run before the next tag**, as with the
 four accepted deviations already listed in RFC-002.
-`docs/subsonic-compatibility.md` names the clients that call these methods; a
+`docs/compatibility/subsonic-compatibility.md` names the clients that call these methods; a
 container that was always empty is the kind of thing a client parses loosely
 until the day it stops being empty.
 
@@ -543,9 +545,9 @@ anything ever needs it.
   above is that day; RFC-007 gains an artist event rather than being
   contradicted. Nothing else in it moves: the two streams, the membership
   check on read and the bounds are untouched.
-- **`docs/subsonic-compatibility.md`** and **`docs/subsonic-api-guide.md`** —
+- **`docs/compatibility/subsonic-compatibility.md`** and **`docs/guides/subsonic-api-guide.md`** —
   the rows for the six methods, and a note saying when they were last measured.
-- **`docs/operations.md`** — a section on switching enrichment on: which key,
+- **`docs/guides/operations.md`** — a section on switching enrichment on: which key,
   which provider, what the server starts contacting, and what it stores.
 - **`CLAUDE.md`** — the "one axum binary" claim is **unaffected**, which is
   decision 2's doing and worth recording as such.

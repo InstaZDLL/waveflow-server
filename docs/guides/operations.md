@@ -6,11 +6,17 @@ one path whose query string must not reach a reverse proxy's access log. What
 the server sends to other hosts, and how to stop it, is in
 [privacy](privacy.md).
 
+This guide covers the settings an operator usually changes, not all of them.
+The core ones — bind address, data directory, database pool, token lifetimes,
+scanning, transcoding and scrobbling — are listed with their defaults in
+[`.env.example`](../../.env.example) at the root of the repository; every
+setting is documented on its field of `Config`, in `src/config/`.
+
 ## The first account needs the setup token
 
 Until an account exists, whoever creates the first one becomes the
 administrator. So the setup screen, and `POST /api/v2/setup`, also ask for a
-one-time **setup token** ([RFC-019](rfcs/RFC-019-exposure-hardening.md)):
+one-time **setup token** ([RFC-019](../rfcs/RFC-019-exposure-hardening.md)):
 
 - by default the server draws one at boot and writes it to `setup-token` in
   the data directory. On Unix the file is readable by its owner only; on other
@@ -222,7 +228,7 @@ that, the next attempt from that address is refused without being checked
 (`429` with `Retry-After: 60`, or Subsonic's error 40) until the minute has aged
 out. Another address keeps its own budget, so a stranger guessing at an account
 never locks its owner out. API keys are not throttled: they are random 256-bit
-secrets. [RFC-017](rfcs/RFC-017-sign-in-hardening.md) carries the reasoning.
+secrets. [RFC-017](../rfcs/RFC-017-sign-in-hardening.md) carries the reasoning.
 
 Behind a reverse proxy, name it in `WAVEFLOW_TRUSTED_PROXIES` so the server reads
 the real client from `X-Forwarded-For`. **List only a proxy that appends the
@@ -251,14 +257,14 @@ media from any `http:` or `https:` host, because internet radio is played
 straight from the station. `/rest` carries none of these headers.
 
 Every tunable is a field on `Config` in
-[`src/config/mod.rs`](../src/config/mod.rs), with its environment variable documented on
+[`src/config/mod.rs`](../../src/config/mod.rs), with its environment variable documented on
 it. That file is the authority; this page is not a copy of it.
 
 ## Switching metadata enrichment on
 
 **Off by default, and an upgrade leaves it off.** A server that has not been
 told otherwise makes no request to any metadata provider.
-[RFC-011](rfcs/RFC-011-metadata-enrichment.md) carries the reasoning.
+[RFC-011](../rfcs/RFC-011-metadata-enrichment.md) carries the reasoning.
 
 ```bash
 WAVEFLOW_METADATA_PROVIDERS=lastfm
@@ -329,7 +335,7 @@ it switched on, a track that has no lyrics of its own — no embedded lyrics, no
 `.lrc` or `.txt` beside the file, no uploaded sheet — is looked up the first
 time somebody asks for its lyrics. Lyrics from the files and uploads always win;
 LRCLIB only fills an empty answer.
-[RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md) carries the reasoning.
+[RFC-024](../rfcs/RFC-024-lyrics-stats-and-mixes.md) carries the reasoning.
 
 ```bash
 WAVEFLOW_LYRICS_PROVIDERS=lrclib
@@ -373,7 +379,7 @@ URL, which carries the title and the artist.
 ## Switching podcasts on
 
 **Off by default, and an upgrade leaves it off.**
-[RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md) carries the reasoning;
+[RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md) carries the reasoning;
 [privacy](privacy.md) says exactly what is fetched and when.
 
 ```bash
@@ -417,7 +423,7 @@ address; other accounts see at most its scheme and host.
 image an account gives one of its radio stations, into the artwork store
 (`artwork/` in the data directory), so the web client and Subsonic clients
 show them as they show album covers — the browser never loads them from
-their own host. [RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)
+their own host. [RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md)
 carries the decisions; [privacy](privacy.md) says what is fetched and when.
 
 | Variable | Default | What it does |
@@ -453,7 +459,7 @@ the ones the catalogue holds, with its `.lrc` and `.txt` lyrics sidecars
 unchanged too, is skipped from a `stat` alone, without being opened, so a
 rescan of an unchanged library costs a directory walk and not a read of every
 byte. The first scan after upgrading to this version reads every file once, to
-record what the next ones compare. [RFC-018](rfcs/RFC-018-incremental-scan.md)
+record what the next ones compare. [RFC-018](../rfcs/RFC-018-incremental-scan.md)
 carries the reasoning.
 
 A file rewritten in place with both its size and its modification time kept is
@@ -471,7 +477,7 @@ the scan goes on. The tracks under it are left as they are, not marked missing,
 so a folder that is briefly unreadable does not make its albums vanish and come
 back. Only the library root itself failing to open fails the scan.
 
-[RFC-021](rfcs/RFC-021-library-lifecycle-and-scan.md) carries the reasoning
+[RFC-021](../rfcs/RFC-021-library-lifecycle-and-scan.md) carries the reasoning
 for everything below.
 
 ### What a scan leaves out
@@ -559,8 +565,12 @@ files' folder as a library of its own.
 
 A track whose file is gone stays in the catalogue, unavailable, with its
 favourites, playlist entries and plays, so a share that comes back brings it
-back whole. Owners and managers see them on the **Missing files** page, which
-says for each what a purge would take; the CLI lists them too:
+back whole. Until then it is out of every listing and search, and refuses a new
+favourite, rating, bookmark or play (Subsonic error 70, `404` natively); a
+queue saved with it is saved without it. An album whose files all went
+disappears the same way, and comes back with them under the same identifier.
+Owners and managers see the missing tracks on the **Missing files** page,
+which says for each what a purge would take; the CLI lists them too:
 
 ```bash
 waveflow-server library unavailable --actor admin --library-id <uuid>
@@ -641,6 +651,28 @@ inotify watch limit; raise it with `sysctl fs.inotify.max_user_watches=524288`
 (and in `/etc/sysctl.d/` to keep it), or the library falls back to the periodic
 scan.
 
+## Receiving files
+
+A library takes no uploaded file until an administrator opens it:
+
+```bash
+waveflow-server library set-uploads --actor admin --library-id <uuid> --accept
+```
+
+Run it without `--accept` to close the library again. Once it is open, its
+owners and managers may upload to it. These limits apply to every library:
+
+| Variable | Default | What it bounds |
+| --- | --- | --- |
+| `WAVEFLOW_UPLOAD_MAX_FILE_BYTES` | 1073741824 | The largest single file; may not exceed the quota |
+| `WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES` | 53687091200 | What received files may occupy in one library, open sessions included |
+| `WAVEFLOW_UPLOAD_CHUNK_BYTES` | 4194304 | The fragment size clients are told to send; may not exceed the largest file |
+| `WAVEFLOW_UPLOAD_BATCH_LIMIT` | 200 | How many files one negotiation may offer |
+| `WAVEFLOW_UPLOAD_SESSIONS_PER_USER` | 4 | Sessions one account may hold open at once, across libraries |
+| `WAVEFLOW_UPLOAD_SESSION_TTL_SECS` | 86400 | How long an untouched session survives |
+
+A combination the rules above refuse stops the server at boot.
+
 ## Levelling a Subsonic transcode
 
 Most Subsonic clients apply ReplayGain themselves. For those that cannot, set
@@ -658,10 +690,12 @@ collects every `<artist>` element in an answer, including those nested inside a
 track's credits, and then shows a composer as a starred artist. The clients
 named in **`WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`** are answered in plain Subsonic
 1.16.1 instead, without credits, artist arrays, ReplayGain or any other
-OpenSubsonic field. Give client names separated by commas, as the client sends
-them in its `c` parameter; the comparison is exact, case included. The default
-is `DSub`, as in Navidrome. Set it empty to answer every client in full, or
-add a client that shows the same kind of confusion.
+OpenSubsonic field, and their XML is sent as `text/xml` rather than
+`application/xml`, errors included: DSub recognises an error in place of a
+stream only by that type. Give client names separated by commas, as the
+client sends them in its `c` parameter; the comparison is exact, case included.
+The default is `DSub`, as in Navidrome. Set it empty to answer every client in
+full, or add a client that shows the same kind of confusion.
 
 ## Offline listening in the web client
 
