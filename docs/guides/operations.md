@@ -50,6 +50,14 @@ stores a non-secret fingerprint of the key, so a mismatched pair is rejected at
 startup rather than after it has replaced your data. Restore runs before SQLite
 is opened, and moves the previous pair into a timestamped recovery directory.
 
+The pair is the catalogue and every account's data, but not every byte the
+server keeps. Beside it in the data directory, `artwork_dir` holds the artist
+portraits and banners that were chosen or downloaded, the canvas store the
+canvases sent to the server, and `podcasts/` the episodes an administrator
+downloaded: none of them can be extracted again from your files. Back up the
+whole data directory, with the pair taken by `database backup`, if you want
+them back after a restore.
+
 ### A copy before every upgrade
 
 When a new version has migrations to apply, the boot first copies the database

@@ -59,7 +59,7 @@
 <table>
   <tr>
     <td>📦&nbsp;<b>Up in a minute</b></td>
-    <td>One container, on a server, a NAS or a Raspberry Pi 4 or 5. The catalogue lives in a single SQLite file: back up two files and you have backed up everything.</td>
+    <td>One container, on a server, a NAS or a Raspberry Pi 4 or 5. The catalogue lives in a single SQLite file, kept with its key: back up the two together, with the artwork, canvas and podcast folders beside them, as the <a href="docs/guides/operations.md#back-up-two-files-together">operations guide</a> explains.</td>
   </tr>
   <tr>
     <td>📱&nbsp;<b>Your apps already work</b></td>
