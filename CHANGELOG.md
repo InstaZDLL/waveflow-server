@@ -115,6 +115,9 @@ The first stable release: 331 commits since `2.0.0-beta.1`.
   other defects the restructuring reviews found.
 - **A track listed twice in a playlist keeps two rows**, each with its own
   rating (#279).
+- **rustls 0.23.46**, for GHSA-c8m5-c952-6cm4, GHSA-w44r-93j7-qv28,
+  GHSA-h2v8-394m-p7vv and GHSA-vp88-798v-h67f. rustls only carries the
+  server's outbound requests, through reqwest; the server terminates no TLS.
 
 ### Verified for this release
 
