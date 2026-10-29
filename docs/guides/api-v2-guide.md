@@ -224,8 +224,10 @@ distinguishing permission error.
 
 A track whose file is gone, and an album whose files all went, are treated the
 same way: `GET /api/v2/tracks/{track_id}` or `GET /api/v2/albums/{album_id}`
-answers `404`, and they leave every listing and search until the files come
-back.
+answers `404`, and they leave every catalogue listing and search until the files
+come back. The account's own data about them is not a catalogue listing:
+`GET /api/v2/favorites` and `GET /api/v2/ratings` keep their ids, so a client
+should not drop a local favourite or rating because the item went missing.
 
 ```bash
 # Visible libraries
@@ -957,7 +959,10 @@ What was written before stays, and comes back with the files under the same
 identifier, so `GET /api/v2/favorites` and `GET /api/v2/ratings` keep listing
 it. `PUT /api/v2/queue` is the exception: it saves the queue without the
 tracks that went, and drops the current track and its position if it is one
-of them. An id that was never a track is still `404`.
+of them. An id that was never a track is still `404`. A replay is not a new
+write: the same mutation sent again with the `X-WaveFlow-Operation-Id` of one
+that succeeded before the files went answers as that one did, since the
+replay is recognised before availability is checked.
 
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
 idempotent replay. Later list, snapshot and update responses omit it; only its
