@@ -1,6 +1,7 @@
 import { Link, Outlet } from "@tanstack/react-router";
 
 import { currentUser } from "../../api";
+import { SourceOffer } from "../../components/layout/source-offer";
 import { type TranslationKey, useI18n } from "../../state/i18n";
 import { mayUploadTo, useLibraryScope } from "../../state/library-scope";
 
@@ -78,12 +79,16 @@ export function SettingsSections() {
   );
 }
 
-/** The frame every section is drawn in: the menu, then the section. */
+/**
+ * The frame every section is drawn in: the menu, the section, then the
+ * server's offer of its own source, which every section shares.
+ */
 export function SettingsHub() {
   return (
     <>
       <SettingsSections />
       <Outlet />
+      <SourceOffer />
     </>
   );
 }

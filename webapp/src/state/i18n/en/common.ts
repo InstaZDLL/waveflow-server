@@ -20,4 +20,6 @@ export const common = {
   "card.queue": "Add to queue",
   "rating.label": "Rating",
   "rating.stars": { one: "{count} star", other: "{count} stars" },
+  "source.offer": "WaveFlow Server {version} is free software (AGPL-3.0).",
+  "source.link": "Source code",
 } as const;

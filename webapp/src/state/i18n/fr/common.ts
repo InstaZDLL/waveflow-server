@@ -23,4 +23,6 @@ export const common: Record<keyof typeof en, TranslationValue> = {
   "card.queue": "Mettre en file",
   "rating.label": "Note",
   "rating.stars": { one: "{count} étoile", other: "{count} étoiles" },
+  "source.offer": "WaveFlow Server {version} est un logiciel libre (AGPL-3.0).",
+  "source.link": "Code source",
 };

@@ -169,11 +169,22 @@ a dependency taken from anywhere less durable — a second git dependency, a
 private registry — has its source attached to the release instead.
 
 §13 asks more of a network service: the server must offer its source to the
-people who use it remotely, and **it does not today** — no page links to it,
-and the OpenAPI document names the licence without a URL. The laptop-mode pull
-request, or one before it, adds that link to the web client and to the
-OpenAPI document, leading to this complete offer for the version that is
-running, not to the repository's current `main`.
+people who use it remotely. **It does, since the pull request that closed this
+gap.** `/health` reports `source`, the repository at the tag `v<version>` of
+the running binary, never `main`; the web client links to it under the sign-in
+form, which every remote user reaches, and under every section of Settings;
+and the OpenAPI document carries the licence's URL at that tag and the same
+address as its `externalDocs`. The address is built once, in
+`src/app/source.rs`, from the manifest's `repository` and `version`, so a
+modified build that names its own repository in `Cargo.toml` offers its own
+source everywhere at once. The tag is the entry to the complete offer above:
+its archive carries `Cargo.lock` and the `waveflow-core` revision.
+
+One limit remains: a build from an untagged commit between two releases
+reports the version of the last release and links to that tag, which is not
+the source it runs. Releases are what get distributed, so the offer holds for
+everything shipped; naming the commit as well would need the build to record
+it.
 
 ## 4. How the server finds FFmpeg — built with this plan
 

@@ -7,7 +7,7 @@ import {
   expectNoWcagViolations,
 } from "./fixtures/accessibility";
 import { resetAndMockApi } from "./fixtures/api";
-import { library, session } from "./fixtures/catalogue";
+import { library, serverIdentity, session } from "./fixtures/catalogue";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -478,4 +478,29 @@ test("keeps settings and the sign-in screen readable in the light", async ({
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
   await expectNoWcagViolations(page);
+});
+
+/**
+ * The server offers its own source to whoever uses it (AGPL-3.0 §13), signed
+ * in or not, and the link is the one the server reports — the tag of the
+ * version running — rather than an address the page made up.
+ */
+test("links to the source of the running version, signed in or not", async ({
+  page,
+}) => {
+  await page.goto("/settings/playback");
+  const link = page.getByRole("link", { name: "Source code" });
+  await expect(link).toHaveAttribute("href", serverIdentity.source);
+  await expect(page.getByText("WaveFlow Server 2.0.0-e2e")).toBeVisible();
+
+  await page.context().clearCookies();
+  await page.route("**/api/v2/**", (route) =>
+    route.fulfill({ status: 401, json: { error: "unauthorized" } }),
+  );
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Source code" })).toHaveAttribute(
+    "href",
+    serverIdentity.source,
+  );
 });

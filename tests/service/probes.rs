@@ -197,6 +197,50 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
     );
 }
 
+/// The server offers its own source to whoever uses it (AGPL-3.0 §13), and the
+/// source it offers is the one it runs: the tag of this version, not `main`.
+///
+/// `/health` is what the web client reads to draw the link, before anyone has
+/// signed in; the OpenAPI document carries the same offer for a generated
+/// client. The addresses are written out here rather than read from the
+/// constant that builds them, so a link that drifted to another repository or
+/// to a branch fails this rather than agreeing with itself.
+#[tokio::test]
+async fn the_server_offers_the_source_of_the_running_version() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state);
+    let version = env!("CARGO_PKG_VERSION");
+    let source = format!("https://github.com/InstaZDLL/waveflow-server/tree/v{version}");
+
+    let health = router
+        .clone()
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    let health = json_body(health).await;
+    assert_eq!(health["version"], version);
+    assert_eq!(health["source"], source);
+
+    let openapi = router
+        .oneshot(Request::get("/openapi.json").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let document = json_body(openapi).await;
+    assert_eq!(document["info"]["license"]["name"], "AGPL-3.0-only");
+    assert_eq!(
+        document["info"]["license"]["url"],
+        format!("https://github.com/InstaZDLL/waveflow-server/blob/v{version}/LICENSE")
+    );
+    assert_eq!(document["externalDocs"]["url"], source);
+    assert!(
+        document["components"]["schemas"]["ProbeResponse"]["required"]
+            .as_array()
+            .is_some_and(|required| required.iter().any(|field| field == "source")),
+        "the probe's schema must document the source it reports"
+    );
+}
+
 /// A request is named by this server, whatever the caller proposed.
 ///
 /// The name goes in every `http_request` span, and `CLAUDE.md` allows no header

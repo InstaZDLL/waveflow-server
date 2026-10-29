@@ -15,6 +15,8 @@ export default defineConfig({
     // so same-origin calls keep working without a CORS allow-list.
     proxy: {
       "/api": "http://127.0.0.1:4533",
+      // The probe the source offer is read from (AGPL-3.0 §13).
+      "/health": "http://127.0.0.1:4533",
       // The share address answers the page to a browser and the share to the
       // page (RFC-020): in development the page is Vite's to serve, and only
       // the JSON request goes through to the server.

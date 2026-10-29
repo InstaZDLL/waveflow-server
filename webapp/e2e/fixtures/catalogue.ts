@@ -6,6 +6,14 @@ export const session = {
   device_id: "device-1",
 };
 
+/** What `/health` answers: the version, and the source it offers. */
+export const serverIdentity = {
+  status: "ok",
+  version: "2.0.0-e2e",
+  schema: 2,
+  source: "https://github.com/InstaZDLL/waveflow-server/tree/v2.0.0-e2e",
+};
+
 export const albums = [
   {
     id: "album-1",

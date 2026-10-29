@@ -9,6 +9,7 @@ import {
   safeInternalPath,
   setupRequired,
 } from "../../api";
+import { SourceOffer } from "../../components/layout/source-offer";
 import { keptSongs, offlineSupported } from "../../lib/offline";
 import { useI18n } from "../../state/i18n";
 
@@ -149,6 +150,7 @@ export function LoginPage() {
         </form>
       </div>
       <OfflineLink />
+      <SourceOffer />
     </main>
   );
 }

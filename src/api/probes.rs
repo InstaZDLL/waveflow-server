@@ -9,6 +9,10 @@ pub struct ProbeResponse {
     pub status: &'static str,
     pub version: &'static str,
     pub schema: u8,
+    /// The source of this version: the repository at the tag `v<version>`,
+    /// offered to every network user as AGPL-3.0 §13 requires. Public like
+    /// the probe, so the sign-in page can link to it before anyone signs in.
+    pub source: &'static str,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -28,6 +32,7 @@ pub async fn health() -> Json<ProbeResponse> {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
         schema: 2,
+        source: crate::app::SOURCE_URL,
     })
 }
 
