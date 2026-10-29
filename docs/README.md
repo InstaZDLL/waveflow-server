@@ -61,6 +61,7 @@ revision of its survey, and a status line saying what has happened since.
 |---|---|
 | [Metadata enrichment plan](plans/metadata-enrichment-plan.md) | The order in which RFC-011 was built, step by step |
 | [Interface and missing features plan](plans/ui-and-missing-features-plan.md) | The interface requests and the features still missing, as issues |
+| [Standalone download plan](plans/standalone-download-plan.md) | The server as a double-clickable archive with FFmpeg beside it: licences, laptop mode, signing, release jobs |
 | [OpenSubsonic gap analysis](analyses/opensubsonic-gap-analysis.md) | The façade against the OpenSubsonic specification |
 | [Web client gap analysis](analyses/web-client-gap-analysis.md) | The embedded web client against Navidrome's |
 | [Desktop integration gap](analyses/desktop-v2-integration-gap.md) | The desktop app against server v2; closed, kept as a record |

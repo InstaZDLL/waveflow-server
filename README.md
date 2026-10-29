@@ -30,7 +30,7 @@ No PostgreSQL. No Redis. No identity provider. No container orchestration. **One
 
 ## Install
 
-**Requirements**: `ffmpeg` and `ffprobe` on `PATH`. Nothing else — no database server, no cache, no broker.
+**Requirements**: `ffmpeg` and `ffprobe` on `PATH`, or beside the `waveflow-server` executable. Nothing else — no database server, no cache, no broker.
 
 ### Docker
 
