@@ -222,6 +222,11 @@ question**: no browser comes back, so no token ever travels in a URL. See the
 
 ## Behind a reverse proxy, generally
 
+The server speaks plain HTTP only. Anything reached from outside your own
+network goes through a reverse proxy that terminates TLS: a Subsonic client
+sends its credentials, or a token derived from them, with every request, and
+over plain HTTP anyone on the path reads them.
+
 | Variable | Why |
 | --- | --- |
 | `WAVEFLOW_PUBLIC_URL=https://music.example.com` | So a created share returns an absolute, externally usable URL |
