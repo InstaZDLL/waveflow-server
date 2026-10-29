@@ -279,9 +279,27 @@ const SHARE: &str = "6f1d1b6e-0f1a-4a3d-9c21-0000000000aa";
 /// would get wrong, and reads them back through the services. Then it adds a
 /// copy of a track the playlist already holds, which is what the new key is
 /// for and what the old one refused.
+///
+/// Only the schemas released before that migration are run: one released after
+/// it already holds the new key, and booting it would rebuild nothing.
 #[tokio::test]
 async fn the_rebuilt_lists_keep_their_rows_in_order_and_then_take_a_repeat() {
-    for (tag, baseline) in RELEASED_SCHEMAS {
+    const REBUILD: i64 = 20_261_026_000_000;
+    assert!(
+        MIGRATOR
+            .iter()
+            .any(|migration| migration.version == REBUILD),
+        "no migration has version {REBUILD}"
+    );
+    let before: Vec<_> = RELEASED_SCHEMAS
+        .into_iter()
+        .filter(|(_, baseline)| *baseline < REBUILD)
+        .collect();
+    assert!(
+        !before.is_empty(),
+        "no released schema predates the rebuild"
+    );
+    for (tag, baseline) in before {
         let temp = tempfile::tempdir().expect("temporary directory");
         let config = Config::for_data_dir(temp.path().join("data"));
         let database = Database::open(&config).await.expect("open the database");

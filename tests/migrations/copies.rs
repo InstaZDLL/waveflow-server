@@ -330,6 +330,15 @@ async fn a_failed_upgrade_names_the_copy_it_can_be_restored_from() {
         "the failure does not say how to go back: {error}"
     );
     assert!(error.contains("v2 migration failed"), "{error}");
+    assert!(
+        error.contains("staged failure"),
+        "the boot failed for another reason than the staged one: {error}"
+    );
+    assert_eq!(
+        applied_in(&config.database_path).await,
+        behind,
+        "the failed migration left a record behind"
+    );
     assert_eq!(applied_in(&copies[0].join("waveflow.db")).await, behind);
     assert_eq!(std::fs::read(copies[0].join("instance.key")).unwrap(), key);
 }
