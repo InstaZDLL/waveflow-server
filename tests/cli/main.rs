@@ -79,7 +79,13 @@ async fn inserted_account(
 /// the two are different variables and only the upper one is ever read, so
 /// dropping the other costs nothing.
 fn cli_command() -> std::process::Command {
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_waveflow-server"));
+    command_for(std::path::Path::new(env!("CARGO_BIN_EXE_waveflow-server")))
+}
+
+/// [`cli_command`] for a copy of the binary somewhere else: laptop mode reads
+/// the `laptop.env` beside whichever executable runs.
+fn command_for(program: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
     for (name, _) in std::env::vars_os() {
         if name
             .to_string_lossy()
@@ -100,5 +106,6 @@ async fn count(state: &waveflow_server::AppState, query: &'static str) -> i64 {
 }
 
 mod key;
+mod laptop;
 mod library;
 mod scrobbling;

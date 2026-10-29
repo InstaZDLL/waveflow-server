@@ -5,6 +5,7 @@ use std::{path::PathBuf, time::Duration};
 
 use super::access::{normalize_public_url, parse_proxy_addresses, parse_setup_token};
 use super::env::{parse_bool_env, parse_env, parse_positive_env, read_trimmed_env};
+use super::laptop::Platform;
 use super::limits::{validate_canvas, validate_uploads};
 use super::metadata::{parse_lyrics_settings, parse_metadata_settings};
 use super::pid::{
@@ -20,9 +21,13 @@ use super::{
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
-        let data_dir = std::env::var_os("WAVEFLOW_DATA_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("data"));
+        // The settings laptop mode moves, read first: the data directory
+        // decides where nearly everything below lives.
+        let super::laptop::Resolved {
+            laptop,
+            data_dir,
+            transcode_cache_max_bytes,
+        } = super::laptop::resolve(|name| std::env::var_os(name), Platform::current())?;
 
         let bind_addr = parse_env("WAVEFLOW_BIND", "127.0.0.1:4533")?;
         let public_url = std::env::var("WAVEFLOW_PUBLIC_URL")
@@ -99,8 +104,6 @@ impl Config {
             "ffprobe",
             executable_dir.as_deref(),
         );
-        let transcode_cache_max_bytes =
-            parse_positive_env("WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES", 10_737_418_240u64)?;
         let transcode_global_limit = parse_positive_env("WAVEFLOW_TRANSCODE_GLOBAL_LIMIT", 4usize)?;
         let transcode_per_user_limit =
             parse_positive_env("WAVEFLOW_TRANSCODE_PER_USER_LIMIT", 2usize)?;
@@ -304,6 +307,7 @@ impl Config {
         let canvas_dir = data_dir.join("canvas");
 
         Ok(Self {
+            laptop,
             bind_addr,
             public_url,
             request_timeout: Duration::from_secs(request_timeout_secs),

@@ -7,6 +7,7 @@ mod access;
 mod env;
 mod for_data_dir;
 mod from_env;
+mod laptop;
 mod limits;
 mod metadata;
 mod pid;
@@ -15,6 +16,7 @@ mod scrobbling;
 mod tools;
 
 pub use access::SETUP_TOKEN_MIN_CHARS;
+pub use laptop::{load_laptop_env, LAPTOP_ENV_FILE};
 pub use limits::{CanvasLimits, LibraryEventRetention, UploadLimits};
 pub use metadata::{LyricsSettings, MetadataSettings};
 pub use podcasts::{PodcastSettings, RemoteArtworkSettings};
@@ -27,6 +29,18 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
 #[derive(Clone)]
 pub struct Config {
+    /// Whether this is a server someone double-clicked rather than one an
+    /// operator installed. `WAVEFLOW_LAPTOP`, off by default, and set by the
+    /// `laptop.env` a standalone archive ships beside the executable
+    /// ([`load_laptop_env`]).
+    ///
+    /// It moves defaults and nothing else: `data_dir` becomes the system's
+    /// application-data folder and the transcode cache shrinks to 2 GiB, each
+    /// only while its own variable is unset. At boot, it checks the port is
+    /// not already this server's before touching the database, and prints a
+    /// banner for the person reading the console window
+    /// (`docs/plans/standalone-download-plan.md`, §5).
+    pub laptop: bool,
     pub bind_addr: SocketAddr,
     pub public_url: Option<String>,
     pub request_timeout: Duration,
@@ -291,6 +305,7 @@ pub struct Config {
 impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
+            .field("laptop", &self.laptop)
             .field("bind_addr", &self.bind_addr)
             .field("public_url", &self.public_url)
             .field("request_timeout", &self.request_timeout)

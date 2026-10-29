@@ -1,11 +1,14 @@
 use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-use waveflow_server::{cli, Config};
+use waveflow_server::{cli, laptop, Config};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
+    // After `.env`, so neither file overrides what the environment or the
+    // working directory's `.env` already says.
+    let laptop_env = waveflow_server::config::load_laptop_env()?;
     init_tracing()?;
 
     let cli = cli::Cli::parse();
@@ -18,18 +21,45 @@ async fn main() -> anyhow::Result<()> {
         // instead of the boot rather than after it.
         Some(cli::Command::Key { command }) => cli::key(&config, command).await,
         command => {
+            let serving = matches!(command, Some(cli::Command::Serve) | None);
+            // Only when serving: a command's standard output is not the place
+            // for it, for the reason the warnings in `serve` give.
+            if let (true, Some(path)) = (serving, &laptop_env) {
+                tracing::info!(path = %path.display(), "settings read from laptop.env");
+            }
+            // Before `initialize`: a second double-click must not open,
+            // migrate or redraw the setup token of the database the first copy
+            // is serving. An installed server binds where it always has, after
+            // the boot.
+            let listener = if serving && config.laptop {
+                match laptop::bind(&config, laptop_env.as_deref()).await? {
+                    laptop::Startup::Listening(listener) => Some(listener),
+                    laptop::Startup::AlreadyRunning(url) => {
+                        println!("WaveFlow Server is already running at {url}");
+                        return Ok(());
+                    }
+                }
+            } else {
+                None
+            };
             let state = waveflow_server::initialize(&config).await?;
             match command {
-                Some(cli::Command::Serve) | None => serve(config, state).await,
+                Some(cli::Command::Serve) | None => serve(config, state, listener).await,
                 Some(command) => cli::execute(command, &state).await,
             }
         }
     }
 }
 
-async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Result<()> {
+async fn serve(
+    config: Config,
+    state: waveflow_server::AppState,
+    listener: Option<tokio::net::TcpListener>,
+) -> anyhow::Result<()> {
     let bind_addr = config.bind_addr;
-    if config.public_url.is_none() {
+    // A laptop is told what its network can use instead, once the address is
+    // known (`laptop::network_hint`).
+    if config.public_url.is_none() && !config.laptop {
         tracing::warn!(
             "WAVEFLOW_PUBLIC_URL is not configured; browser origin validation falls back to the request Host header and cookies cannot be marked Secure"
         );
@@ -99,11 +129,20 @@ async fn serve(config: Config, state: waveflow_server::AppState) -> anyhow::Resu
     // Refused sign-ins, counted and logged once a minute (RFC-017).
     state.auth.sign_in_guard().spawn_summary();
     let router = waveflow_server::app(&config, state);
-    let listener = tokio::net::TcpListener::bind(bind_addr)
-        .await
-        .with_context(|| format!("bind failed on {bind_addr}"))?;
+    let listener = match listener {
+        Some(listener) => listener,
+        None => tokio::net::TcpListener::bind(bind_addr)
+            .await
+            .with_context(|| format!("bind failed on {bind_addr}"))?,
+    };
     let local_addr = listener.local_addr()?;
     tracing::info!(address = %local_addr, data_dir = %config.data_dir.display(), "WaveFlow Server v2 ready");
+    if config.laptop {
+        if config.public_url.is_none() {
+            tracing::info!("{}", laptop::network_hint(local_addr));
+        }
+        println!("{}", laptop::banner(local_addr, &config.data_dir));
+    }
     // With the peer's address on every request: the sign-in limiter counts
     // failures per client (RFC-017 decision 2).
     axum::serve(

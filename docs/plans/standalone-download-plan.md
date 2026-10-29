@@ -3,10 +3,15 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-10-29:** the first slice — finding FFmpeg beside the
-> executable — ships with this document. Everything else below is decided
-> here and not built: the FFmpeg build, laptop mode, signing and the release
-> jobs each get their own pull request, in the order of §8.
+> **Status as of 2026-10-29:** steps 1 and 2 of §8 are built. FFmpeg is
+> found beside the executable (§4), and laptop mode exists in the server:
+> `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
+> the data folder and the cache size, checks the port before the boot, and
+> prints the banner (§5); the file the archives will carry is
+> `packaging/standalone/laptop.env`. Not built yet: opening the browser and
+> the setup-token fragment (step 3), the source link §13 asks for (§3), the
+> FFmpeg build, the release jobs and signing — each its own pull request, in
+> the order of §8.
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web
@@ -244,7 +249,7 @@ other. It changes **defaults** only; any variable set explicitly still wins.
   can use.
 - **A fixed port, never a random one.** A Subsonic client on the phone, and the
   user's bookmark, keep the address. If 4533 is taken, the server asks
-  `/api/v2/health` on it: a WaveFlow answering means this one is already
+  `/health` on it: a WaveFlow answering means this one is already
   running, so the browser is opened on it and the new process exits. Anything
   else is a refusal that names the port and the line of `laptop.env` to
   change. Navidrome also defaults to 4533, so this will happen.
@@ -369,7 +374,8 @@ Each line is one pull request.
 1. **Find FFmpeg beside the executable**, and this plan. *Done here.*
 2. **`WAVEFLOW_LAPTOP` and `laptop.env`**: the defaults of §5, the OS data
    folder, the single-instance check, the banner. Server only, testable
-   without packaging.
+   without packaging. *Done.* A second copy that finds WaveFlow on the port
+   prints its address and exits; opening the browser on it is step 3.
 3. **The setup-token fragment** in the sign-in screen, and opening the
    browser on start.
 4. **The minimal FFmpeg build** script and its CI job, tested against the
