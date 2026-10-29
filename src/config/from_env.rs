@@ -193,6 +193,9 @@ impl Config {
         // itself making visible. An operator who wants no adapter says so by
         // setting this empty, which is a different thing from misspelling it.
         let outbound_allow_plaintext = parse_bool_env("WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT", false)?;
+        // Set at all, even empty: an operator who wrote the line has an
+        // opinion about Last.fm, and an empty value declares no instance.
+        let lastfm_url_declared = std::env::var_os("WAVEFLOW_SCROBBLE_LASTFM_URL").is_some();
         let mut destinations = Vec::new();
         for (provider, variable, default) in [
             (
@@ -347,6 +350,7 @@ impl Config {
             scrobbling,
             destinations,
             lastfm,
+            lastfm_url_declared,
             outbound_allow_plaintext,
             metadata,
             lyrics,

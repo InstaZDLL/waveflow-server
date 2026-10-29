@@ -121,6 +121,25 @@ pub struct ScrobbleDestination {
     pub fingerprint: String,
 }
 
+impl super::Config {
+    /// The Last.fm destinations nothing will be sent to, for want of an
+    /// application, that are worth telling the operator about at boot.
+    ///
+    /// Only the ones the operator named through `WAVEFLOW_SCROBBLE_LASTFM_URL`.
+    /// Every server declares the default instance, and without an application
+    /// that instance is simply Last.fm switched off, which the listing already
+    /// says to clients as `no_application_configured`. A warning on every boot
+    /// of a server that never asked for Last.fm told its operator nothing.
+    pub fn lastfm_destinations_without_application(
+        &self,
+    ) -> impl Iterator<Item = &ScrobbleDestination> {
+        let unusable = self.lastfm.is_none() && self.lastfm_url_declared;
+        self.destinations.iter().filter(move |destination| {
+            unusable && destination.provider == crate::services::ScrobbleProvider::LastFm
+        })
+    }
+}
+
 /// The instance `Config::for_data_dir` declares. See the comment there.
 pub(super) fn test_destinations() -> Vec<ScrobbleDestination> {
     // `expect` rather than a fallible signature: the literal is right here, and

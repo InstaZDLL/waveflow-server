@@ -72,15 +72,11 @@ async fn serve(
     //
     // The listing already carries the reason for a client to show; this is for
     // the operator who never opens one.
-    for destination in &config.destinations {
-        if destination.provider == waveflow_server::services::ScrobbleProvider::LastFm
-            && config.lastfm.is_none()
-        {
-            tracing::warn!(
-                destination = %destination.name,
-                "a last.fm destination is declared with no application; nothing will be sent to it"
-            );
-        }
+    for destination in config.lastfm_destinations_without_application() {
+        tracing::warn!(
+            destination = %destination.name,
+            "a last.fm destination is declared with no application; nothing will be sent to it"
+        );
     }
     // Here for the same reason as the warning above: a CLI command's standard
     // output is not the place for it. Where to find the token, never the token

@@ -249,6 +249,10 @@ pub struct Config {
     /// legitimate operator's choice. The condition belongs to switching Last.fm
     /// on, not to the setting.
     pub lastfm: Option<LastFmApplication>,
+    /// Whether the operator set `WAVEFLOW_SCROBBLE_LASTFM_URL`, rather than
+    /// leaving the default instance every server declares. Read only by
+    /// [`Config::lastfm_destinations_without_application`].
+    pub lastfm_url_declared: bool,
     /// Whether an outbound destination may be plain HTTP.
     ///
     /// `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT`, off by default. The escape exists
