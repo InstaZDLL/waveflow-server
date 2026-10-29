@@ -94,10 +94,15 @@ from the code:
   Vorbis and Opus in Ogg, WAV, AIFF, WavPack, APE, DSD (`dsf`, `dff`) — for
   transcoding and for the quality analysis (`src/quality/`);
 - **encode** MP3 through `libmp3lame` (LGPL), Opus through `libopus` (BSD), AAC
-  through FFmpeg's own encoder (`src/media/transcode.rs`), and WebP artwork
-  through `libwebp` (BSD) when it is there (`probe_webp` in `src/app/boot.rs`);
-- **probe** canvases, which are short H.264, HEVC or VP9 loops
-  (`src/services/canvas/probe.rs`), and embedded cover images;
+  through FFmpeg's own encoder (`src/media/transcode.rs`), the analysis's raw
+  `pcm_s32le` and its spectrum image through `mjpeg`, or through `libwebp`
+  (BSD) when it is there (`src/quality/`, `probe_webp` in `src/app/boot.rs`);
+- **write** the containers those outputs go into: the `mp3`, `ogg` and `adts`
+  muxers of the transcode, `s32le`, `image2pipe` and `webp` of the analysis,
+  and `mp4` and `webm`, into which `strip_canvas_audio` copies a canvas's video
+  stream without re-encoding it (`src/services/canvas/probe.rs`);
+- **probe** canvases, which are short H.264, HEVC or VP9 loops in MP4 or WebM,
+  and embedded cover images;
 - the filters the transcode and the analysis use (`-af` for ReplayGain,
   `-filter_complex` for the spectrum walk);
 - the `file` and `pipe` protocols, and **nothing else**: RFC-023 already
@@ -144,9 +149,31 @@ cover macOS, and it carries the size and source-offer cost above.
 - on the release itself, `ffmpeg-<version>-sources.tar.gz`: the four upstream
   tarballs exactly as downloaded (with their checksums) and the build script.
 
-The server's own source needs nothing new: AGPL §6(d) is met by the source
-archive GitHub attaches to the same tag, and §13 by the source link the server
-already serves.
+### The server's own source
+
+The archive is also object code of the server, so AGPL §6 asks for its
+corresponding source, for every version shipped — not only the server's
+repository at the tag, but the exact source of everything compiled into the
+binary: every non-system dependency `Cargo.lock` pins (415 crates from
+crates.io today), and `waveflow-core` at the revision `Cargo.toml` pins
+(`rev = "…"` on `InstaZDLL/WaveFlow`, the one git dependency in the lock
+file).
+
+§6(d) allows that source to sit on another server, provided clear directions
+next to the object code say where. So no separate archive is attached for it:
+`LICENSES/SOURCE.txt` names the tag, whose source archive carries
+`Cargo.lock`; the `waveflow-core` revision and its public repository; and
+crates.io for the crates, where a published version stays downloadable even
+once yanked. Those are durable public links, and they stay our responsibility:
+a dependency taken from anywhere less durable — a second git dependency, a
+private registry — has its source attached to the release instead.
+
+§13 asks more of a network service: the server must offer its source to the
+people who use it remotely, and **it does not today** — no page links to it,
+and the OpenAPI document names the licence without a URL. The laptop-mode pull
+request, or one before it, adds that link to the web client and to the
+OpenAPI document, leading to this complete offer for the version that is
+running, not to the repository's current `main`.
 
 ## 4. How the server finds FFmpeg — built with this plan
 
@@ -308,10 +335,21 @@ parallel with the image:
    it.
 2. **`standalone`** — a matrix over the five targets: `windows-latest`,
    `macos-latest` (arm64, which also cross-compiles `x86_64-apple-darwin`; the
-   Intel runners are being retired), `ubuntu-24.04` and `ubuntu-24.04-arm`. Each builds the web client and the
-   server, runs the `media`, `quality` and `canvas` targets with the FFmpeg
-   from job 1 placed beside the test binary, signs (§6) where it can, and
-   packs the archive of §2. Linux builds target an old enough glibc — or
+   Intel runners are being retired), `ubuntu-24.04` and `ubuntu-24.04-arm`.
+   Each builds the web client and the server, runs the `media`, `quality` and
+   `canvas` targets against the FFmpeg from job 1, signs (§6) where it can,
+   and packs the archive of §2.
+
+   Placing the tools beside the test binary would test nothing: the suite's
+   `Config::for_data_dir` names bare `ffmpeg` and `ffprobe`, and the fixture
+   generators in `tests/support/` run `ffmpeg` from `PATH`, so both would find
+   whatever the runner has installed. The pull request that adds this job
+   therefore makes the test configuration and the fixture generators read
+   `WAVEFLOW_FFMPEG_PATH` and `WAVEFLOW_FFPROBE_PATH` when they are set, and
+   the job sets them to job 1's two files. The fixtures then also need what
+   they generate from — the `lavfi` sources and the FLAC and PCM encoders — so
+   those are added to the build: a few components, against a release tested
+   with one FFmpeg rather than two. Linux builds target an old enough glibc — or
    `musl` — that the binary runs on the distributions people actually have.
 3. **`checksums`** — one `SHA256SUMS` over every archive and the source
    bundle, signed keylessly with Sigstore (`cosign sign-blob`), the bundle
