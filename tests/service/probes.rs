@@ -202,15 +202,22 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
 ///
 /// `/health` is what the web client reads to draw the link, before anyone has
 /// signed in; the OpenAPI document carries the same offer for a generated
-/// client. The addresses are written out here rather than read from the
-/// constant that builds them, so a link that drifted to another repository or
-/// to a branch fails this rather than agreeing with itself.
+/// client. The addresses are spelled out here from the manifest rather than
+/// read from the constant that builds them, so a link that drifted to a branch
+/// or to another path fails this rather than agreeing with itself — and a
+/// modified build that names its own `repository` still passes it.
 #[tokio::test]
 async fn the_server_offers_the_source_of_the_running_version() {
     let (_temp, config, state) = test_app().await;
     let router = waveflow_server::app(&config, state);
+    let repository = env!("CARGO_PKG_REPOSITORY");
     let version = env!("CARGO_PKG_VERSION");
-    let source = format!("https://github.com/InstaZDLL/waveflow-server/tree/v{version}");
+    // An empty `repository` would make every address below a bare path.
+    assert!(
+        repository.starts_with("https://"),
+        "Cargo.toml must name the repository: {repository:?}"
+    );
+    let source = format!("{repository}/tree/v{version}");
 
     let health = router
         .clone()
@@ -230,7 +237,7 @@ async fn the_server_offers_the_source_of_the_running_version() {
     assert_eq!(document["info"]["license"]["name"], "AGPL-3.0-only");
     assert_eq!(
         document["info"]["license"]["url"],
-        format!("https://github.com/InstaZDLL/waveflow-server/blob/v{version}/LICENSE")
+        format!("{repository}/blob/v{version}/LICENSE")
     );
     assert_eq!(document["externalDocs"]["url"], source);
     assert!(
