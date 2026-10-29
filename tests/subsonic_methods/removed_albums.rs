@@ -204,6 +204,29 @@ async fn an_album_whose_files_all_went_is_not_found_and_comes_back() {
     let listed = send_json(&router, "GET", "/api/v2/albums", &token, None).await;
     assert_eq!(listed.status(), StatusCode::OK);
     assert_eq!(album_ids(&json_body(listed).await), vec![kept.clone()]);
+    // Except the lists of what the account holds, which keep the album's
+    // identifier as they keep a removed track's.
+    for (uri, field, value) in [
+        (
+            "/api/v2/favorites",
+            "entity_type",
+            serde_json::json!("album"),
+        ),
+        ("/api/v2/ratings", "rating", serde_json::json!(4)),
+    ] {
+        let response = send_json(&router, "GET", uri, &token, None).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let entries = json_body(response).await;
+        let albums: Vec<_> = entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["entity_type"] == "album")
+            .collect();
+        assert_eq!(albums.len(), 1, "{uri}: {entries}");
+        assert_eq!(albums[0]["entity_id"], gone.as_str(), "{uri}: {entries}");
+        assert_eq!(albums[0][field], value, "{uri}: {entries}");
+    }
     let detail = send_json(
         &router,
         "GET",
