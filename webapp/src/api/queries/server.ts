@@ -16,16 +16,20 @@ import { ApiError, getServerIdentity } from "../index";
  * left in the background does not answer a return with a round of requests;
  * this is one small request, and only the sign-in page and Settings hold it.
  *
- * Retried, unlike the client's other questions, on a 5xx alone and at most
- * twice: a proxy answering 503 while the server restarts would otherwise
- * leave the sign-in page without the offer until it is next opened. A 4xx is
- * an answer, and asking again would not change it.
+ * Retried, unlike the client's other questions, on a transient failure alone
+ * and at most twice: a 5xx, such as a proxy answering 503 while the server
+ * restarts, or a request that never got an answer — `fetch` rejects those
+ * with a `TypeError`. Either would otherwise leave the sign-in page without
+ * the offer until it is next opened. A 4xx, or a body that is not the probe's
+ * JSON, is an answer, and asking again would not change it.
  */
 export const serverIdentityQuery = () =>
   queryOptions({
     queryKey: ["server-identity"],
     queryFn: getServerIdentity,
     retry: (failures, error) =>
-      failures < 2 && error instanceof ApiError && error.status >= 500,
+      failures < 2 &&
+      ((error instanceof ApiError && error.status >= 500) ||
+        error instanceof TypeError),
     refetchOnWindowFocus: true,
   });
