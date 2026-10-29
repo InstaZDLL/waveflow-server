@@ -150,13 +150,27 @@ async fn an_album_whose_files_all_went_is_not_found_and_comes_back() {
         .unwrap();
     assert_eq!(left, 1, "the precondition: the album row is kept");
 
-    for list in ["alphabeticalByName", "newest", "starred", "highest"] {
-        let listed = call("getAlbumList2", format!("&type={list}")).await;
-        let ids = album_ids(&listed["albumList2"]["album"]);
-        assert!(!ids.contains(&gone), "getAlbumList2 {list}: {listed}");
-        let listed = call("getAlbumList", format!("&type={list}")).await;
-        let ids = album_ids(&listed["albumList"]["album"]);
-        assert!(!ids.contains(&gone), "getAlbumList {list}: {listed}");
+    // The album that stays is the witness the list still answers: it holds
+    // tracks, so it is in every list that does not depend on a star or a
+    // rating, and in neither of those, since it has none.
+    for (list, expected) in [
+        ("alphabeticalByName", vec![kept.clone()]),
+        ("newest", vec![kept.clone()]),
+        ("starred", vec![]),
+        ("highest", vec![]),
+    ] {
+        for (method, container) in [
+            ("getAlbumList2", "albumList2"),
+            ("getAlbumList", "albumList"),
+        ] {
+            let listed = call(method, format!("&type={list}")).await;
+            assert_eq!(listed["status"], "ok", "{method} {list}: {listed}");
+            assert_eq!(
+                album_ids(&listed[container]["album"]),
+                expected,
+                "{method} {list}: {listed}"
+            );
+        }
     }
     let page = call("getArtist", format!("&id={artist}")).await;
     assert_eq!(
@@ -169,8 +183,9 @@ async fn an_album_whose_files_all_went_is_not_found_and_comes_back() {
         assert_eq!(read["error"]["code"], 70, "{method}: {read}");
     }
     let starred = call("getStarred2", String::new()).await;
+    assert_eq!(starred["status"], "ok", "{starred}");
     assert!(
-        !album_ids(&starred["starred2"]["album"]).contains(&gone),
+        album_ids(&starred["starred2"]["album"]).is_empty(),
         "{starred}"
     );
 
