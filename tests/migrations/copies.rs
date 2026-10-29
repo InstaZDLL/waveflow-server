@@ -23,7 +23,7 @@ use super::*;
 #[tokio::test]
 async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
     let total = MIGRATOR.iter().count();
-    let (tag, baseline) = RELEASED_SCHEMAS[RELEASED_SCHEMAS.len() - 1];
+    let (tag, baseline) = newest_schema_behind();
     let temp = tempfile::tempdir().expect("temporary directory");
     let config = Config::for_data_dir(temp.path().join("data"));
 
@@ -123,14 +123,35 @@ async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
         .expect("the rotated pair must boot");
 }
 
-/// A database at the newest released schema, bound to a key on disk, as an
-/// installation that is about to upgrade has it. Answers the key and how many
-/// migrations the database has run.
+/// The newest released schema the binary is still ahead of.
+///
+/// Not simply the last line of `RELEASED_SCHEMAS`: the PR that bumps the
+/// version for a release adds its line with the newest migration of that
+/// moment, so until the next migration lands that schema is the binary's own,
+/// and a database at it has nothing to upgrade. Both tests here need a database
+/// behind the binary, so they take the newest one that still is.
+fn newest_schema_behind() -> (&'static str, i64) {
+    let newest = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("at least one migration");
+    RELEASED_SCHEMAS
+        .iter()
+        .rev()
+        .copied()
+        .find(|(_, baseline)| *baseline < newest)
+        .expect("a released schema behind the binary")
+}
+
+/// A database at the newest released schema behind the binary, bound to a key
+/// on disk, as an installation that is about to upgrade has it. Answers the key
+/// and how many migrations the database has run.
 ///
 /// `extra` runs on the database before it is closed, for a test that needs it
 /// shaped some further way.
 async fn an_installation_behind(config: &Config, extra: Option<&'static str>) -> ([u8; 32], i64) {
-    let (tag, baseline) = RELEASED_SCHEMAS[RELEASED_SCHEMAS.len() - 1];
+    let (tag, baseline) = newest_schema_behind();
     let database = Database::open(config).await.expect("open the database");
     let mut connection = database.pool().acquire().await.expect("connection");
     connection
@@ -286,10 +307,14 @@ async fn an_upgrade_copies_the_database_and_its_key_before_migrating() {
 async fn a_failed_upgrade_names_the_copy_it_can_be_restored_from() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let config = Config::for_data_dir(temp.path().join("data"));
-    // A table a later migration creates, already there: that migration fails.
+    // Recording a migration as applied is refused, so the first one pending
+    // fails whatever it contains, and its transaction rolls back with it.
     let (key, behind) = an_installation_behind(
         &config,
-        Some("CREATE TABLE radio_station (id TEXT PRIMARY KEY)"),
+        Some(
+            "CREATE TRIGGER no_migration_lands BEFORE INSERT ON _sqlx_migrations \
+             BEGIN SELECT RAISE(ABORT, 'staged failure'); END",
+        ),
     )
     .await;
 
@@ -305,6 +330,15 @@ async fn a_failed_upgrade_names_the_copy_it_can_be_restored_from() {
         "the failure does not say how to go back: {error}"
     );
     assert!(error.contains("v2 migration failed"), "{error}");
+    assert!(
+        error.contains("staged failure"),
+        "the boot failed for another reason than the staged one: {error}"
+    );
+    assert_eq!(
+        applied_in(&config.database_path).await,
+        behind,
+        "the failed migration left a record behind"
+    );
     assert_eq!(applied_in(&copies[0].join("waveflow.db")).await, behind);
     assert_eq!(std::fs::read(copies[0].join("instance.key")).unwrap(), key);
 }

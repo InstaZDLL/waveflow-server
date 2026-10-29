@@ -50,6 +50,14 @@ stores a non-secret fingerprint of the key, so a mismatched pair is rejected at
 startup rather than after it has replaced your data. Restore runs before SQLite
 is opened, and moves the previous pair into a timestamped recovery directory.
 
+The pair is the catalogue and every account's data, but not every byte the
+server keeps. Beside it in the data directory, `artwork_dir` holds the artist
+portraits and banners that were chosen or downloaded, the canvas store the
+canvases sent to the server, and `podcasts/` the episodes an administrator
+downloaded: none of them can be extracted again from your files. Back up the
+whole data directory, with the pair taken by `database backup`, if you want
+them back after a restore.
+
 ### A copy before every upgrade
 
 When a new version has migrations to apply, the boot first copies the database
@@ -213,6 +221,22 @@ question**: no browser comes back, so no token ever travels in a URL. See the
 [native API guide](api-v2-guide.md#external-scrobbling).
 
 ## Behind a reverse proxy, generally
+
+The server speaks plain HTTP only. Anything reached from outside your own
+network goes through a reverse proxy that terminates TLS: a Subsonic client
+sends its credentials, or a token derived from them, with every request, and
+over plain HTTP anyone on the path reads them.
+
+How the container publishes its port follows from where that proxy runs. The
+`-p 4533:4533` of the README, and the `ports` line of `docker-compose.yml`,
+publish plain HTTP on every interface of the host:
+
+- **No proxy, listening at home only**: keep it, on a network you trust, with
+  the port closed to the internet at your router or firewall.
+- **A proxy on the same host**: publish on the loopback only,
+  `-p 127.0.0.1:4533:4533`, so that only the proxy reaches the server.
+- **A proxy in a container**: publish nothing. Put both containers on one
+  Docker network and point the proxy at `http://waveflow:4533`.
 
 | Variable | Why |
 | --- | --- |

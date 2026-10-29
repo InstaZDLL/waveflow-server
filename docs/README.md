@@ -66,6 +66,14 @@ revision of its survey, and a status line saying what has happened since.
 | [Web client gap analysis](analyses/web-client-gap-analysis.md) | The embedded web client against Navidrome's |
 | [Desktop integration gap](analyses/desktop-v2-integration-gap.md) | The desktop app against server v2; closed, kept as a record |
 
+## Releases
+
+The notes published with each stable release, one per tag, in
+[`releases/`](releases/): [2.0.0](releases/v2.0.0.md). The release workflow
+refuses a stable tag that has none. Every change, release by release, is in the
+[CHANGELOG](../CHANGELOG.md). The screenshots the README shows are in
+[`screenshots/`](screenshots/).
+
 ## History
 
 | Document | What it records |
