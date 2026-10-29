@@ -3,8 +3,8 @@
 WaveFlow exposes a tested Subsonic 1.16.1 façade for existing music clients.
 This guide covers server configuration, authentication, wire formats and the
 implemented method surface. The frozen compatibility decisions live in
-[RFC-002](rfcs/RFC-002-waveflow-server-v2.md), and real-client results are in
-[subsonic-compatibility.md](subsonic-compatibility.md).
+[RFC-002](../rfcs/RFC-002-waveflow-server-v2.md), and real-client results are in
+[subsonic-compatibility.md](../compatibility/subsonic-compatibility.md).
 
 ## Client configuration
 
@@ -476,4 +476,4 @@ Each `streamUrl` carries the visit's pass and must be used as given, and offers
 the original or, with `format=mp3`, a fixed 192 kbit/s MP3 — nothing else. A
 visit cap can be set from the native API and the web client; `createShare` and
 `updateShare` have no parameter for one. See
-[RFC-020](rfcs/RFC-020-playlists-and-shares.md).
+[RFC-020](../rfcs/RFC-020-playlists-and-shares.md).

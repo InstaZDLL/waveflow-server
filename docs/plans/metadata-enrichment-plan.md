@@ -9,7 +9,7 @@
 >
 > No code was modified during this survey.
 
-[RFC-011](rfcs/RFC-011-metadata-enrichment.md) was written from the shape of
+[RFC-011](../rfcs/RFC-011-metadata-enrichment.md) was written from the shape of
 `waveflow-core`'s metadata module and of this server's surfaces. Planning the
 work meant checking each attachment point it names, and six of them do not
 hold as written. None of them changes a decision; four of them change the

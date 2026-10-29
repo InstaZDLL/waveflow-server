@@ -1,7 +1,7 @@
 //! Share methods.
 //!
 //! Split out of `subsonic.rs`. Two corrections since the contract was frozen,
-//! recorded in `docs/subsonic-compatibility.md`: every share these methods
+//! recorded in `docs/compatibility/subsonic-compatibility.md`: every share these methods
 //! answer carries its `url`, and `createShare` takes an album's id as well as
 //! a track's.
 

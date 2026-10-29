@@ -427,7 +427,7 @@ protocol leaves, so a client could not read the absence as one.
 > allowlist, no timeout and no egress policy to get wrong.
 >
 > **Two deviations from the reference server**, both deliberate and both now in
-> `docs/subsonic-compatibility.md`: the list is per account rather than global
+> `docs/compatibility/subsonic-compatibility.md`: the list is per account rather than global
 > and administrator-only, because WaveFlow has no global library setting of any
 > kind; and `homePageUrl` is returned with a capital `P` while `homepageUrl`
 > sets it, which is the specification's own asymmetry.

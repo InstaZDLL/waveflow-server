@@ -26,7 +26,7 @@ WaveFlow Server streams the music you already own to the clients you already use
 
 No PostgreSQL. No Redis. No identity provider. No container orchestration. **One binary, one database file, one key file.**
 
-> **Status — `2.0.0-beta.1`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients — **Symfonium 15.0.1** and **DSub 5.5.3** on an Android 17 emulator, **Feishin 1.15.1** on Windows desktop, and **Juliet** on a physical iPhone — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
+> **Status — `2.0.0-beta.1`.** All six milestones pass their release gates, and the OpenSubsonic façade has been replayed against four real clients — **Symfonium 15.0.1** and **DSub 5.5.3** on an Android 17 emulator, **Feishin 1.15.1** on Windows desktop, and **Juliet** on a physical iPhone — with every result read back from server state rather than from what the client displayed. See [the compatibility matrix](docs/compatibility/subsonic-compatibility.md) for what each one actually exercises, and what it does not.
 
 ## Install
 
@@ -73,7 +73,7 @@ pinned above, which asks for no token — that screen asks for the one-time toke
 the server wrote to `setup-token` in its data directory
 (`docker exec waveflow cat /data/setup-token`), so a stranger who reaches a
 fresh server first cannot claim it. See
-[operations](docs/operations.md#the-first-account-needs-the-setup-token).
+[operations](docs/guides/operations.md#the-first-account-needs-the-setup-token).
 
 ### From source
 
@@ -100,7 +100,7 @@ export WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password'
 waveflow-server credential set --actor admin --username admin
 ```
 
-Point any Subsonic client at `http://your-host:4533` with that username and password. Browser-hosted clients need their origin listed, and a reverse proxy needs `WAVEFLOW_PUBLIC_URL` — both are in the [operations guide](docs/operations.md#behind-a-reverse-proxy-generally).
+Point any Subsonic client at `http://your-host:4533` with that username and password. Browser-hosted clients need their origin listed, and a reverse proxy needs `WAVEFLOW_PUBLIC_URL` — both are in the [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally).
 
 ## How it works
 
@@ -123,23 +123,23 @@ Point any Subsonic client at `http://your-host:4533` with that username and pass
 | Area | Highlights | Deep dive |
 | --- | --- | --- |
 | **Catalogue** | Authoritative scanner with content hashing and relocation detection, FTS5 full-text search that folds case and diacritics, deduplicated artwork, embedded and sidecar lyrics, extended tags (ISRC, BPM, moods, ReplayGain, explicit status) | [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md) |
-| **Credits** | Thirteen roles from the reference model — artist, album artist, composer, lyricist, conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer, performer with its instrument — one person can hold several on one track | [Subsonic guide](docs/subsonic-api-guide.md) |
-| **Streaming** | Original byte-range playback, on-demand FFmpeg transcode to MP3 or Opus with a disk cache, per-user and global concurrency limits, temporal seek into a live transcode | [Subsonic guide](docs/subsonic-api-guide.md) |
-| **OpenSubsonic** | The full browse, search, playlist, favourite, rating, scrobble, bookmark, play-queue, share and internet-radio surface, in XML or JSON, over GET or form POST, with the extensions it advertises | [compatibility matrix](docs/subsonic-compatibility.md) |
-| **Native API** | `/api/v2` with rotating sessions, Authorization Code + PKCE for desktop clients, user-data sync over REST and WebSocket, SSE scan progress, an OpenAPI document and an interactive reference | [API v2 guide](docs/api-v2-guide.md) · [RFC-003](docs/rfcs/RFC-003-waveflow-sync-v2.md) |
+| **Credits** | Thirteen roles from the reference model — artist, album artist, composer, lyricist, conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer, performer with its instrument — one person can hold several on one track | [Subsonic guide](docs/guides/subsonic-api-guide.md) |
+| **Streaming** | Original byte-range playback, on-demand FFmpeg transcode to MP3 or Opus with a disk cache, per-user and global concurrency limits, temporal seek into a live transcode | [Subsonic guide](docs/guides/subsonic-api-guide.md) |
+| **OpenSubsonic** | The full browse, search, playlist, favourite, rating, scrobble, bookmark, play-queue, share and internet-radio surface, in XML or JSON, over GET or form POST, with the extensions it advertises | [compatibility matrix](docs/compatibility/subsonic-compatibility.md) |
+| **Native API** | `/api/v2` with rotating sessions, Authorization Code + PKCE for desktop clients, user-data sync over REST and WebSocket, SSE scan progress, an OpenAPI document and an interactive reference | [API v2 guide](docs/guides/api-v2-guide.md) · [RFC-003](docs/rfcs/RFC-003-waveflow-sync-v2.md) |
 | **Uploads & canvas** | A library can accept files, decided server-side and received in chunks; a track can carry a looping visual with its own store and tickets | [RFC-008](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009](docs/rfcs/RFC-009-track-canvas.md) |
 | **Scrobbling** | ListenBrainz, Last.fm and Maloja, each a named instance, behind a durable queue that survives a restart, retries once and honours `Retry-After` | [RFC-010](docs/rfcs/RFC-010-external-scrobbling.md) |
 | **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive | — |
-| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers, a one-time token guarding first-run setup, a Content-Security-Policy on the web client | [operations](docs/operations.md) · [RFC-019](docs/rfcs/RFC-019-exposure-hardening.md) |
-| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, an automatic copy of both before any migration, and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/operations.md) |
+| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers, a one-time token guarding first-run setup, a Content-Security-Policy on the web client | [operations](docs/guides/operations.md) · [RFC-019](docs/rfcs/RFC-019-exposure-hardening.md) |
+| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, an automatic copy of both before any migration, and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/guides/operations.md) |
 
 ## Documentation
 
 | | |
 | --- | --- |
-| **Run it** | [Operations](docs/operations.md) — the first account, backup, losing or rotating the instance key, reverse proxies, probes and logging · [Privacy](docs/privacy.md) — every host the server can contact, what it sends, and the setting that stops it |
-| **Integrate** | [Native API v2](docs/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/subsonic-api-guide.md) |
-| **What clients do** | [Compatibility matrix](docs/subsonic-compatibility.md) — the four replayed above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/opensubsonic-gap-analysis.md) |
+| **Run it** | [Operations](docs/guides/operations.md) — the first account, backup, losing or rotating the instance key, reverse proxies, probes and logging · [Privacy](docs/guides/privacy.md) — every host the server can contact, what it sends, and the setting that stops it |
+| **Integrate** | [Native API v2](docs/guides/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/guides/subsonic-api-guide.md) |
+| **What clients do** | [Compatibility matrix](docs/compatibility/subsonic-compatibility.md) — the four replayed above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/analyses/opensubsonic-gap-analysis.md) |
 | **What changed** | [CHANGELOG](CHANGELOG.md) |
 | **The design** | [RFC-002, the accepted design](docs/rfcs/RFC-002-waveflow-server-v2.md) · [RFC-003, sync](docs/rfcs/RFC-003-waveflow-sync-v2.md) · [RFC-004, local/server reconciliation](docs/rfcs/RFC-004-local-server-reconciliation.md) · [RFC-007, library events](docs/rfcs/RFC-007-library-event-stream.md) · [RFC-008, uploads](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009, canvas](docs/rfcs/RFC-009-track-canvas.md) · [RFC-010, scrobbling](docs/rfcs/RFC-010-external-scrobbling.md) · [RFC-011, metadata enrichment](docs/rfcs/RFC-011-metadata-enrichment.md) |
 | **On a running server** | [`/reference`](http://127.0.0.1:4533/reference) for the interactive API · [`/openapi.json`](http://127.0.0.1:4533/openapi.json) for the contract |

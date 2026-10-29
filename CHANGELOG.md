@@ -140,7 +140,7 @@ release introduces.
   server-side play queue all behave, and seeking by byte range was
   re-established on iOS and on desktop. Substreamer is not part of the set: that
   build no longer installs on the current Android device, and Juliet took its
-  place. See [the compatibility matrix](docs/subsonic-compatibility.md).
+  place. See [the compatibility matrix](docs/compatibility/subsonic-compatibility.md).
 
 ### Known issues
 

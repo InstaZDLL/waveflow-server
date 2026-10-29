@@ -349,7 +349,7 @@ async fn native_browse_endpoints_page_search_and_isolate_tenants() {
 /// #211 reports these as never serialised. **That is no longer true**, and
 /// checking rather than believing it changed what this test had to be: they
 /// are all on `SongItem`, which derives `Serialize` with nothing skipped, and
-/// `docs/api-v2-guide.md` already names three of them. What was missing is
+/// `docs/guides/api-v2-guide.md` already names three of them. What was missing is
 /// this — nothing asserted any of it, so the client could declare a field the
 /// server had quietly stopped sending and the whole suite would agree with
 /// the client.

@@ -540,7 +540,7 @@ price of a distinction no heuristic can make for the operator.
   reconciliation described above, of which this back-fill is the first turn: fill
   then compare, once, before `spawn_scrobble_drain` leaves.
 - **Documentation**: a section of the API guide, and a line in
-  `docs/web-client-gap-analysis.md`, whose point 15 is waiting for this one.
+  `docs/analyses/web-client-gap-analysis.md`, whose point 15 is waiting for this one.
 
 ## Decision 11 — the order of the recipients, and one listen per request
 
@@ -810,7 +810,7 @@ token is printed on its own, the command names the variable, and **how it is
 filled belongs to the operator and their shell**: a silent read, a secret
 manager, a file sourced then deleted. This server runs on three platforms whose
 answers differ, and it does not have to choose for them. The
-[API guide](../api-v2-guide.md#external-scrobbling) shows one per shell, as an
+[API guide](../guides/api-v2-guide.md#external-scrobbling) shows one per shell, as an
 example and not as a prescription.
 
 **And `auth.getToken` does not enter the web journey for all that.** The

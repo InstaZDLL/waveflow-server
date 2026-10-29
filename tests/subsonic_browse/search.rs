@@ -141,7 +141,7 @@ async fn subsonic_search_matches_through_the_fts_index() {
 
     // Only that literal pair of quotes browses everything. An empty or blank
     // query names no term, and answers an empty result rather than the
-    // catalogue — as docs/subsonic-compatibility.md says.
+    // catalogue — as docs/compatibility/subsonic-compatibility.md says.
     for blank in ["", "%20%20"] {
         let none = subsonic_json(
             &router,

@@ -15,8 +15,8 @@ handoff under `docs/`, and these instruction files with them. The design
 documentation was half French until #222, which is the reason this line exists:
 nothing said which language to write in, so each document chose, and the series
 of RFCs ended up split down the middle. Two exceptions, both deliberate and both
-stating it in a banner at their head: `docs/M3-symfonium-validation.md` and
-`docs/M4-handoff.md` stay in French, because translating a dated record rewrites
+stating it in a banner at their head: `docs/compatibility/M3-symfonium-validation.md` and
+`docs/history/M4-handoff.md` stay in French, because translating a dated record rewrites
 it. Write a new document in English; if you correct an old one, correct it in
 English.
 
@@ -87,7 +87,7 @@ Unit tests never sit inline in the code. A module with unit tests is a directory
 - **The web client is a router fallback** (`src/http/webui.rs`). Anything not claimed by an API route is a built asset or a client-side route. Paths under `api/`, `rest/`, `share/` and the probes are excluded, so a mistyped API call stays a JSON 404 instead of returning HTML.
 - **Audio files are read-only.** The scanner and tag operations never rewrite them.
 - **The real quality of a file is measured, never read** ([RFC-016](docs/rfcs/RFC-016-audio-quality-analysis.md)). `src/quality/` decodes a lossless file through FFmpeg and runs the desktop's wall search on it, ported from `waveflow-core` and held to it by a test; `src/services/quality/` decides which files are measured and what a measurement means. The analysis runs in the background, `WAVEFLOW_QUALITY_PARALLELISM` files at a time (one by default, zero turns it off), and starts no file while a scan runs. A row in `track_quality` is current only for the content, the analyser version and the FFmpeg build that made it; boot deletes the others, so a read can call a row current on its `full_hash` alone. The verdict is SQL computed where it is read, never a column.
-- **The Subsonic contract is frozen** for v2.0-beta — see the "Frozen Subsonic v2.0-beta contract" section of RFC-002 and [`docs/subsonic-compatibility.md`](docs/subsonic-compatibility.md). Changing observable wire behaviour there risks the clients already validated against it.
+- **The Subsonic contract is frozen** for v2.0-beta — see the "Frozen Subsonic v2.0-beta contract" section of RFC-002 and [`docs/compatibility/subsonic-compatibility.md`](docs/compatibility/subsonic-compatibility.md). Changing observable wire behaviour there risks the clients already validated against it.
 - **Logging.** `tracing` + `RUST_LOG`; `WAVEFLOW_LOG_FORMAT=json` for prod. Traces record `uri.path()` only, with share tokens and stream tickets redacted. Never log headers, query strings, tokens or passwords.
 
 ## Contributing rules that affect commits
@@ -95,4 +95,4 @@ Unit tests never sit inline in the code. A module with unit tests is a directory
 - **DCO sign-off is mandatory** — `git commit -s`. CI rejects unsigned PRs.
 - **Conventional Commits** with kebab-case scopes and lowercase subjects, e.g. `feat(api): add native album endpoints`.
 - License is **AGPL-3.0-only** (the server hosts a network service); the desktop app and `waveflow-core` are GPL-3.0-only.
-- Do not begin a later milestone until the previous one's tests and release gate pass. `v2.0-beta` additionally requires the Symfonium validation tracked in [`docs/M3-symfonium-validation.md`](docs/M3-symfonium-validation.md).
+- Do not begin a later milestone until the previous one's tests and release gate pass. `v2.0-beta` additionally requires the Symfonium validation tracked in [`docs/compatibility/M3-symfonium-validation.md`](docs/compatibility/M3-symfonium-validation.md).

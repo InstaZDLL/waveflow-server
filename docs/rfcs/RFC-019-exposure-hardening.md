@@ -3,7 +3,7 @@
 - **Status**: Proposed
 - **Implemented by**: [#325](https://github.com/InstaZDLL/waveflow-server/pull/325)
   (this RFC, the setup token, the security headers, the pre-migration copy
-  and `docs/privacy.md`, in one pull request). The *Status* field above never
+  and `docs/guides/privacy.md`, in one pull request). The *Status* field above never
   flips in this project; this line is the one that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project
@@ -206,14 +206,14 @@ them (`src/migration_backup.rs`):
 The offline key commands are unchanged: they already copy the database as they
 found it before migrating (`pre-key-…`).
 
-## Decision 4 — `docs/privacy.md`
+## Decision 4 — `docs/guides/privacy.md`
 
 One page lists every host the server can contact, what each request carries,
 what triggers it and the variable that stops it, written from
 `src/outbound.rs`, `src/enrichment.rs`, `src/portrait.rs` and
 `src/scrobblers/`. It also lists the three hosts the *browser* may contact
 (a radio station, last.fm while linking, the CDN behind `/reference`). It is
-linked from `docs/operations.md` and the README.
+linked from `docs/guides/operations.md` and the README.
 
 ## What does not change
 

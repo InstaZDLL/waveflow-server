@@ -8,7 +8,7 @@
 > The decision is stated here so that the language reads as a choice and not
 > as an oversight; reversing it costs one translation and no risk. See the
 > "In the documentation" section of
-> [`ui-and-missing-features-plan.md`](ui-and-missing-features-plan.md).
+> [`ui-and-missing-features-plan.md`](../plans/ui-and-missing-features-plan.md).
 
 > Mise à jour (2026-08-09). La porte M3 est **fermée** : Symfonium 14.1.0 a
 > été validé sur un émulateur Android 17 via une URL HTTPS publique éphémère.
@@ -124,7 +124,7 @@ La porte M3 est verte. Publier / confirmer la release **`v2.0-beta`** reste une
 action séparée : **jamais de tag ni de release sans demande explicite du user**.
 
 M4 n'est plus une suite à planifier ici : il est livré (API native `/api/v2`,
-PKCE, SPA embarquée, retrait de `/api/v1`). Voir `docs/M4-handoff.md`.
+PKCE, SPA embarquée, retrait de `/api/v1`). Voir `docs/history/M4-handoff.md`.
 
 ## Référence
 

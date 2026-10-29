@@ -298,7 +298,7 @@ inotify limit `fs.inotify.max_user_watches` reached), that is logged once with
 the library's identifier and the library is left to the periodic scan. Network
 mounts are the known case: NFS and SMB report changes made by this machine and
 usually not those made by another, so a library on a share should not count on
-the watcher. `docs/operations.md` says so.
+the watcher. `docs/guides/operations.md` says so.
 
 ## Decision 7 — what the scan job says
 
@@ -334,7 +334,7 @@ foreign keys off, so the rows that reference it (`scan_error`,
      leaves no empty album; a moved root keeps identities; a deletion leaves no
      row behind; a watched change triggers a scan, and none starts while one
      runs;
-   - `docs/operations.md`.
+   - `docs/guides/operations.md`.
 
 ## What is still open
 

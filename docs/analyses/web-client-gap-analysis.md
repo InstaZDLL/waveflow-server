@@ -63,7 +63,7 @@ the same day.
 | | State in WaveFlow |
 | --- | --- |
 | **Smart playlists** (dynamic, iTunes style) | nothing |
-| **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/ui-and-missing-features-plan.md` |
+| **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/plans/ui-and-missing-features-plan.md` |
 | **External scrobbling** — Last.fm, ListenBrainz, Maloja | done, RFC-010; server and screen, see point 15 |
 | **Internet radio** | **done on 2026-10-12** (#217), one list per account, the four Subsonic methods, `/api/v2/radio-stations` and a page |
 | **Jukebox mode** | `jukeboxRole` is declared `false` (`src/subsonic/nodes.rs:319`) |
@@ -96,13 +96,13 @@ This is the bulk of the gap, and it costs client work only.
 
 The gap is not one-way, and these four have no screen either.
 
-- **Receiving a file** — [RFC-008](rfcs/RFC-008-receiving-a-file.md), fragmented
+- **Receiving a file** — [RFC-008](../rfcs/RFC-008-receiving-a-file.md), fragmented
   negotiation, quota, commit. `POST /libraries/{id}/uploads` and the session
   routes.
-- **The per-track canvas** — [RFC-009](rfcs/RFC-009-track-canvas.md), six
+- **The per-track canvas** — [RFC-009](../rfcs/RFC-009-track-canvas.md), six
   routes.
 - **The library event stream** —
-  [RFC-007](rfcs/RFC-007-library-event-stream.md), with the originating device,
+  [RFC-007](../rfcs/RFC-007-library-event-stream.md), with the originating device,
   retention and acknowledgement.
 - **A tag correction that survives a rescan** — `PATCH /tracks/{id}`, backed by
   `track_override`.
@@ -179,7 +179,7 @@ Heavier, because the interaction has to be designed as much as called.
     an RFC before any code.
 
     > **The RFC has existed since 2026-09-13**:
-    > [RFC-010](rfcs/RFC-010-external-scrobbling.md). It settles the attachment
+    > [RFC-010](../rfcs/RFC-010-external-scrobbling.md). It settles the attachment
     > point, the durable queue that freezes what was listened to, what is not
     > queued, the two tiers of credentials, the atomicity boundary — a
     > transactional queue is atomic with ours, never with a third party — and
@@ -205,7 +205,7 @@ Heavier, because the interaction has to be designed as much as called.
     >   unreachable.
     >
     > The "External scrobbling" section of the
-    > [API guide](api-v2-guide.md#external-scrobbling) describes all four.
+    > [API guide](../guides/api-v2-guide.md#external-scrobbling) describes all four.
     >
     > **The four are done, on 2026-09-14** by
     > [#201](https://github.com/InstaZDLL/waveflow-server/pull/201), in
@@ -459,7 +459,7 @@ exists.
 External scrobbling fits in no batch. It needs an RFC.
 
 > **It got one, and it is closed — 2026-09-14.**
-> [RFC-010](rfcs/RFC-010-external-scrobbling.md), written on 2026-09-13 and
+> [RFC-010](../rfcs/RFC-010-external-scrobbling.md), written on 2026-09-13 and
 > implemented the next day on the server, then on the screen the same day. So it
 > never joined a batch: it followed its own path, from the decision to the
 > button.

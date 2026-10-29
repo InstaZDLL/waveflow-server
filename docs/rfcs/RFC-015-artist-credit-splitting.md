@@ -477,7 +477,7 @@ services"), so the desktop can reach the same rules when it chooses to.
   a split.
 - **CLAUDE.md**, "Identifiers and time": one sentence saying that a credit
   decision re-identifies the artists it names and never an album or a track.
-- **The Subsonic façade**: no code change. `docs/subsonic-compatibility.md`
+- **The Subsonic façade**: no code change. `docs/compatibility/subsonic-compatibility.md`
   needs no new row, because no wire shape moves.
 - **The desktop app** (`InstaZDLL/WaveFlow`): nothing in this repository. Its
   own list keeps writing its own profile. Reading a server library's decisions,

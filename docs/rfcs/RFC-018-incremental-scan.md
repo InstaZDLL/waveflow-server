@@ -82,7 +82,7 @@ modification time both preserved is missed until the next full scan. Some tag
 editors preserve the modification time; none can preserve both while changing
 the tags, except by padding to the same size. This is the trade Navidrome and
 every incremental scanner make. The full scan stays available for anyone who
-suspects it, and `docs/operations.md` says so.
+suspects it, and `docs/guides/operations.md` says so.
 
 ## Decision 2 — stream, in path order
 
@@ -126,7 +126,7 @@ still fails the scan, since then nothing can be told apart.
    - tests for each rule: a skipped file is never opened, a sidecar change is
      caught, a file under an unreadable folder is not marked missing, memory
      stays bounded, the scan resumes after a failure;
-   - `docs/operations.md`.
+   - `docs/guides/operations.md`.
 
 ## What is still open
 

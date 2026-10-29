@@ -184,7 +184,7 @@ Fixed here, each small and each tested:
   ever needs to send a ping, a pong or a close, each at most 125 bytes.
 - **A search reads its first 256 characters, and of those its first 16
   words.** Narrowed, never refused, so no client receives an error it never had;
-  recorded in `docs/subsonic-compatibility.md` because `search3` and `search2`
+  recorded in `docs/compatibility/subsonic-compatibility.md` because `search3` and `search2`
   share the builder.
 
 Checked and found bounded, so unchanged: upload offers and chunks (batch,

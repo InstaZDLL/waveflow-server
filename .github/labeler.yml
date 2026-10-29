@@ -56,7 +56,7 @@
   - changed-files:
       - any-glob-to-any-file:
           - 'src/subsonic/**'
-          - 'docs/subsonic-compatibility.md'
+          - 'docs/compatibility/subsonic-compatibility.md'
 
 'scope: streaming':
   - changed-files:

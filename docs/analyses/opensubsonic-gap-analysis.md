@@ -128,7 +128,7 @@ is the kind of defect that shows itself only in production, at one user's, once.
 >
 > The framing question of §5.1 is closed: the four clients were replayed on 23
 > August 2026 against the aligned model, and
-> [`subsonic-compatibility.md`](subsonic-compatibility.md) carries the result.
+> [`subsonic-compatibility.md`](../compatibility/subsonic-compatibility.md) carries the result.
 
 > **Addendum of 2026-08-24.** Point 2 below is closed. The five album output
 > fields the previous day's addendum left open are delivered:

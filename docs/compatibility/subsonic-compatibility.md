@@ -4,7 +4,7 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 
 > **The whole replayed set was run again on 2026-09-16, and every row in it
 > names the model `main` serves.** §4 of
-> [`handoff-2026-08-23.md`](handoff-2026-08-23.md) asked for the campaign to be
+> [`handoff-2026-08-23.md`](../history/handoff-2026-08-23.md) asked for the campaign to be
 > replayed before a stable tag, and **it is now closed**: Symfonium, DSub,
 > Juliet and Feishin were all replayed against a façade that had since been
 > **split by method family** (`b6888c6`), had **seven defects in the moved code**
@@ -79,7 +79,7 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > already fail against them — but "in principle" is what a campaign is for.
 >
 > **And playlists changed in two observable ways with
-> [RFC-020](rfcs/RFC-020-playlists-and-shares.md).** Every row below predates
+> [RFC-020](../rfcs/RFC-020-playlists-and-shares.md).** Every row below predates
 > both. First, **a playlist may hold a track more than once**: DSub's cycle
 > above records two additions "without duplicates" because none were sent, and
 > a client that sends one is now given it, where it was answered a database
@@ -96,7 +96,7 @@ Automated protocol coverage is enforced by the `subsonic_contract`, `subsonic_br
 > `getShares` is unchanged.
 >
 > **And `getSimilarSongs` and `getSimilarSongs2` stopped answering an empty
-> container by default with [RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md).**
+> container by default with [RFC-024](../rfcs/RFC-024-lyrics-stats-and-mixes.md).**
 > With no metadata provider configured they draw from the artist and from the
 > catalogue's own neighbours — co-credited artists, shared genres, a close era
 > and the caller's own listening — where they answered `{}`; with a provider
@@ -236,7 +236,7 @@ Browser-hosted clients need their exact origins in the comma-separated `WAVEFLOW
 ## Deviation for RFC-022: a format the server cannot produce falls back, and AAC
 
 Two changes to `stream` land with
-[RFC-022](rfcs/RFC-022-playback-and-web-client.md), after the 2026-09-16
+[RFC-022](../rfcs/RFC-022-playback-and-web-client.md), after the 2026-09-16
 replay, and no client has been replayed against them yet.
 
 - **`format=aac` is produced** — also spelled `m4a` or `adts`, in any case — as
@@ -299,7 +299,7 @@ native API's (`POST /api/v2/playlists/{id}/move`).
 
 ## Deviation for RFC-023: a search reads its first 256 characters and 16 terms
 
-[RFC-023](rfcs/RFC-023-hardening.md) bounds the full-text query that
+[RFC-023](../rfcs/RFC-023-hardening.md) bounds the full-text query that
 `search3`, `search2` and the native search build from what a client typed.
 Each word was one more phrase FTS5 intersects, three times over, and nothing
 bounded them but the form body — some seven hundred kilobytes. A query is now
@@ -324,7 +324,7 @@ closing (the same RFC) affects `/share/`, which is not part of the façade.
 Both land after the 2026-09-16 replay, and no client has been replayed against
 them yet. Nothing that existed changes shape, with the one exception named.
 
-**Smart playlists** ([RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md)
+**Smart playlists** ([RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md)
 decision 6). `getPlaylists` lists them after the ordinary playlists, and
 `getPlaylist` answers one with its entries, evaluated at that moment. Each
 carries the OpenSubsonic `readonly="true"`. **`getPlaylists` evaluates none of
@@ -673,7 +673,7 @@ Found on 2026-10-28, in the third client campaign.
 with a `NullPointerException` in `Share.getName`, which rewrites the share's
 `url` without checking it is there. The schema makes `url` required on a
 `share`, and Navidrome always sends it. This façade sent it in the answer to
-`createShare` only. [RFC-020](rfcs/RFC-020-playlists-and-shares.md) had kept
+`createShare` only. [RFC-020](../rfcs/RFC-020-playlists-and-shares.md) had kept
 it out of later reads because only the token's hash is stored. But the token
 is derived from the instance key and the share's id, so the server can derive
 it again on any read without storing it.

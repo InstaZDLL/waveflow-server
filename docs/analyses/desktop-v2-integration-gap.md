@@ -4,13 +4,13 @@
 > integration with PKCE was validated end to end, and then the conservative M5
 > reconciliation was merged. This document remains a historical record of the
 > migration decisions; it is no longer a list of work. See the
-> [final handoff](M4-handoff.md) and [RFC-004](rfcs/RFC-004-local-server-reconciliation.md).
+> [final handoff](../history/M4-handoff.md) and [RFC-004](../rfcs/RFC-004-local-server-reconciliation.md).
 
 > Survey of 2026-08-10, taken read-only against
 > [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow) at `802f189b`.
 > It describes what Desktop expected on that date, what server v2 offered, and
 > what had no equivalent. No code had been modified during the survey. The
-> target contract is [RFC-003](rfcs/RFC-003-waveflow-sync-v2.md).
+> target contract is [RFC-003](../rfcs/RFC-003-waveflow-sync-v2.md).
 
 ## What was found on 2026-08-10
 

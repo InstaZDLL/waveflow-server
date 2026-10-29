@@ -185,7 +185,7 @@ anyone asks, downloads it again.
   which that decision already anticipated by name.
 - **RFC-013**: decision 3's "there is no automatic banner" and decision 5's
   "for the banner, none" name this document as the one that changed them.
-- **`docs/operations.md`**: the provider table gains `theaudiodb`, what it is
+- **`docs/guides/operations.md`**: the provider table gains `theaudiodb`, what it is
   asked for (banners only), the key it needs, and its fixed pace.
 - **The web client**: nothing changes in how the header is drawn — it already
   draws `banner_hash`. It gains the provenance line under an automatic banner,
@@ -202,7 +202,7 @@ Each step is its own pull request, shippable without the next:
    and its key, the fill and its pace, the two columns and their migration,
    the linking and its event, the effective banner and `enrichment.banner` on
    the artist detail, cover-art resolution, the sweep, and
-   `docs/operations.md`.
+   `docs/guides/operations.md`.
 3. **The web client**: the provenance line under an automatic banner.
 
 ## What is still open

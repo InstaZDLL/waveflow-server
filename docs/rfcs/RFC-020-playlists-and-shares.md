@@ -104,7 +104,7 @@ share failed with the same 503.
   is the owner's username — which is what Feishin reads to decide whether a
   playlist is editable — and `public` is the stored flag. This is a change to
   frozen wire behaviour, made because the flag the façade accepted had no
-  effect anywhere, and recorded in `docs/subsonic-compatibility.md`. The
+  effect anywhere, and recorded in `docs/compatibility/subsonic-compatibility.md`. The
   `username` parameter of `getPlaylists` stays ignored.
 
 ## Decision 3 — the share link opens a player, by content negotiation
@@ -249,7 +249,7 @@ type), and the MP3 otherwise.
 >   `autoplay`, so opening the page still fetches and plays nothing, and
 >   pressing it plays what touching the first row plays.
 >
-> Recorded in `docs/subsonic-compatibility.md`.
+> Recorded in `docs/compatibility/subsonic-compatibility.md`.
 
 ## Logging
 
@@ -297,7 +297,7 @@ the one item left.
   account, and anyone naming an account that does not exist, is answered
   error 70 — a 50 would confirm the name belongs to someone. Naming oneself is
   the ordinary listing, and every write stays the owner's. Recorded in
-  `docs/subsonic-compatibility.md`.
+  `docs/compatibility/subsonic-compatibility.md`.
 - **Artwork on the share page — done.** The share's JSON gives each track that
   has a cover a `coverUrl`, `/share/{token}/tracks/{id}/cover?visit=<pass>`,
   authorised exactly as the stream is: by the pass the counted opening handed
