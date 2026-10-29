@@ -160,15 +160,21 @@ async fn an_ipv6_wildcard_finds_a_copy_on_ipv4_loopback() {
 }
 
 /// The same, through `bind_probing`: the address handed over is the one that
-/// answered. Only where a `[::]` bind does collide with `127.0.0.1` — Linux
-/// and macOS by default; Windows makes it IPv6-only, and a host without IPv6
-/// refuses it outright — so it checks that first and stops otherwise.
+/// answered. Only where a `[::]` bind does collide with `127.0.0.1`, so it
+/// checks that first. On Linux it must: `net.ipv6.bindv6only` is 0 by
+/// default, and a test that returned there would pass having checked nothing,
+/// with libtest hiding why. Elsewhere it stops: Windows makes `[::]`
+/// IPv6-only, and a host without IPv6 refuses it outright.
 #[tokio::test]
 async fn a_wildcard_bind_hands_over_the_address_that_answered() {
     let held = holder_answering(waveflow_health()).await;
     let wildcard = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), held.port());
     match TcpListener::bind(wildcard).await {
         Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+        other if cfg!(target_os = "linux") => panic!(
+            "a [::] bind did not collide with 127.0.0.1 ({other:?}): \
+             is net.ipv6.bindv6only set, or IPv6 off?"
+        ),
         other => {
             eprintln!("no dual-stack collision on this host ({other:?}); nothing to check");
             return;
