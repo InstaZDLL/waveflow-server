@@ -709,6 +709,25 @@ and another account signing in on the same browser deletes the previous one's
 before it sees them. Nothing needs configuring; a proxy must simply serve `/sw.js`
 from the same origin as the client, which it does already.
 
+## A server started from a standalone download
+
+The standalone archives ([plan](../plans/standalone-download-plan.md)) carry a
+`laptop.env` beside the executable, read at startup without overriding the
+environment, which sets `WAVEFLOW_LAPTOP=true`. Laptop mode moves two
+defaults, each only while its own variable is unset: the data directory
+becomes the system's application-data folder (`%LOCALAPPDATA%\WaveFlow Server`,
+`~/Library/Application Support/WaveFlow Server`, or
+`$XDG_DATA_HOME/waveflow-server`, falling back to `~/.local/share`), and the
+transcode cache is capped at 2 GiB. Before the boot touches the database it
+checks the port: a WaveFlow already answering `/health` there makes the new
+process print its address and exit, anything else refuses to start. It also
+prints a one-line banner and, without `WAVEFLOW_PUBLIC_URL`, says which address
+the network can use instead of warning about the setting.
+
+An installed server never needs it, and no default changes without it. To move
+a laptop install onto a server, copy its data folder whole — the database and
+the instance key only work together — and point `WAVEFLOW_DATA_DIR` at it.
+
 ## Probes
 
 | Path | Answers |

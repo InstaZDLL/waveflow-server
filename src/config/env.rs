@@ -32,7 +32,18 @@ where
 /// guards whether a personal token may cross a network in clear, so an operator
 /// who typed `True ` or `on` must be told, not quietly overruled.
 pub(super) fn parse_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
-    let Ok(raw) = std::env::var(name) else {
+    parse_bool_value(name, std::env::var(name).ok().as_deref(), default)
+}
+
+/// [`parse_bool_env`] over a value already read, for a setting resolved from
+/// a lookup the tests can hand in instead of the process environment
+/// (`laptop.rs`).
+pub(super) fn parse_bool_value(
+    name: &str,
+    raw: Option<&str>,
+    default: bool,
+) -> anyhow::Result<bool> {
+    let Some(raw) = raw else {
         return Ok(default);
     };
     match raw.trim().to_ascii_lowercase().as_str() {
@@ -48,7 +59,21 @@ where
     T: std::str::FromStr + PartialOrd + Default + Copy + std::fmt::Display,
     T::Err: std::fmt::Display,
 {
-    let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    parse_positive_value(name, std::env::var(name).ok(), default)
+}
+
+/// [`parse_positive_env`] over a value already read, as [`parse_bool_value`]
+/// is.
+pub(super) fn parse_positive_value<T>(
+    name: &str,
+    raw: Option<String>,
+    default: T,
+) -> anyhow::Result<T>
+where
+    T: std::str::FromStr + PartialOrd + Default + Copy + std::fmt::Display,
+    T::Err: std::fmt::Display,
+{
+    let raw = raw.unwrap_or_else(|| default.to_string());
     let value = raw
         .parse::<T>()
         .map_err(|error| anyhow::anyhow!("invalid {name}: {error}"))?;

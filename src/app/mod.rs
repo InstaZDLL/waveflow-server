@@ -7,6 +7,7 @@
 //! re-exports in `lib.rs`.
 
 mod boot;
+pub mod laptop;
 mod openapi;
 mod router;
 mod source;

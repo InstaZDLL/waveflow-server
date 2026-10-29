@@ -5,6 +5,7 @@ use super::metadata::parse_metadata_providers;
 use super::{limits::validate_canvas, CanvasLimits};
 use super::{limits::validate_uploads, UploadLimits};
 use super::{scrobbling::parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
+use std::path::PathBuf;
 use std::time::Duration;
 
 fn workable() -> UploadLimits {
@@ -436,7 +437,6 @@ fn legacy_clients_are_a_trimmed_list_defaulting_to_dsub() {
 #[test]
 fn ffmpeg_beside_the_executable_is_found_after_the_setting_and_before_path() {
     use super::tools::resolve_tool;
-    use std::path::PathBuf;
 
     let beside = tempfile::tempdir().unwrap();
     let suffix = std::env::consts::EXE_SUFFIX;
@@ -478,4 +478,231 @@ fn the_sidecar_directory_is_the_running_executables() {
     let executable = std::env::current_exe().unwrap();
     let directory = super::tools::executable_dir().unwrap();
     assert!(directory.join(executable.file_name().unwrap()).is_file());
+}
+
+/// The variables of one imagined environment, for `laptop::resolve`.
+fn lookup<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<std::ffi::OsString> + 'a {
+    move |name| {
+        vars.iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| std::ffi::OsString::from(value))
+    }
+}
+
+/// Without `WAVEFLOW_LAPTOP`, nothing moves: the systemd unit that relies on
+/// `./data` and the 10 GiB cache, and sets nothing, keeps both — even with a
+/// `HOME` and a `LOCALAPPDATA` that laptop mode would have used.
+#[test]
+fn an_installed_server_keeps_its_defaults() {
+    use super::laptop::{resolve, Platform, DEFAULT_TRANSCODE_CACHE_MAX_BYTES};
+
+    for platform in [Platform::Windows, Platform::MacOs, Platform::Unix] {
+        for vars in [
+            &[][..],
+            &[
+                ("HOME", "/home/ada"),
+                ("LOCALAPPDATA", r"C:\Users\ada\AppData\Local"),
+            ][..],
+            &[("WAVEFLOW_LAPTOP", "false"), ("HOME", "/home/ada")][..],
+        ] {
+            let resolved = resolve(lookup(vars), platform).unwrap();
+            assert!(!resolved.laptop);
+            assert_eq!(resolved.data_dir, PathBuf::from("data"));
+            assert_eq!(
+                resolved.transcode_cache_max_bytes,
+                DEFAULT_TRANSCODE_CACHE_MAX_BYTES
+            );
+        }
+    }
+    assert_eq!(DEFAULT_TRANSCODE_CACHE_MAX_BYTES, 10_737_418_240);
+}
+
+/// Laptop mode keeps its data in the system's application-data folder, the
+/// local one on Windows, and its transcode cache at 2 GiB.
+#[test]
+fn laptop_mode_moves_the_data_to_the_os_folder_and_shrinks_the_cache() {
+    use super::laptop::{resolve, Platform, LAPTOP_TRANSCODE_CACHE_MAX_BYTES};
+
+    let local = r"C:\Users\ada\AppData\Local";
+    let cases = [
+        (
+            Platform::Windows,
+            vec![
+                ("LOCALAPPDATA", local),
+                ("APPDATA", r"C:\Users\ada\AppData\Roaming"),
+            ],
+            PathBuf::from(local).join("WaveFlow Server"),
+        ),
+        (
+            Platform::MacOs,
+            vec![("HOME", "/Users/ada")],
+            PathBuf::from("/Users/ada/Library/Application Support/WaveFlow Server"),
+        ),
+        (
+            Platform::Unix,
+            vec![("HOME", "/home/ada"), ("XDG_DATA_HOME", "/data/ada")],
+            PathBuf::from("/data/ada/waveflow-server"),
+        ),
+        (
+            Platform::Unix,
+            vec![("HOME", "/home/ada")],
+            PathBuf::from("/home/ada/.local/share/waveflow-server"),
+        ),
+        // The XDG specification ignores a relative value, and so does this.
+        (
+            Platform::Unix,
+            vec![("HOME", "/home/ada"), ("XDG_DATA_HOME", "relative/share")],
+            PathBuf::from("/home/ada/.local/share/waveflow-server"),
+        ),
+    ];
+    for (platform, mut vars, expected) in cases {
+        vars.push(("WAVEFLOW_LAPTOP", "true"));
+        let resolved = resolve(lookup(&vars), platform).unwrap();
+        assert!(resolved.laptop);
+        assert_eq!(resolved.data_dir, expected, "{platform:?}");
+        assert_eq!(
+            resolved.transcode_cache_max_bytes,
+            LAPTOP_TRANSCODE_CACHE_MAX_BYTES
+        );
+    }
+    assert_eq!(LAPTOP_TRANSCODE_CACHE_MAX_BYTES, 2_147_483_648);
+}
+
+/// Laptop mode changes defaults only: a data directory or a cache size the
+/// user set still wins, and an empty data directory left in `laptop.env` is
+/// read as unset rather than as the working directory.
+#[test]
+fn laptop_mode_yields_to_every_variable_set_explicitly() {
+    use super::laptop::{resolve, Platform, LAPTOP_TRANSCODE_CACHE_MAX_BYTES};
+
+    let vars = [
+        ("WAVEFLOW_LAPTOP", "true"),
+        ("HOME", "/home/ada"),
+        ("WAVEFLOW_DATA_DIR", "/srv/music-data"),
+        ("WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES", "123456"),
+    ];
+    let resolved = resolve(lookup(&vars), Platform::Unix).unwrap();
+    assert_eq!(resolved.data_dir, PathBuf::from("/srv/music-data"));
+    assert_eq!(resolved.transcode_cache_max_bytes, 123_456);
+
+    let left_empty = [
+        ("WAVEFLOW_LAPTOP", "true"),
+        ("HOME", "/home/ada"),
+        ("WAVEFLOW_DATA_DIR", ""),
+    ];
+    let resolved = resolve(lookup(&left_empty), Platform::Unix).unwrap();
+    assert_eq!(
+        resolved.data_dir,
+        PathBuf::from("/home/ada/.local/share/waveflow-server")
+    );
+    assert_eq!(
+        resolved.transcode_cache_max_bytes,
+        LAPTOP_TRANSCODE_CACHE_MAX_BYTES
+    );
+
+    // An explicit data directory needs no home to resolve against.
+    let no_home = [("WAVEFLOW_LAPTOP", "1"), ("WAVEFLOW_DATA_DIR", "/srv/d")];
+    assert!(resolve(lookup(&no_home), Platform::Windows).is_ok());
+}
+
+/// No silent fall-back to `./data`, which for a double-clicked binary is the
+/// Downloads folder, and no flag quietly read as off.
+#[test]
+fn laptop_mode_refuses_what_it_cannot_resolve() {
+    use super::laptop::{resolve, Platform};
+
+    let windows = resolve(lookup(&[("WAVEFLOW_LAPTOP", "true")]), Platform::Windows)
+        .unwrap_err()
+        .to_string();
+    assert!(windows.contains("LOCALAPPDATA"), "{windows}");
+    assert!(windows.contains("WAVEFLOW_DATA_DIR"), "{windows}");
+    let unix = resolve(
+        lookup(&[("WAVEFLOW_LAPTOP", "true"), ("HOME", "")]),
+        Platform::Unix,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(unix.contains("HOME"), "{unix}");
+
+    assert!(resolve(lookup(&[("WAVEFLOW_LAPTOP", "laptop")]), Platform::Unix).is_err());
+    assert!(resolve(
+        lookup(&[("WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES", "0")]),
+        Platform::Unix
+    )
+    .is_err());
+}
+
+/// The template the archive ships switches laptop mode on and sets nothing
+/// else: every other setting in it is a commented-out suggestion, so the
+/// defaults of laptop mode are what a fresh download runs with.
+#[test]
+fn the_shipped_laptop_env_switches_laptop_mode_on_and_nothing_else() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("packaging")
+        .join("standalone")
+        .join(super::LAPTOP_ENV_FILE);
+    let file = std::fs::File::open(&path).unwrap();
+    let pairs = dotenvy::from_read_iter(file)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(pairs, [("WAVEFLOW_LAPTOP".to_owned(), "true".to_owned())]);
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    for suggestion in [
+        "# WAVEFLOW_BIND=0.0.0.0:4533",
+        "# WAVEFLOW_BIND=127.0.0.1:4534",
+        "# WAVEFLOW_DATA_DIR=",
+        "# WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES=",
+    ] {
+        assert!(text.contains(suggestion), "{suggestion} is missing");
+    }
+}
+
+/// Every suggestion the template carries works once its `#` is removed —
+/// the one edit the template asks of its reader. The data folder's examples
+/// above all: a Windows path with a space is read literally, backslashes
+/// included, and only because it sits between single quotes.
+#[test]
+fn every_suggestion_in_the_shipped_laptop_env_parses_once_uncommented() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("packaging")
+        .join("standalone")
+        .join(super::LAPTOP_ENV_FILE);
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut values = Vec::new();
+    for suggestion in text
+        .lines()
+        .filter_map(|line| line.strip_prefix("# WAVEFLOW_"))
+    {
+        let line = format!("WAVEFLOW_{suggestion}");
+        let parsed = dotenvy::from_read_iter(line.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|error| panic!("{line}: {error}"));
+        values.extend(parsed);
+    }
+    assert!(values.contains(&(
+        "WAVEFLOW_DATA_DIR".to_owned(),
+        r"D:\Music Data\WaveFlow Server".to_owned()
+    )));
+    assert!(values.contains(&(
+        "WAVEFLOW_DATA_DIR".to_owned(),
+        "/Users/ada/Music Data/WaveFlow Server".to_owned()
+    )));
+}
+
+/// The same path without its quotes fails the whole file, and the refusal
+/// says how to write it rather than only where the parser stopped.
+#[test]
+fn an_unquoted_windows_path_is_refused_with_the_fix() {
+    let line = r"WAVEFLOW_DATA_DIR=D:\Music Data\WaveFlow Server";
+    let error = dotenvy::from_read_iter(line.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_err();
+    let refusal = super::laptop::refusal(std::path::Path::new("laptop.env"), &error);
+    assert!(refusal.contains("cannot read laptop.env"), "{refusal}");
+    assert!(refusal.contains("between single quotes"), "{refusal}");
+    assert!(
+        refusal.contains(r"WAVEFLOW_DATA_DIR='D:\Music Data\WaveFlow Server'"),
+        "{refusal}"
+    );
 }
