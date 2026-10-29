@@ -159,6 +159,38 @@ async fn an_ipv6_wildcard_finds_a_copy_on_ipv4_loopback() {
     );
 }
 
+/// The same, through `bind_probing`: the address handed over is the one that
+/// answered. Only where a `[::]` bind does collide with `127.0.0.1` — Linux
+/// and macOS by default; Windows makes it IPv6-only, and a host without IPv6
+/// refuses it outright — so it checks that first and stops otherwise.
+#[tokio::test]
+async fn a_wildcard_bind_hands_over_the_address_that_answered() {
+    let held = holder_answering(waveflow_health()).await;
+    let wildcard = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), held.port());
+    match TcpListener::bind(wildcard).await {
+        Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {}
+        other => {
+            eprintln!("no dual-stack collision on this host ({other:?}); nothing to check");
+            return;
+        }
+    }
+    let (_temp, config) = config_on(wildcard);
+    match bind_probing(
+        &config,
+        None,
+        Duration::from_secs(3),
+        Duration::from_secs(3),
+    )
+    .await
+    .unwrap()
+    {
+        Startup::AlreadyRunning(url) => {
+            assert_eq!(url, format!("http://127.0.0.1:{}/", held.port()));
+        }
+        Startup::Listening(_) => panic!("bound a port another server holds"),
+    }
+}
+
 #[test]
 fn only_a_waveflow_health_body_is_recognised() {
     assert!(is_waveflow_health(&serde_json::json!({
