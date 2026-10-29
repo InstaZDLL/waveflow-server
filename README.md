@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-logo-horizontal-dark.svg" />
@@ -8,29 +9,148 @@
 <h1 align="center">WaveFlow Server</h1>
 
 <p align="center">
-  <strong>Self-hosted music server — one Rust binary, SQLite, and an OpenSubsonic API your clients already speak</strong>
+  <strong>Your music, everywhere you listen.</strong>
+  <br />
+  A self-hosted music server in one Rust binary — with a web player built in, and the OpenSubsonic API your apps already speak.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/static/v1?label=version&message=2.0.0-beta.1&color=emerald&style=flat-square" alt="Version" />
-  <img src="https://img.shields.io/badge/rust-1.98%2B-orange?style=flat-square&logo=rust" alt="Rust 1.98+" />
-  <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
+  <img src="https://img.shields.io/badge/version-2.0.0-10b981?style=flat-square" alt="Version 2.0.0" />
   <img src="https://img.shields.io/badge/API-OpenSubsonic-6a4bd6?style=flat-square" alt="OpenSubsonic" />
-  <img src="https://img.shields.io/badge/docker-ghcr.io%20%7C%20Docker%20Hub-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image on GHCR and Docker Hub" />
+  <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
+  <img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image for amd64 and arm64" />
+  <img src="https://img.shields.io/badge/rust-1.98%2B-orange?style=flat-square&logo=rust" alt="Rust 1.98+" />
   <img src="https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square" alt="License AGPL-3.0" />
+</p>
+
+<p align="center">
+  Point WaveFlow Server at the folders where your music lives. It builds your library, streams it to your browser,
+  your phone and your desktop, and converts on the fly when the connection is tight.
+  <br />
+  No PostgreSQL, no Redis, no identity provider: <b>one binary, one database file, one key file.</b>
+  <br />
+  <strong>Your files. Your server. Every player.</strong>
+</p>
+
+<p align="center">
+  <a href="#install"><b>Install</b></a>
+  &nbsp;·&nbsp;
+  <a href="#features"><b>Features</b></a>
+  &nbsp;·&nbsp;
+  <a href="#screenshots"><b>Screenshots</b></a>
+  &nbsp;·&nbsp;
+  <a href="#works-with-your-apps"><b>Apps</b></a>
+  &nbsp;·&nbsp;
+  <a href="docs/README.md"><b>Documentation</b></a>
+  &nbsp;·&nbsp;
+  <a href="#development"><b>Develop</b></a>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/albums.png" width="880" alt="The web player's library: mixes made from your listening above a grid of albums, with the navigation rail on the left" />
+  <br />
+  <sub><b>The web player</b> · your library, with mixes made from what you actually listen to</sub>
 </p>
 
 ---
 
-WaveFlow Server streams the music you already own to the clients you already use. It scans your folders, owns the catalogue in a single SQLite file, transcodes on demand with FFmpeg, and answers on three surfaces at once: the **OpenSubsonic API** that dozens of existing players speak, a **native API** for WaveFlow Desktop, and an **embedded web player** compiled into the binary.
+## Why WaveFlow Server
 
-No PostgreSQL. No Redis. No identity provider. No container orchestration. **One binary, one database file, one key file.**
+<table>
+  <tr>
+    <td>📦&nbsp;<b>Up in a minute</b></td>
+    <td>One container or one binary, and FFmpeg. The catalogue lives in a single SQLite file: back up two files and you have backed up everything.</td>
+  </tr>
+  <tr>
+    <td>📱&nbsp;<b>Your apps already work</b></td>
+    <td>Symfonium, Feishin, DSub, Juliet and the other Subsonic players connect as they are. Each release is run against real clients, and the results are <a href="docs/compatibility/subsonic-compatibility.md">published</a>.</td>
+  </tr>
+  <tr>
+    <td>🌐&nbsp;<b>A player in the browser</b></td>
+    <td>No app to install: open the server's address and listen, on a desktop or a phone, even offline.</td>
+  </tr>
+  <tr>
+    <td>🔁&nbsp;<b>Nothing moves under you</b></td>
+    <td>Album and artist IDs are derived from your tags, so a reinstall gives the same IDs back: favourites, playlists and links survive.</td>
+  </tr>
+  <tr>
+    <td>🔍&nbsp;<b>Knows what your files really are</b></td>
+    <td>The audio of every lossless file is measured, and a FLAC that was once an MP3 is shown for what it is.</td>
+  </tr>
+  <tr>
+    <td>🛡️&nbsp;<b>Yours, and only yours</b></td>
+    <td>Your audio files are never rewritten. Nothing leaves the server unless you switch it on, and <a href="docs/guides/privacy.md">every outbound request is listed</a>.</td>
+  </tr>
+</table>
 
-> **Status — `2.0.0-beta.1`, with more on `main` since.** Milestones M0 to M6 pass their release gates, and the OpenSubsonic façade was last run against four real clients on 2026-10-27/28 — **Symfonium 15.1.0** and **DSub 5.5.3** on an Android 17 emulator, **Feishin 1.17.0** on Windows desktop, and **Juliet 8** on a physical iPhone — with every result read back from server state rather than from what the client displayed, and every server defect it found fixed. See [the compatibility matrix](docs/compatibility/subsonic-compatibility.md) for what each one actually exercises, and what it does not, and the [CHANGELOG](CHANGELOG.md) for what `main` holds beyond the last tag.
+## Features
+
+### 🎧 Listening
+
+- **A complete web player** compiled into the server: albums, artists, songs, genres, folders, search as you type, queue, history and favourites.
+- **Mixes** made from your own listening, **listening statistics**, and **similar songs** drawn from your library.
+- **Synced lyrics** from the files or their `.lrc`, with a full-screen immersive view; LRCLIB fills the gaps once you switch it on.
+- **Streams the original**, or converts on the fly to MP3, Opus or AAC, with seeking inside a conversion and server-side volume levelling (ReplayGain).
+- **Offline listening**, installable as an app on a phone, keyboard shortcuts, media keys and lock-screen controls.
+- **14 themes**, light and dark, in English and French.
+
+### 📚 Your library
+
+- **Scans quickly and keeps up**: only what changed is read again, one damaged folder does not stop the rest, and a watcher picks up new files as they land.
+- **Tags or folders**: browse by album and artist, or by the folders on your disk.
+- **Thirteen credit roles** (composer, producer, featured artist…), and a joined credit like `Artist A, Artist B` split into two artists when you decide it should be.
+- **Missing files keep their data**: favourites, ratings and plays wait for the file to come back. A purge can be undone for a week.
+- **Uploads**: a library can accept files sent from a client.
+
+### ✨ Discovery
+
+- **Artist pages** with biographies, similar artists and portraits from Last.fm, TheAudioDB and Deezer, once you opt in.
+- **Choose the portrait and the banner yourself**, or let the server find a banner.
+- **Smart playlists** that fill themselves from rules, **internet radio** and **podcasts**.
+
+### 📋 Playlists and sharing
+
+- Playlists with repeats, **public playlists** for the other accounts, and **`.m3u` import and export**.
+- **Share links** that open a player page in any browser, with an optional expiry and visit limit.
+- **Scrobbling** to ListenBrainz, Last.fm and Maloja, queued so that no listen is lost when a service is down.
+
+### 🔒 Accounts and safety
+
+- **Several accounts**, each seeing only the libraries it belongs to.
+- Argon2id passwords, tokens stored only as hashes, the Subsonic password encrypted with a local key, and sign-in protected against guessing.
+- A one-time token guards the first-run setup, so a stranger cannot claim a fresh server.
+- **Backups**: `waveflow-server database backup` copies the database and its key together, and the server makes a copy of both before every upgrade.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/artist.png" alt="An artist page: a hand-chosen portrait, a banner behind the name, and the artist's albums below" /></td>
+    <td width="50%"><img src="docs/screenshots/now-playing.png" alt="Now playing: the album cover large, the title, and the quality of the stream under it, above the play bar" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Artist</b> · a portrait and a banner, chosen or found</sub></td>
+    <td align="center"><sub><b>Now playing</b> · with what is actually being streamed</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/album-light.png" alt="An album page in a light theme: cover, title, year and length, the play button and the track list with ratings and favourites" /></td>
+    <td width="50%"><img src="docs/screenshots/statistics-light.png" alt="Listening statistics in a light theme: listens, listening time, a bar chart per day, and the top tracks, artists and albums" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Album</b> · in one of the light themes</sub></td>
+    <td align="center"><sub><b>Statistics</b> · counted from your own plays</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/screenshots/quality.png" width="660" alt="The quality page: lossless files measured from their audio, with counts per verdict and, for each track, where its highs stop and what the audio says" /></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub><b>Quality</b> · every lossless file measured, not taken at its word</sub></td>
+  </tr>
+</table>
 
 ## Install
 
-**Requirements**: `ffmpeg` and `ffprobe` on `PATH`, or beside the `waveflow-server` executable. Nothing else — no database server, no cache, no broker.
+**You need** FFmpeg and ffprobe, on `PATH` or beside the `waveflow-server` executable (already in the Docker image). Nothing else: no database server, no cache, no broker.
 
 ### Docker
 
@@ -39,49 +159,67 @@ docker run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro \
-  ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
+  ghcr.io/instazdll/waveflow-server:2.0.0
 ```
 
-The image is published to two registries, for `linux/amd64` and `linux/arm64`, under the same tags and the same digest — pull from whichever your host reaches:
+The image is built for `linux/amd64` and `linux/arm64` and published under the same tags on both registries:
 
 | Registry | Image |
 | --- | --- |
 | GitHub Container Registry | `ghcr.io/instazdll/waveflow-server` |
 | Docker Hub | `docker.io/instazdll/waveflow-server` |
 
-Each release is tagged with its version; `beta` follows the latest pre-release, and `latest` will follow the latest stable release once there is one. Docker Hub carries the releases after `2.0.0-beta.1` — that one and earlier are on GHCR only, which is why the commands here pull from GHCR.
+Each release is tagged with its version, and `latest` follows the latest stable release.
 
-Or with Compose — set `WAVEFLOW_MUSIC_PATH` to your music directory, which is mounted read-only:
+With Compose, set `WAVEFLOW_MUSIC_PATH` to your music folder, which is mounted read-only:
 
 ```bash
 WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
 ```
 
-Then create the admin account and register a library:
+### First steps
+
+Open `http://your-host:4533`. The setup screen creates the administrator account; it asks for the one-time token the server wrote in its data directory:
+
+```bash
+docker exec waveflow cat /data/setup-token
+```
+
+Then add your music under that account (`admin` below), and the first scan starts on its own:
+
+```bash
+docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
+```
+
+<details>
+<summary>From the command line instead of the browser</summary>
 
 ```bash
 docker exec -e WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters' \
   waveflow waveflow-server account create-admin --username admin
-docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
 ```
 
-Open `http://your-host:4533` and sign in. The scan starts on its own.
+</details>
 
-The admin account can also be created from the browser's setup screen
-instead. From the release after 2.0.0-beta.1 — not the `2.0.0-beta.1` image
-pinned above, which asks for no token — that screen asks for the one-time token
-the server wrote to `setup-token` in its data directory
-(`docker exec waveflow cat /data/setup-token`), so a stranger who reaches a
-fresh server first cannot claim it. See
-[operations](docs/guides/operations.md#the-first-account-needs-the-setup-token).
+### Connect a Subsonic app
 
-### From source
+Subsonic apps use a **dedicated password**, separate from the web one:
 
-Requires **Rust 1.98+** as well.
+```bash
+docker exec -e WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password' \
+  waveflow waveflow-server credential set --actor admin --username admin
+```
+
+Point your app at `http://your-host:4533` with that username and password. Behind a reverse proxy, set `WAVEFLOW_PUBLIC_URL`; the [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) has the rest, including backups and the instance key.
+
+<details>
+<summary>From source</summary>
+
+Requires **Rust 1.98+** and [bun](https://bun.sh).
 
 ```bash
 bun --cwd=webapp install
-bun run build              # webapp first, then cargo — the order matters
+bun run build              # the web player first, then the server: the order matters
 
 export WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters'
 cargo run -- account create-admin --username admin
@@ -89,110 +227,74 @@ cargo run -- library add --owner admin --name Music --path /path/to/music
 cargo run
 ```
 
-`cargo build` works without a client build too: a placeholder page is embedded when `webapp/dist` is absent.
+</details>
 
-### Connect a Subsonic client
+## Works with your apps
 
-A Subsonic client uses a **dedicated password**, separate from the web account's:
+Each release is checked against real clients, and every result is read back from the server rather than from what the app displayed. The last run was on 2026-10-27 and 2026-10-28:
 
-```bash
-export WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password'
-waveflow-server credential set --actor admin --username admin
-```
-
-Point any Subsonic client at `http://your-host:4533` with that username and password. Browser-hosted clients need their origin listed, and a reverse proxy needs `WAVEFLOW_PUBLIC_URL` — both are in the [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally).
-
-## How it works
-
-| | |
-| --- | --- |
-| **One process** | `src/main.rs` loads config and serves; everything else lives behind `app()` in `src/app/router.rs`, re-exported by `src/lib.rs`, so the test suite drives the very router `main` does |
-| **One database** | SQLite in WAL with foreign keys and a single process-wide writer. Migrations are dated, embedded at compile time and checksummed — editing an applied one makes the server refuse to start |
-| **One catalogue, three surfaces** | `/api/v2`, the Subsonic façade and the web client all call the same domain services. A mutation reachable from two surfaces calls one method, which is what stops them drifting |
-| **Tenancy in the query** | Enforced through library membership inside the SQL, never in a handler. A resource that is missing and one that belongs to somebody else answer identically — a 404 never confirms existence to someone not entitled to it |
-| **Read-only files** | The scanner and every tag operation leave your audio files untouched |
-
-## Why another one
-
-**Your identifiers stop moving.** Album and artist IDs are *derived* from the tags that name them (UUID v8 over a configurable spec, the same grammar Navidrome uses). Rebuild your database from scratch and the same files answer with the same IDs — so cached artwork, starred albums and deep links survive a reinstall. Track IDs are drawn at random on purpose: six tables cascade off them, and a scan matches a file by path and then by content hash, which is a better identity than any tag.
-
-**The Subsonic surface is the reference's, not a variant.** Where WaveFlow and Navidrome disagreed on the artist model, we withdrew — thirteen credit roles, `contributors[]`, `displayComposer`, `roles[]`, an album that hangs off *every* artist it is credited to, and separator rules that split `Rue Delacour / Ivy Trench` in two while leaving `AC/DC` alone.
-
-## Features
-
-| Area | Highlights | Deep dive |
+| App | Tested on | What it was seen doing |
 | --- | --- | --- |
-| **Catalogue** | Authoritative scanner with content hashing and relocation detection, FTS5 full-text search that folds case and diacritics, deduplicated artwork, embedded and sidecar lyrics, extended tags (ISRC, BPM, moods, ReplayGain, explicit status) | [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md) |
-| **Credits** | Thirteen roles from the reference model — artist, album artist, composer, lyricist, conductor, arranger, producer, director, engineer, mixer, remixer, DJ mixer, performer with its instrument — one person can hold several on one track | [Subsonic guide](docs/guides/subsonic-api-guide.md) |
-| **Streaming** | Original byte-range playback, on-demand FFmpeg transcode to MP3, Opus or AAC with a disk cache, per-user and global concurrency limits, temporal seek into a live transcode, server-side ReplayGain levelling | [Subsonic guide](docs/guides/subsonic-api-guide.md) · [RFC-022](docs/rfcs/RFC-022-playback-and-web-client.md) |
-| **OpenSubsonic** | The full browse, search, playlist, favourite, rating, scrobble, bookmark, play-queue, share and internet-radio surface, in XML or JSON, over GET or form POST, with the extensions it advertises | [compatibility matrix](docs/compatibility/subsonic-compatibility.md) |
-| **Native API** | `/api/v2` with rotating sessions, Authorization Code + PKCE for desktop clients, user-data sync over REST and WebSocket, SSE scan progress, an OpenAPI document and an interactive reference | [API v2 guide](docs/guides/api-v2-guide.md) · [RFC-003](docs/rfcs/RFC-003-waveflow-sync-v2.md) |
-| **Uploads & canvas** | A library can accept files, decided server-side and received in chunks; a track can carry a looping visual with its own store and tickets | [RFC-008](docs/rfcs/RFC-008-receiving-a-file.md) · [RFC-009](docs/rfcs/RFC-009-track-canvas.md) |
-| **Libraries** | A folder view alongside the tag view, exclusions and followed links, an incremental scan that survives one bad folder, a watcher, missing files kept with their data until they return, a grace window before a purge, splitting a joined artist credit, and the real quality of a lossless file measured from its audio | [RFC-012](docs/rfcs/RFC-012-library-browser.md) · [RFC-015](docs/rfcs/RFC-015-artist-credit-splitting.md) · [RFC-016](docs/rfcs/RFC-016-audio-quality-analysis.md) · [RFC-018](docs/rfcs/RFC-018-incremental-scan.md) · [RFC-021](docs/rfcs/RFC-021-library-lifecycle-and-scan.md) |
-| **Discovery** | Artist biographies, similar artists and portraits from Last.fm, TheAudioDB and Deezer once an operator opts in, chosen or automatic artist imagery, LRCLIB lyrics, listening statistics, mixes, and similar songs drawn from the catalogue itself | [RFC-011](docs/rfcs/RFC-011-metadata-enrichment.md) · [RFC-013](docs/rfcs/RFC-013-chosen-artist-imagery.md) · [RFC-024](docs/rfcs/RFC-024-lyrics-stats-and-mixes.md) |
-| **Playlists & more** | Repeats, public playlists, `.m3u` import and export, smart playlists by rule, shares with their own player page, podcasts and internet radio | [RFC-020](docs/rfcs/RFC-020-playlists-and-shares.md) · [RFC-025](docs/rfcs/RFC-025-smart-playlists-and-podcasts.md) |
-| **Scrobbling** | ListenBrainz, Last.fm and Maloja, each a named instance, behind a durable queue that survives a restart, retries once and honours `Retry-After` | [RFC-010](docs/rfcs/RFC-010-external-scrobbling.md) |
-| **Web player** | React 19 client compiled into the binary — complete player and administration surface, authenticated artwork, Media Session, preloading, keyboard controls, 14 localized themes, English and French, responsive | — |
-| **Security** | Argon2id passwords, tokens stored only as SHA-256 hashes, the dedicated Subsonic password encrypted with ChaCha20-Poly1305 under a local instance key, stream tickets so `<audio src>` needs no header, origin validation and CSRF protection for browsers, a one-time token guarding first-run setup, a Content-Security-Policy on the web client | [operations](docs/guides/operations.md) · [RFC-019](docs/rfcs/RFC-019-exposure-hardening.md) |
-| **Operations** | Single-file SQLite in WAL with one process-wide writer, immutable checksummed migrations, coherent backup and restore of the database/key pair, an automatic copy of both before any migration, and a way back from a lost or compromised key, `/health` and `/ready`, JSON logging that never records a query string or a token | [operations](docs/guides/operations.md) |
+| **Symfonium** | Android | Browse, seek in every format, favourites, ratings, bookmarks, lyrics |
+| **Feishin** | Windows desktop | Browse, folders, synced lyrics, radio, playlists |
+| **DSub** | Android | Folders, podcasts, play queue, playlists, sharing |
+| **Juliet** | iPhone | Browse, transcoding, play queue, playlists |
+| **[WaveFlow Desktop](https://github.com/InstaZDLL/WaveFlow)** | Windows, macOS, Linux | Syncs your library and listening across devices, through the native API |
+
+What each app does and does not use, and where an app has a limitation of its own, is in the [compatibility matrix](docs/compatibility/subsonic-compatibility.md).
 
 ## Documentation
 
 | | |
 | --- | --- |
-| **Run it** | [Operations](docs/guides/operations.md) — the first account, backup, losing or rotating the instance key, reverse proxies, probes and logging · [Privacy](docs/guides/privacy.md) — every host the server can contact, what it sends, and the setting that stops it |
-| **Integrate** | [Native API v2](docs/guides/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/guides/subsonic-api-guide.md) |
-| **What clients do** | [Compatibility matrix](docs/compatibility/subsonic-compatibility.md) — the four run above, plus Substreamer as a historical row: that build no longer installs on a current device, so it is not counted toward a tag · [gap analysis](docs/analyses/opensubsonic-gap-analysis.md) |
+| **Run it** | [Operations](docs/guides/operations.md): setup, backups, the instance key, reverse proxies, optional features · [Privacy](docs/guides/privacy.md): every host the server can contact |
+| **Build a client** | [Native API v2](docs/guides/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/guides/subsonic-api-guide.md) · the interactive reference at `/reference` on any server |
 | **What changed** | [CHANGELOG](CHANGELOG.md) |
-| **The design** | [RFC-002, the accepted design](docs/rfcs/RFC-002-waveflow-server-v2.md), then one RFC per decision, RFC-003 to RFC-025, listed in the [documentation index](docs/README.md) |
-| **Everything else** | The [documentation index](docs/README.md): guides, compatibility, RFCs, the plans and analyses kept current, and the milestone history |
-| **On a running server** | [`/reference`](http://127.0.0.1:4533/reference) for the interactive API · [`/openapi.json`](http://127.0.0.1:4533/openapi.json) for the contract |
-| **Contribute** | [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) for the conventions in depth |
+| **Everything else** | The [documentation index](docs/README.md): the compatibility matrix, the design RFCs, the plans |
 
-> **An RFC's `Status` field never flips** — from RFC-004 on, every one says `Proposed` whether it shipped a year ago or not at all. What each carries instead is an **`Implemented by`** line naming the pull requests. When it matters, read the code: the routes registered from `src/app/router.rs` and the dated files under `migrations-v2/` are the only account of what exists.
+## How it works
 
-## Built with
-
-| Layer | Technologies |
+| | |
 | --- | --- |
-| **HTTP** | axum 0.8 (with WebSocket), tower-http, utoipa 6 for the OpenAPI document |
-| **Storage** | SQLite through sqlx 0.9 — WAL, foreign keys, `busy_timeout`, FTS5, one process-wide write coordinator |
-| **Media** | FFmpeg and ffprobe as external processes, lofty 0.25 for tags and embedded art, BLAKE3 for content hashing |
-| **Identity** | UUID v4 for tracks, UUID v8 derived from tags for albums and artists, MD5 as the deduplication digest of the identity spec |
-| **Security** | Argon2id, SHA-256 token digests, ChaCha20-Poly1305 for reversible credentials, AEAD-sealed stream tickets |
-| **Web client** | React 19, TypeScript, Vite 8, compiled into the binary by rust-embed 8 |
-| **Runtime** | tokio, `tracing` with optional JSON output |
+| **One process** | `src/main.rs` loads the settings and serves; everything else sits behind `app()` in `src/app/router.rs`, so the test suite drives the very router `main` serves |
+| **One database** | SQLite in WAL mode with foreign keys and a single writer. Migrations are dated, embedded at compile time and checksummed |
+| **One catalogue, three surfaces** | The native API, the Subsonic API and the web player call the same domain services, so they cannot drift apart |
+| **Privacy in the query** | Access is checked inside the SQL, through library membership. Something missing and something belonging to another account answer the same `404` |
+| **Read-only files** | The scanner and every tag operation leave your audio files untouched |
+
+Built with axum, SQLite through sqlx, FFmpeg, lofty, React 19 and Vite, compiled into the binary with rust-embed. [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md) is the design.
 
 ## Development
 
 ```bash
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features          # hermetic — temporary SQLite databases, no service container
+cargo test --all-features          # hermetic: temporary SQLite databases, no service to start
 
 bun --cwd=webapp run test
 bun --cwd=webapp x playwright install chromium
 bun --cwd=webapp run test:e2e
 ```
 
-FFmpeg and ffprobe must be on `PATH`: the suite boots a real media service. Commits need DCO sign-off (`git commit -s`) and Conventional Commit messages.
-
-The v1 PostgreSQL/JWKS implementation was removed once the native API landed. It remains in git history; any reference to `/api/v1` in an older document is stale.
+FFmpeg and ffprobe must be on `PATH`, since the suite drives a real media service. Commits need a DCO sign-off (`git commit -s`) and a Conventional Commit message. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest, and [CLAUDE.md](CLAUDE.md) the conventions in depth.
 
 ## Community
 
 - 🐛 **Bug?** → [Bug report](https://github.com/InstaZDLL/waveflow-server/issues/new?template=bug_report.yml)
-- ✨ **Feature idea?** → [Feature request](https://github.com/InstaZDLL/waveflow-server/issues/new?template=feature_request.yml)
-- 🔒 **Security?** → [Private disclosure](.github/SECURITY.md) — never post a vulnerability publicly.
+- ✨ **Idea?** → [Feature request](https://github.com/InstaZDLL/waveflow-server/issues/new?template=feature_request.yml)
+- 🔒 **Security?** → [Private disclosure](.github/SECURITY.md), never a public issue.
 
-English and French both welcome.
+English and French are both welcome.
 
 ## Related
 
-- [**WaveFlow**](https://github.com/InstaZDLL/WaveFlow) — the desktop player, a separate project that consumes this API for multi-device sync.
+- [**WaveFlow**](https://github.com/InstaZDLL/WaveFlow): the desktop player, which syncs with this server.
+- [**WaveFlow QuickPlay**](https://github.com/InstaZDLL/waveflow-quickplay): a tiny player for the file in front of you.
 
 ## License
 
-WaveFlow Server is licensed under [**AGPL-3.0-only**](LICENSE): it hosts a network service, so anyone you serve it to is entitled to its source. The desktop application and `waveflow-core` are GPL-3.0-only.
+WaveFlow Server is licensed under [**AGPL-3.0-only**](LICENSE): it runs as a network service, so anyone you serve it to is entitled to its source. The desktop application and `waveflow-core` are GPL-3.0-only.
 
-The WaveFlow logo, its favicons and app icons are copied unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.
+The WaveFlow logo, its favicons and app icons come unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.
+
+The screenshots show albums and artist photos from the maintainer's own library, used for illustration only.
