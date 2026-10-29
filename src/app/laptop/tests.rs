@@ -142,6 +142,23 @@ async fn an_address_this_machine_lacks_is_refused_as_such() {
     assert!(!error.contains("another program"), "{error}");
 }
 
+/// A `[::]` bind collides, on Linux, with a copy on `127.0.0.1`: the probe
+/// finds it there and hands over its address, not `[::1]`. Asked of the
+/// probe directly, since whether the bind collides depends on the platform.
+#[tokio::test]
+async fn an_ipv6_wildcard_finds_a_copy_on_ipv4_loopback() {
+    let held = holder_answering(waveflow_health()).await;
+    let wildcard = SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), held.port());
+    assert_eq!(
+        health_probe(wildcard, Duration::from_secs(3)).await,
+        Probe::WaveFlow(held)
+    );
+    assert_eq!(
+        browser_url(held),
+        format!("http://127.0.0.1:{}/", held.port())
+    );
+}
+
 #[test]
 fn only_a_waveflow_health_body_is_recognised() {
     assert!(is_waveflow_health(&serde_json::json!({

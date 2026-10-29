@@ -93,8 +93,8 @@ async fn bind_probing(
         );
         probe = health_probe(address, grace).await;
     }
-    if probe == Probe::WaveFlow {
-        return Ok(Startup::AlreadyRunning(browser_url(address)));
+    if let Probe::WaveFlow(found) = probe {
+        return Ok(Startup::AlreadyRunning(browser_url(found)));
     }
     let next = port.checked_add(1).unwrap_or(4534);
     let change = format!(
@@ -120,8 +120,8 @@ async fn bind_probing(
 /// What answered on a port that was already taken.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Probe {
-    /// A WaveFlow, serving.
-    WaveFlow,
+    /// A WaveFlow, serving at this address.
+    WaveFlow(SocketAddr),
     /// Something that answered, or hung up, as WaveFlow does not.
     Foreign,
     /// Something that took the connection and said nothing before the
@@ -130,13 +130,46 @@ enum Probe {
     Silent,
 }
 
-/// Ask `/health` on `address`, waiting at most `timeout` for the answer.
+/// Ask `/health` on every loopback address a listener on `address` could be
+/// reached from, waiting at most `timeout` for each, and say what answered.
+///
+/// One address is not enough for `[::]`. On Linux that bind is dual-stack, so
+/// it collides with a copy already listening on `127.0.0.1`, which `[::1]`
+/// never reaches: probing that alone would call the first copy a stranger.
+async fn health_probe(address: SocketAddr, timeout: Duration) -> Probe {
+    let mut silent = false;
+    for target in loopbacks(address) {
+        match health_probe_at(target, timeout).await {
+            Probe::WaveFlow(found) => return Probe::WaveFlow(found),
+            Probe::Silent => silent = true,
+            Probe::Foreign => {}
+        }
+    }
+    if silent {
+        Probe::Silent
+    } else {
+        Probe::Foreign
+    }
+}
+
+/// The loopback addresses from which a listener on `address` is reached.
+fn loopbacks(address: SocketAddr) -> Vec<SocketAddr> {
+    match address.ip() {
+        IpAddr::V6(ip) if ip.is_unspecified() => vec![
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), address.port()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), address.port()),
+        ],
+        _ => vec![reachable(address)],
+    }
+}
+
+/// Ask `/health` on `target` itself.
 ///
 /// The body is checked, not only the status: another server on 4533 may well
 /// answer `/health` with a 200 of its own. No proxy, so a system proxy
 /// is never asked about a loopback address, and no redirect, so the answer is
 /// the one the port gave.
-async fn health_probe(address: SocketAddr, timeout: Duration) -> Probe {
+async fn health_probe_at(target: SocketAddr, timeout: Duration) -> Probe {
     let Ok(client) = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -145,7 +178,7 @@ async fn health_probe(address: SocketAddr, timeout: Duration) -> Probe {
     else {
         return Probe::Foreign;
     };
-    let url = format!("http://{}/health", reachable(address));
+    let url = format!("http://{target}/health");
     let response = match client.get(url).send().await {
         Ok(response) => response,
         Err(error) if error.is_timeout() => return Probe::Silent,
@@ -155,7 +188,7 @@ async fn health_probe(address: SocketAddr, timeout: Duration) -> Probe {
         return Probe::Foreign;
     }
     match response.json::<serde_json::Value>().await {
-        Ok(body) if is_waveflow_health(&body) => Probe::WaveFlow,
+        Ok(body) if is_waveflow_health(&body) => Probe::WaveFlow(target),
         _ => Probe::Foreign,
     }
 }
