@@ -536,6 +536,29 @@ Checked in the DSub replay of 2026-10-28: with *Coda* removed, its search for
 "Coda" found neither the track nor the album. Its search for "Verse" still
 found both the album and that track.
 
+## Correction: an album whose files all went is not found
+
+Reported on 2026-10-28, while the search above was being fixed; no client
+reached it, because the campaign removed one track of a four-track album. An
+album row outlives its files: the scan deletes an album only once no track row
+points at it, and the row of a removed track is kept for the file's return.
+Every album read counted the available tracks without asking whether there
+were any. So an album whose every file had gone stayed in `getAlbumList`,
+`getAlbumList2`, an artist's albums and the starred albums, with `songCount="0"`
+and `duration="0"`; `getAlbum` opened it on no song; and a star or a rating on
+it was accepted.
+
+Now such an album is not found anywhere the catalogue is read, through the
+façade and the native API alike: it is out of every album list, artist page,
+search and starred list, `getAlbum` and `getMusicDirectory` on it answer
+**70** (404 natively), and a star, an unstar or a rating on it answers 70 and
+writes nothing. An album that keeps one track is unchanged. The two native
+lists of a user's own data, `GET /api/v2/favorites` and `GET
+/api/v2/ratings`, still carry its identifier, as they carry a removed
+track's: they list what the account holds, not what the catalogue shows. Nothing is deleted: its star and its rating stay, and when the
+files come back it returns under the same identifier with both. Covered by
+`tests/subsonic_methods/removed_albums.rs`.
+
 ## Correction: a track with no album is a root file of `getIndexes`
 
 Found on 2026-10-28, in the third client campaign, with DSub 5.5.3 browsing by
