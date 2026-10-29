@@ -24,6 +24,7 @@ import {
   PURGE_GRACE_MS,
   playlists,
   type Recipient,
+  serverIdentity,
   session,
   song,
   statsFor,
@@ -40,6 +41,10 @@ async function mockAuthenticatedApi(page: Page) {
       url: test.info().project.use.baseURL ?? "http://127.0.0.1:4173",
     },
   ]);
+  // The probe outside `/api/v2` that the source offer is read from.
+  await page.route("**/health", (route) =>
+    route.fulfill({ json: serverIdentity }),
+  );
   await page.route("**/api/v2/**", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/v2/web/auth/refresh") {

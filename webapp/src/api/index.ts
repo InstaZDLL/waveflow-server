@@ -236,6 +236,8 @@ export {
   scrobble,
   unlinkScrobble,
 } from "./scrobbling";
+export type { ServerIdentity } from "./server";
+export { getServerIdentity } from "./server";
 export type { Share } from "./shares";
 export { createShare, deleteShare, listShares } from "./shares";
 export type {

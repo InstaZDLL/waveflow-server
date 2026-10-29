@@ -357,7 +357,7 @@ pub const SCALAR_PATH: &str = "/reference";
         media::CanvasResponse,
         api::LibraryEventAckRequest
     )),
-    modifiers(&SecurityAddon),
+    modifiers(&SecurityAddon, &SourceOffer),
     tags(
         (name = "probes", description = "Process and SQLite health"),
         (name = "authentication", description = "Local WaveFlow sessions")
@@ -405,6 +405,28 @@ impl utoipa::Modify for SecurityAddon {
         clear_security_on_public_operations(openapi);
         annotate_scope_refusals(openapi);
         annotate_mutation_headers(openapi);
+    }
+}
+
+/// Links the licence text and the source of this version (AGPL-3.0 §13).
+///
+/// A pass rather than `license(url = …)` and `external_docs(url = …)` in the
+/// attribute: utoipa takes only a string literal there, and the addresses are
+/// built from the manifest in `app::source`, so they cannot drift from
+/// the version the document already states.
+struct SourceOffer;
+
+impl utoipa::Modify for SourceOffer {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(license) = openapi.info.license.as_mut() {
+            license.url = Some(super::LICENSE_URL.to_owned());
+        }
+        openapi.external_docs = Some(
+            utoipa::openapi::external_docs::ExternalDocsBuilder::new()
+                .url(super::SOURCE_URL)
+                .description(Some("Source code of this version"))
+                .build(),
+        );
     }
 }
 

@@ -31,6 +31,10 @@ curl https://music.example.com/ready
 `/health` proves that the process responds. `/ready` additionally verifies
 SQLite access; scan progress and FFmpeg capability do not affect readiness.
 
+`/health` also names the running version and, as `source`, where its source
+is: the repository at the tag of that version (AGPL-3.0 §13). The web client
+links to it under the sign-in form and in Settings.
+
 ### Correlating a request
 
 Every response carries `x-request-id`, minted by the server, and that value is
