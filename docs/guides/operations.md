@@ -227,6 +227,17 @@ network goes through a reverse proxy that terminates TLS: a Subsonic client
 sends its credentials, or a token derived from them, with every request, and
 over plain HTTP anyone on the path reads them.
 
+How the container publishes its port follows from where that proxy runs. The
+`-p 4533:4533` of the README, and the `ports` line of `docker-compose.yml`,
+publish plain HTTP on every interface of the host:
+
+- **No proxy, listening at home only**: keep it, on a network you trust, with
+  the port closed to the internet at your router or firewall.
+- **A proxy on the same host**: publish on the loopback only,
+  `-p 127.0.0.1:4533:4533`, so that only the proxy reaches the server.
+- **A proxy in a container**: publish nothing. Put both containers on one
+  Docker network and point the proxy at `http://waveflow:4533`.
+
 | Variable | Why |
 | --- | --- |
 | `WAVEFLOW_PUBLIC_URL=https://music.example.com` | So a created share returns an absolute, externally usable URL |

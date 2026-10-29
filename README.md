@@ -210,7 +210,7 @@ docker exec -e WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password' \
   waveflow waveflow-server credential set --actor admin --username admin
 ```
 
-On your own network, point your app at `http://your-host:4533` with that username and password. The server speaks plain HTTP, and Subsonic apps send their credentials with every request, so to listen from outside your network, put it behind a reverse proxy that terminates TLS and give your apps its `https://` address. Set `WAVEFLOW_PUBLIC_URL` to that address; the [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) has the rest, including backups and the instance key.
+On your own network, point your app at `http://your-host:4533` with that username and password. The server speaks plain HTTP, and Subsonic apps send their credentials with every request: `-p 4533:4533` above publishes it on every interface of the host, which suits a network you trust and nothing wider. To listen from outside, put it behind a reverse proxy that terminates TLS, give your apps its `https://` address, and set `WAVEFLOW_PUBLIC_URL` to it. The [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) says how to publish the port when a proxy sits in front, and has the rest, including backups and the instance key.
 
 <details>
 <summary>From source</summary>

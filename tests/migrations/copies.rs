@@ -144,31 +144,13 @@ fn newest_schema_behind() -> (&'static str, i64) {
         .expect("a released schema behind the binary")
 }
 
-/// The first table created by a migration the schema behind the binary has not
-/// run yet. Read from the migrations rather than named here: a table named
-/// here belongs to one moment, and once the schema behind moves past the
-/// migration that creates it, the table is already there before the failure is
-/// staged.
-fn a_table_a_pending_migration_creates() -> String {
-    let (tag, baseline) = newest_schema_behind();
-    MIGRATOR
-        .iter()
-        .filter(|migration| migration.version > baseline)
-        .flat_map(|migration| migration.sql.as_str().lines())
-        .find_map(|line| {
-            let name = line.strip_prefix("CREATE TABLE ")?;
-            Some(name.split([' ', '(']).next()?.to_owned())
-        })
-        .unwrap_or_else(|| panic!("{tag}: no migration behind the binary creates a table"))
-}
-
 /// A database at the newest released schema behind the binary, bound to a key
 /// on disk, as an installation that is about to upgrade has it. Answers the key
 /// and how many migrations the database has run.
 ///
 /// `extra` runs on the database before it is closed, for a test that needs it
 /// shaped some further way.
-async fn an_installation_behind(config: &Config, extra: Option<&str>) -> ([u8; 32], i64) {
+async fn an_installation_behind(config: &Config, extra: Option<&'static str>) -> ([u8; 32], i64) {
     let (tag, baseline) = newest_schema_behind();
     let database = Database::open(config).await.expect("open the database");
     let mut connection = database.pool().acquire().await.expect("connection");
@@ -206,8 +188,7 @@ async fn an_installation_behind(config: &Config, extra: Option<&str>) -> ([u8; 3
     .await
     .expect("bind the key");
     if let Some(statement) = extra {
-        // The test's own statement, built from a migration's table name.
-        sqlx::query(sqlx::AssertSqlSafe(statement))
+        sqlx::query(statement)
             .execute(&mut *connection)
             .await
             .unwrap_or_else(|error| panic!("`{statement}` failed: {error}"));
@@ -326,12 +307,16 @@ async fn an_upgrade_copies_the_database_and_its_key_before_migrating() {
 async fn a_failed_upgrade_names_the_copy_it_can_be_restored_from() {
     let temp = tempfile::tempdir().expect("temporary directory");
     let config = Config::for_data_dir(temp.path().join("data"));
-    // A table a later migration creates, already there: that migration fails.
-    let existing = format!(
-        "CREATE TABLE {} (id TEXT PRIMARY KEY)",
-        a_table_a_pending_migration_creates()
-    );
-    let (key, behind) = an_installation_behind(&config, Some(&existing)).await;
+    // Recording a migration as applied is refused, so the first one pending
+    // fails whatever it contains, and its transaction rolls back with it.
+    let (key, behind) = an_installation_behind(
+        &config,
+        Some(
+            "CREATE TRIGGER no_migration_lands BEFORE INSERT ON _sqlx_migrations \
+             BEGIN SELECT RAISE(ABORT, 'staged failure'); END",
+        ),
+    )
+    .await;
 
     let error = match waveflow_server::initialize(&config).await {
         Ok(_) => panic!("a migration that cannot apply booted"),
