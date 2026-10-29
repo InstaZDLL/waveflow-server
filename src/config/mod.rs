@@ -12,6 +12,7 @@ mod metadata;
 mod pid;
 mod podcasts;
 mod scrobbling;
+mod tools;
 
 pub use access::SETUP_TOKEN_MIN_CHARS;
 pub use limits::{CanvasLimits, LibraryEventRetention, UploadLimits};
@@ -131,7 +132,12 @@ pub struct Config {
     /// became a starred artist in `getStarred` and an album's header in
     /// `getMusicDirectory`.
     pub subsonic_legacy_clients: Vec<String>,
+    /// The FFmpeg the server runs. `WAVEFLOW_FFMPEG_PATH` when it is set;
+    /// otherwise an `ffmpeg` beside the server's own executable, as a
+    /// standalone download ships it; otherwise `ffmpeg` on `PATH`.
     pub ffmpeg_path: PathBuf,
+    /// The ffprobe the server runs, found as `ffmpeg_path` is:
+    /// `WAVEFLOW_FFPROBE_PATH`, then beside the executable, then `PATH`.
     pub ffprobe_path: PathBuf,
     pub transcode_cache_dir: PathBuf,
     pub transcode_cache_max_bytes: u64,

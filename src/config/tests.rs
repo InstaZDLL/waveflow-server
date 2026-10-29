@@ -429,3 +429,53 @@ fn legacy_clients_are_a_trimmed_list_defaulting_to_dsub() {
         ["DSub", "Subsonic Android", "audinaut"]
     );
 }
+
+/// A standalone download ships FFmpeg beside the executable: found there when
+/// nothing names one, never preferred over a setting, and never mistaken for
+/// a directory that happens to share the name.
+#[test]
+fn ffmpeg_beside_the_executable_is_found_after_the_setting_and_before_path() {
+    use super::tools::resolve_tool;
+    use std::path::PathBuf;
+
+    let beside = tempfile::tempdir().unwrap();
+    let suffix = std::env::consts::EXE_SUFFIX;
+
+    // Nothing beside the binary: the bare name, for `PATH` to resolve, as
+    // every install before the standalone download did.
+    assert_eq!(
+        resolve_tool(None, "ffmpeg", Some(beside.path())),
+        PathBuf::from("ffmpeg")
+    );
+    assert_eq!(resolve_tool(None, "ffmpeg", None), PathBuf::from("ffmpeg"));
+
+    // A directory is not a sidecar.
+    std::fs::create_dir(beside.path().join(format!("ffprobe{suffix}"))).unwrap();
+    assert_eq!(
+        resolve_tool(None, "ffprobe", Some(beside.path())),
+        PathBuf::from("ffprobe")
+    );
+
+    let sidecar = beside.path().join(format!("ffmpeg{suffix}"));
+    std::fs::write(&sidecar, b"").unwrap();
+    assert_eq!(resolve_tool(None, "ffmpeg", Some(beside.path())), sidecar);
+
+    // The setting still wins over the archive's own copy.
+    assert_eq!(
+        resolve_tool(
+            Some("/opt/ffmpeg/bin/ffmpeg".into()),
+            "ffmpeg",
+            Some(beside.path())
+        ),
+        PathBuf::from("/opt/ffmpeg/bin/ffmpeg")
+    );
+}
+
+/// The directory searched is the one holding the running binary — here, the
+/// test executable itself.
+#[test]
+fn the_sidecar_directory_is_the_running_executables() {
+    let executable = std::env::current_exe().unwrap();
+    let directory = super::tools::executable_dir().unwrap();
+    assert!(directory.join(executable.file_name().unwrap()).is_file());
+}

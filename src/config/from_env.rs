@@ -12,6 +12,7 @@ use super::pid::{
 };
 use super::podcasts::parse_podcast_settings;
 use super::scrobbling::parse_destinations;
+use super::tools::{executable_dir, resolve_tool};
 use super::{
     CanvasLimits, Config, LastFmApplication, LibraryEventRetention, RemoteArtworkSettings,
     ScrobbleLimits, UploadLimits, DEFAULT_SCROBBLE_MAX_ATTEMPTS,
@@ -87,12 +88,17 @@ impl Config {
                 anyhow::bail!("WAVEFLOW_SUBSONIC_LEGACY_CLIENTS is not valid UTF-8")
             }
         };
-        let ffmpeg_path = std::env::var_os("WAVEFLOW_FFMPEG_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("ffmpeg"));
-        let ffprobe_path = std::env::var_os("WAVEFLOW_FFPROBE_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("ffprobe"));
+        let executable_dir = executable_dir();
+        let ffmpeg_path = resolve_tool(
+            std::env::var_os("WAVEFLOW_FFMPEG_PATH"),
+            "ffmpeg",
+            executable_dir.as_deref(),
+        );
+        let ffprobe_path = resolve_tool(
+            std::env::var_os("WAVEFLOW_FFPROBE_PATH"),
+            "ffprobe",
+            executable_dir.as_deref(),
+        );
         let transcode_cache_max_bytes =
             parse_positive_env("WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES", 10_737_418_240u64)?;
         let transcode_global_limit = parse_positive_env("WAVEFLOW_TRANSCODE_GLOBAL_LIMIT", 4usize)?;
