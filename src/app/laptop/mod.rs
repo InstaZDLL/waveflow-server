@@ -67,26 +67,35 @@ async fn bind_probing(
         Ok(listener) => return Ok(Startup::Listening(listener)),
         Err(error) => error,
     };
-    let mut probe = Probe::Foreign;
-    if error.kind() == std::io::ErrorKind::AddrInUse {
-        probe = health_probe(address, first).await;
-        if probe == Probe::Silent {
-            tracing::info!(
-                port = address.port(),
-                "the port is held by a program that has not answered yet; waiting in case it is WaveFlow starting up"
-            );
-            probe = health_probe(address, grace).await;
-        }
-    }
-    if probe == Probe::WaveFlow {
-        return Ok(Startup::AlreadyRunning(browser_url(address)));
-    }
     let file = laptop_env.map_or_else(
         || LAPTOP_ENV_FILE.to_owned(),
         |path| path.display().to_string(),
     );
     let port = address.port();
     let ip = address.ip();
+    // Nobody holds the port: the address itself is wrong for this machine —
+    // a LAN address the laptop no longer has after changing networks, or a
+    // port the system reserves. Another port is not necessarily the fix, so
+    // the refusal says what the line has to name instead.
+    if error.kind() != std::io::ErrorKind::AddrInUse {
+        anyhow::bail!(
+            "WaveFlow Server cannot listen on {address} ({error}). Check the WAVEFLOW_BIND line \
+             of {file}: it must name an address of this computer, such as \
+             WAVEFLOW_BIND=127.0.0.1:{port} for this computer only or \
+             WAVEFLOW_BIND=0.0.0.0:{port} for the network, then start the server again."
+        );
+    }
+    let mut probe = health_probe(address, first).await;
+    if probe == Probe::Silent {
+        tracing::info!(
+            port,
+            "the port is held by a program that has not answered yet; waiting in case it is WaveFlow starting up"
+        );
+        probe = health_probe(address, grace).await;
+    }
+    if probe == Probe::WaveFlow {
+        return Ok(Startup::AlreadyRunning(browser_url(address)));
+    }
     let next = port.checked_add(1).unwrap_or(4534);
     let change = format!(
         "choose another port with the WAVEFLOW_BIND line of {file} — for example \

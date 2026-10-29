@@ -126,6 +126,22 @@ async fn a_port_that_never_answers_is_refused_as_maybe_still_starting() {
     drop(holder);
 }
 
+/// An address this machine does not have — a LAN address kept from another
+/// network — is not a port somebody holds, and the refusal does not say it
+/// is, nor send the reader to try the next port.
+#[tokio::test]
+async fn an_address_this_machine_lacks_is_refused_as_such() {
+    // TEST-NET-1 (RFC 5737): never assigned to an interface.
+    let (temp, config) = config_on("192.0.2.1:4533".parse().unwrap());
+    let file = temp.path().join("laptop.env");
+    let error = bind(&config, Some(&file)).await.unwrap_err().to_string();
+    assert!(error.contains("cannot listen on 192.0.2.1:4533"), "{error}");
+    assert!(error.contains("WAVEFLOW_BIND line"), "{error}");
+    assert!(error.contains(&file.display().to_string()), "{error}");
+    assert!(error.contains("WAVEFLOW_BIND=127.0.0.1:4533"), "{error}");
+    assert!(!error.contains("another program"), "{error}");
+}
+
 #[test]
 fn only_a_waveflow_health_body_is_recognised() {
     assert!(is_waveflow_health(&serde_json::json!({
