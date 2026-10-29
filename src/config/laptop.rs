@@ -46,8 +46,24 @@ fn load_env_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     match dotenvy::from_path(path) {
         Ok(()) => Ok(Some(path.to_path_buf())),
         Err(error) if error.not_found() => Ok(None),
-        Err(error) => Err(anyhow::anyhow!("cannot read {}: {error}", path.display())),
+        Err(error) => Err(anyhow::anyhow!(refusal(path, &error))),
     }
+}
+
+/// Why `path` was refused, in words its reader can act on.
+///
+/// A line `dotenvy` cannot parse is nearly always a path written as Windows
+/// spells it: a backslash outside single quotes is an escape, and fails the
+/// whole file, and so does a space. The parser's own message names the line
+/// and an index into it; the fix is worth saying outright.
+pub(super) fn refusal(path: &Path, error: &dotenvy::Error) -> String {
+    let hint = if matches!(error, dotenvy::Error::LineParse(..)) {
+        " A value containing a backslash or a space goes between single quotes, \
+         as in WAVEFLOW_DATA_DIR='D:\\Music Data\\WaveFlow Server'."
+    } else {
+        ""
+    };
+    format!("cannot read {}: {error}.{hint}", path.display())
 }
 
 /// The three families of systems whose data folder laptop mode knows.

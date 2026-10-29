@@ -13,6 +13,13 @@ fn config_on(address: SocketAddr) -> (tempfile::TempDir, Config) {
 
 /// Something holding a port and answering `/health` with `body`.
 async fn holder_answering(body: serde_json::Value) -> SocketAddr {
+    holder_answering_after(body, Duration::ZERO).await
+}
+
+/// The same, once `delay` has passed: the port is held from the start, as a
+/// first copy holds it through its boot, and nobody reads a connection until
+/// then.
+async fn holder_answering_after(body: serde_json::Value, delay: Duration) -> SocketAddr {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let address = listener.local_addr().unwrap();
     let router = Router::new().route(
@@ -22,8 +29,15 @@ async fn holder_answering(body: serde_json::Value) -> SocketAddr {
             async move { Json(body) }
         }),
     );
-    tokio::spawn(async move { axum::serve(listener, router).await });
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        axum::serve(listener, router).await
+    });
     address
+}
+
+fn waveflow_health() -> serde_json::Value {
+    serde_json::json!({ "status": "ok", "version": "2.0.0", "schema": 2 })
 }
 
 #[tokio::test]
@@ -38,12 +52,7 @@ async fn a_free_port_is_taken() {
 /// A second double-click finds the first copy, by what it answers.
 #[tokio::test]
 async fn a_waveflow_on_the_port_is_handed_over_to() {
-    let address = holder_answering(serde_json::json!({
-        "status": "ok",
-        "version": "2.0.0",
-        "schema": 2,
-    }))
-    .await;
+    let address = holder_answering(waveflow_health()).await;
     let (_temp, config) = config_on(address);
     match bind(&config, None).await.unwrap() {
         Startup::AlreadyRunning(url) => {
@@ -69,6 +78,52 @@ async fn another_program_on_the_port_is_a_refusal_naming_the_line_to_change() {
         error.contains(&format!("WAVEFLOW_BIND=127.0.0.1:{}", port + 1)),
         "{error}"
     );
+}
+
+/// A second double-click while the first copy is still booting: the port is
+/// held and the probe is not read until the first copy starts serving. Past
+/// the first timeout, the probe waits for it rather than calling it a
+/// stranger.
+#[tokio::test]
+async fn a_waveflow_still_starting_is_waited_for() {
+    let address = holder_answering_after(waveflow_health(), Duration::from_millis(600)).await;
+    let (_temp, config) = config_on(address);
+    let startup = bind_probing(
+        &config,
+        None,
+        Duration::from_millis(100),
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(startup, Startup::AlreadyRunning(_)), "{startup:?}");
+}
+
+/// A port that takes the connection and never answers is still refused once
+/// the grace has run out, and the refusal says it may be WaveFlow starting.
+#[tokio::test]
+async fn a_port_that_never_answers_is_refused_as_maybe_still_starting() {
+    // Bound and never accepted from: the kernel completes the handshake and
+    // nobody reads.
+    let holder = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let address = holder.local_addr().unwrap();
+    let (_temp, config) = config_on(address);
+    let error = bind_probing(
+        &config,
+        None,
+        Duration::from_millis(100),
+        Duration::from_millis(300),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("did not answer"), "{error}");
+    assert!(
+        error.contains("If it is WaveFlow still starting"),
+        "{error}"
+    );
+    assert!(error.contains("WAVEFLOW_BIND line"), "{error}");
+    drop(holder);
 }
 
 #[test]

@@ -27,9 +27,17 @@ pub enum Startup {
     AlreadyRunning(String),
 }
 
-/// How long the copy on the port has to answer its health probe. A WaveFlow
-/// on the same machine answers in milliseconds; anything slower is not one.
+/// How long the copy on the port has to answer its health probe at first. A
+/// WaveFlow that is serving answers in milliseconds.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// How much longer a port that accepted the probe but has not answered it is
+/// given. A first copy holds its port from before its boot, so while it
+/// migrates, copies its database aside or checks FFmpeg, the kernel accepts
+/// connections and nobody reads them; the request queued there is answered
+/// as soon as it starts serving. A second double-click is impatient by
+/// nature, and lands exactly in that window.
+const STARTING_GRACE: Duration = Duration::from_secs(30);
 
 /// Take the configured port, or find out whose it is.
 ///
@@ -44,54 +52,103 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
 /// quiet fall-back to another port. Navidrome defaults to 4533 too, so this
 /// will happen.
 pub async fn bind(config: &Config, laptop_env: Option<&Path>) -> anyhow::Result<Startup> {
+    bind_probing(config, laptop_env, PROBE_TIMEOUT, STARTING_GRACE).await
+}
+
+/// [`bind`], with the two waits as parameters so a test need not spend them.
+async fn bind_probing(
+    config: &Config,
+    laptop_env: Option<&Path>,
+    first: Duration,
+    grace: Duration,
+) -> anyhow::Result<Startup> {
     let address = config.bind_addr;
     let error = match TcpListener::bind(address).await {
         Ok(listener) => return Ok(Startup::Listening(listener)),
         Err(error) => error,
     };
-    if error.kind() == std::io::ErrorKind::AddrInUse && answers_as_waveflow(address).await {
+    let mut probe = Probe::Foreign;
+    if error.kind() == std::io::ErrorKind::AddrInUse {
+        probe = health_probe(address, first).await;
+        if probe == Probe::Silent {
+            tracing::info!(
+                port = address.port(),
+                "the port is held by a program that has not answered yet; waiting in case it is WaveFlow starting up"
+            );
+            probe = health_probe(address, grace).await;
+        }
+    }
+    if probe == Probe::WaveFlow {
         return Ok(Startup::AlreadyRunning(browser_url(address)));
     }
     let file = laptop_env.map_or_else(
         || LAPTOP_ENV_FILE.to_owned(),
         |path| path.display().to_string(),
     );
-    let next = address.port().checked_add(1).unwrap_or(4534);
-    Err(anyhow::anyhow!(
-        "WaveFlow Server cannot use port {port} on {ip}, which another program holds ({error}). \
-         Choose another port with the WAVEFLOW_BIND line of {file} — for example \
-         WAVEFLOW_BIND={ip}:{next} — then start the server again.",
-        port = address.port(),
-        ip = address.ip(),
-    ))
+    let port = address.port();
+    let ip = address.ip();
+    let next = port.checked_add(1).unwrap_or(4534);
+    let change = format!(
+        "choose another port with the WAVEFLOW_BIND line of {file} — for example \
+         WAVEFLOW_BIND={ip}:{next} — then start the server again"
+    );
+    Err(if probe == Probe::Silent {
+        anyhow::anyhow!(
+            "WaveFlow Server cannot use port {port} on {ip}: the program holding it accepted a \
+             connection and did not answer within {} seconds. If it is WaveFlow still starting, \
+             wait for it and open {}; otherwise {change}.",
+            (first + grace).as_secs(),
+            browser_url(address),
+        )
+    } else {
+        anyhow::anyhow!(
+            "WaveFlow Server cannot use port {port} on {ip}, which another program holds \
+             ({error}). To start this one anyway, {change}."
+        )
+    })
 }
 
-/// Whether what holds `address` is a WaveFlow, by its health probe.
+/// What answered on a port that was already taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Probe {
+    /// A WaveFlow, serving.
+    WaveFlow,
+    /// Something that answered, or hung up, as WaveFlow does not.
+    Foreign,
+    /// Something that took the connection and said nothing before the
+    /// timeout: a program that does not speak HTTP, or a WaveFlow whose boot
+    /// has not reached its router yet. Only waiting tells them apart.
+    Silent,
+}
+
+/// Ask `/health` on `address`, waiting at most `timeout` for the answer.
 ///
 /// The body is checked, not only the status: another server on 4533 may well
 /// answer `/health` with a 200 of its own. No proxy, so a system proxy
 /// is never asked about a loopback address, and no redirect, so the answer is
 /// the one the port gave.
-async fn answers_as_waveflow(address: SocketAddr) -> bool {
+async fn health_probe(address: SocketAddr, timeout: Duration) -> Probe {
     let Ok(client) = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(PROBE_TIMEOUT)
+        .timeout(timeout)
         .build()
     else {
-        return false;
+        return Probe::Foreign;
     };
     let url = format!("http://{}/health", reachable(address));
-    let Ok(response) = client.get(url).send().await else {
-        return false;
+    let response = match client.get(url).send().await {
+        Ok(response) => response,
+        Err(error) if error.is_timeout() => return Probe::Silent,
+        Err(_) => return Probe::Foreign,
     };
     if !response.status().is_success() {
-        return false;
+        return Probe::Foreign;
     }
-    response
-        .json::<serde_json::Value>()
-        .await
-        .is_ok_and(|body| is_waveflow_health(&body))
+    match response.json::<serde_json::Value>().await {
+        Ok(body) if is_waveflow_health(&body) => Probe::WaveFlow,
+        _ => Probe::Foreign,
+    }
 }
 
 /// The body `/health` answers, as `crate::api::probes::health` writes

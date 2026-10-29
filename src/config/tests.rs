@@ -657,3 +657,52 @@ fn the_shipped_laptop_env_switches_laptop_mode_on_and_nothing_else() {
         assert!(text.contains(suggestion), "{suggestion} is missing");
     }
 }
+
+/// Every suggestion the template carries works once its `#` is removed —
+/// the one edit the template asks of its reader. The data folder's examples
+/// above all: a Windows path with a space is read literally, backslashes
+/// included, and only because it sits between single quotes.
+#[test]
+fn every_suggestion_in_the_shipped_laptop_env_parses_once_uncommented() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("packaging")
+        .join("standalone")
+        .join(super::LAPTOP_ENV_FILE);
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut values = Vec::new();
+    for suggestion in text
+        .lines()
+        .filter_map(|line| line.strip_prefix("# WAVEFLOW_"))
+    {
+        let line = format!("WAVEFLOW_{suggestion}");
+        let parsed = dotenvy::from_read_iter(line.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|error| panic!("{line}: {error}"));
+        values.extend(parsed);
+    }
+    assert!(values.contains(&(
+        "WAVEFLOW_DATA_DIR".to_owned(),
+        r"D:\Music Data\WaveFlow Server".to_owned()
+    )));
+    assert!(values.contains(&(
+        "WAVEFLOW_DATA_DIR".to_owned(),
+        "/Users/ada/Music Data/WaveFlow Server".to_owned()
+    )));
+}
+
+/// The same path without its quotes fails the whole file, and the refusal
+/// says how to write it rather than only where the parser stopped.
+#[test]
+fn an_unquoted_windows_path_is_refused_with_the_fix() {
+    let line = r"WAVEFLOW_DATA_DIR=D:\Music Data\WaveFlow Server";
+    let error = dotenvy::from_read_iter(line.as_bytes())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_err();
+    let refusal = super::laptop::refusal(std::path::Path::new("laptop.env"), &error);
+    assert!(refusal.contains("cannot read laptop.env"), "{refusal}");
+    assert!(refusal.contains("between single quotes"), "{refusal}");
+    assert!(
+        refusal.contains(r"WAVEFLOW_DATA_DIR='D:\Music Data\WaveFlow Server'"),
+        "{refusal}"
+    );
+}
