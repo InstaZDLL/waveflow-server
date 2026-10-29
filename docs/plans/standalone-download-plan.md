@@ -169,8 +169,7 @@ a dependency taken from anywhere less durable — a second git dependency, a
 private registry — has its source attached to the release instead.
 
 §13 asks more of a network service: the server must offer its source to the
-people who use it remotely. **It does, since the pull request that closed this
-gap.** `/health` reports `source`, the repository at the tag `v<version>` of
+people who use it remotely. **It does, since #381.** `/health` reports `source`, the repository at the tag `v<version>` of
 the running binary, never `main`; the web client links to it under the sign-in
 form, which every remote user reaches, and under every section of Settings;
 and the OpenAPI document carries the licence's URL at that tag and the same
