@@ -122,6 +122,7 @@ impl Config {
             // the destination declared above stays adapterless — which is what
             // two tests here stand on.
             lastfm: None,
+            lastfm_url_declared: false,
             outbound_allow_plaintext: true,
             // Off, as production defaults: the suite never reaches a real
             // provider, and the targets that exercise enrichment build their

@@ -509,3 +509,61 @@ async fn the_cli_authorises_last_fm_without_a_browser() {
     assert_eq!(links[0].provider.as_str(), "lastfm");
     assert_eq!(links[0].destination, "default");
 }
+
+/// A server that never asked for Last.fm boots without being told its Last.fm
+/// destination has no application; one whose operator named a Last.fm
+/// instance still is, and one whose operator emptied the variable, declaring
+/// none, is not.
+///
+/// Through the real executable, because the warning is written by `serve` in
+/// `main.rs`, which no in-process test reaches. The port is held, so each boot
+/// gets as far as its warnings and stops at the bind.
+#[test]
+fn the_default_last_fm_instance_is_not_reported_at_boot() {
+    const WARNING: &str = "a last.fm destination is declared with no application";
+    let boot = |named: Option<&str>| {
+        let working = tempfile::tempdir().unwrap();
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut command = cli_command();
+        command
+            .current_dir(working.path())
+            .env("WAVEFLOW_DATA_DIR", working.path().join("data"))
+            .env("WAVEFLOW_BIND", holder.local_addr().unwrap().to_string())
+            .env("RUST_LOG", "info")
+            .stdin(std::process::Stdio::null());
+        if let Some(url) = named {
+            command.env("WAVEFLOW_SCROBBLE_LASTFM_URL", url);
+        }
+        let output = command.output().unwrap();
+        drop(holder);
+        let written = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            written.contains("bind failed"),
+            "the boot did not get as far as the bind: {written}"
+        );
+        written
+    };
+
+    let default = boot(None);
+    assert!(
+        !default.contains(WARNING),
+        "a server that never asked for Last.fm was warned about it: {default}"
+    );
+    let named = boot(Some("https://ws.audioscrobbler.com"));
+    assert!(
+        named.contains(WARNING),
+        "a Last.fm instance the operator named, with no application, went unreported: {named}"
+    );
+    // Emptied, the variable declares no instance: Last.fm switched off on
+    // purpose, with nothing to report. Read as unset instead, it would bring
+    // the default instance back, now counted as named, and warn.
+    let emptied = boot(Some(""));
+    assert!(
+        !emptied.contains(WARNING),
+        "Last.fm switched off by an empty WAVEFLOW_SCROBBLE_LASTFM_URL was warned about: {emptied}"
+    );
+}

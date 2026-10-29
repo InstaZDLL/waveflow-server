@@ -706,3 +706,35 @@ fn an_unquoted_windows_path_is_refused_with_the_fix() {
         "{refusal}"
     );
 }
+
+/// The default Last.fm instance every server declares is Last.fm switched off
+/// when there is no application, and says nothing at boot; one the operator
+/// named is worth a warning, and an application silences it.
+#[test]
+fn only_a_last_fm_destination_the_operator_named_is_reported_without_an_application() {
+    let mut config = super::Config::for_data_dir(PathBuf::from("data"));
+    assert!(config
+        .destinations
+        .iter()
+        .any(|destination| destination.provider == crate::services::ScrobbleProvider::LastFm));
+    assert_eq!(config.lastfm_destinations_without_application().count(), 0);
+
+    config.lastfm_url_declared = true;
+    let reported: Vec<_> = config
+        .lastfm_destinations_without_application()
+        .map(|destination| (destination.provider, destination.name.as_str()))
+        .collect();
+    assert_eq!(
+        reported,
+        vec![(
+            crate::services::ScrobbleProvider::LastFm,
+            DEFAULT_SCROBBLE_DESTINATION
+        )]
+    );
+
+    config.lastfm = Some(super::LastFmApplication {
+        api_key: "key".to_owned(),
+        secret: "secret".to_owned(),
+    });
+    assert_eq!(config.lastfm_destinations_without_application().count(), 0);
+}

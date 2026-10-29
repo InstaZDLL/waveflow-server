@@ -8,6 +8,16 @@ The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow)
 consumes `/api/v2`, so anything that changes the shape of a response is called
 out first, whether or not it breaks a compile.
 
+## [Unreleased]
+
+### Fixed
+
+- **A server that never asked for Last.fm no longer warns about it at every
+  boot.** The default Last.fm instance every server declares, with no
+  application registered, is Last.fm switched off, which the destinations
+  listing already reports as `no_application_configured`. The warning is kept
+  for a Last.fm instance the operator named with `WAVEFLOW_SCROBBLE_LASTFM_URL`.
+
 ## [2.0.0] — 2026-10-29
 
 The first stable release: 331 commits since `2.0.0-beta.1`.
@@ -284,6 +294,7 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.0.0...main
 [2.0.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0
 [2.0.0-beta.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.1
 [2.0.0-beta.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.0
