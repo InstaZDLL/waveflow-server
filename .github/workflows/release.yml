@@ -300,9 +300,14 @@ jobs:
           IMAGE: ${{ needs.verify.outputs.image }}
           HUB_IMAGE: ${{ env.DOCKERHUB_IMAGE }}
         run: |
+          # A pre-release keeps the list of merged pull requests that
+          # `--generate-notes` appends, whether or not it has written notes, as
+          # every beta has had. A stable release with notes goes without it:
+          # its notes link the changelog, and the list since the last stable
+          # tag runs to hundreds of lines.
           case "$VERSION" in
-            *-*) release_flag="--prerelease" ; channel="beta"   ;;
-            *)   release_flag="--latest"     ; channel="latest" ;;
+            *-*) release_flag="--prerelease" ; channel="beta"   ; generate="--generate-notes" ;;
+            *)   release_flag="--latest"     ; channel="latest" ; generate=""                 ;;
           esac
 
           # printf with a single-quoted format rather than a heredoc: the body
@@ -310,10 +315,8 @@ jobs:
           # substitution in an unquoted here-document.
           # Written notes come first, when the tag carries them; the pull
           # commands follow, so a reader who scrolls past the prose still finds
-          # them. Without notes, the list of merged pull requests that
-          # `--generate-notes` appends is all the page has, as for a beta.
+          # them. Without notes, the generated list is all the page has.
           notes_file="docs/releases/$TAG.md"
-          generate=""
           if [ -s "$notes_file" ]; then
             cat "$notes_file" > notes.md
             printf '\n' >> notes.md
