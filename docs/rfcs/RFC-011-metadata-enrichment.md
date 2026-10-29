@@ -1,15 +1,17 @@
 # RFC-011 — Server-side metadata enrichment
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of
+- **Implemented by**: in the order of
   [the implementation plan](../plans/metadata-enrichment-plan.md):
   InstaZDLL/WaveFlow#855 (the core's clients accept a client, an address and a
   key), #270 (the pin moved onto them), #271 (the cache and the engine that
   fills it), #272 (`getArtistInfo`, `getArtistInfo2` and the native artist
   page read it), #273 and #274 (`getSimilarSongs` and `getSimilarSongs2` draw
-  from it), #275 (portraits from Deezer), and the pull request closing #269
-  (the web client's artist page, and `enrichment.image` on the native API,
-  which #275 had left out). The compatibility campaign is still to come. The
+  from it), #275 (portraits from Deezer), and #276, which closed #269 (the web
+  client's artist page, and `enrichment.image` on the native API, which #275
+  had left out). The compatibility campaign of 2026-10-27/28 exercised
+  `getSimilarSongs`, `getSimilarSongs2` and `getArtistInfo2` (see
+  [the compatibility matrix](../compatibility/subsonic-compatibility.md)). The
   *Status* field
   above never flips in this project; this line is the one that says what is
   running.

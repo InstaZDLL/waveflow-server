@@ -1,8 +1,8 @@
 # RFC-014 — An automatic artist banner, from TheAudioDB's fanart
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#312](https://github.com/InstaZDLL/waveflow-server/pull/312) (this
+- **Implemented by**: every step of "The order of the work" below, in that
+  order: [#312](https://github.com/InstaZDLL/waveflow-server/pull/312) (this
   RFC) and [#314](https://github.com/InstaZDLL/waveflow-server/pull/314)
   (steps 2 and 3 together: the `theaudiodb` provider and its key, the fill and
   its pace, the fanart columns, linking and unlinking, the effective banner

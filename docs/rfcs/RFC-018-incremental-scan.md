@@ -1,10 +1,13 @@
 # RFC-018 — An incremental scan that reads only what changed, and survives one bad folder
 
 - **Status**: Proposed
-- **Implemented by**: in progress: [#322](https://github.com/InstaZDLL/waveflow-server/pull/322)
+- **Implemented by**: [#322](https://github.com/InstaZDLL/waveflow-server/pull/322)
   (this RFC) and [#324](https://github.com/InstaZDLL/waveflow-server/pull/324)
   (the pre-check and its sidecar signature, streaming, tolerant discovery,
-  `database rescan-full`). The *Status* field above never flips in this
+  `database rescan-full`). Three items of *What is still open* were later
+  taken up by [RFC-021](RFC-021-library-lifecycle-and-scan.md) and shipped in
+  [#328](https://github.com/InstaZDLL/waveflow-server/pull/328): watching,
+  ignore rules and symbolic links. The *Status* field above never flips in this
   project; this line is the one that says what is running.
 - **Date**: 2026-10-24
 - **Authors**: the WaveFlow project
@@ -141,3 +144,10 @@ still fails the scan, since then nothing can be told apart.
   an `.ndignore`-style file.
 - **Following symbolic links**, confined to the library root after
   canonicalisation, for libraries built as link farms (beets).
+
+> **Note, 2026-10-29.** Of the four items above, three are no longer open: the
+> watcher, ignore rules (built-in exclusions and a per-folder
+> `.waveflowignore`) and symbolic links (a per-library `follow_links`, off by
+> default) were decided in [RFC-021](RFC-021-library-lifecycle-and-scan.md)
+> and shipped in [#328](https://github.com/InstaZDLL/waveflow-server/pull/328).
+> Folder-level skipping is still open.

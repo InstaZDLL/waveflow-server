@@ -233,18 +233,34 @@ with Subsonic error code `0`, like every other protocol failure.
 | Album information | `getAlbumInfo`, `getAlbumInfo2` | Validate tenant access and return the release identifier when the album has one; notes are not enriched. |
 | Album discovery | `getAlbumList`, `getAlbumList2`, `getRandomSongs`, `getSongsByGenre` | Both legacy and ID3 album-list containers are supported. |
 | Search | `search3`, `search2` | Independent artist, album and song pagination. `search2` is the same payload in the `searchResult2` container. |
-| Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. A playlist may hold a track more than once. `getPlaylists` lists the caller's playlists, then every other account's public ones under their real `owner`, read through the caller's libraries; only the owner may change one (RFC-020). |
+| Playlists | `getPlaylists`, `getPlaylist`, `createPlaylist`, `updatePlaylist`, `deletePlaylist` | Shared with native/web user data. A playlist may hold a track more than once. `getPlaylists` lists the caller's playlists, then every other account's public ones under their real `owner`, read through the caller's libraries; only the owner may change one (RFC-020). Smart playlists are listed after them, read-only, with `readonly` true and, once evaluated for the caller, `validUntil`; naming one in a write answers error 70. |
 | Media | `stream`, `download`, `getCoverArt` | Tenant-authorized streaming and artwork. |
 | Lyrics | `getLyrics`, `getLyricsBySongId` | OpenSubsonic `songLyrics` v1 plus legacy lookup. |
 | Favorites and ratings | `star`, `unstar`, `getStarred2`, `getStarred`, `setRating` | Track, album and artist IDs are tenant scoped. `getStarred` is the same payload in the `starred` container. |
 | Activity and queue | `scrobble`, `getNowPlaying`, `getPlayQueue`, `savePlayQueue` | Queue order and duplicate tracks are preserved. Before anything is saved, `getPlayQueue` answers the bare envelope with **no `playQueue` element**, as the reference does: the schema requires `username`, `changed` and `changedBy` on it, and a queue that was never written has none of them. |
-| Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Creation returns the public URL; later reads omit the bearer token. |
+| Shares | `getShares`, `createShare`, `updateShare`, `deleteShare` | Every share these methods answer carries its `url`, derived again from the instance key for its owner. `createShare` takes track and album IDs; an album is expanded into its available tracks in album order. |
 | Users | `getUser`, `getUsers`, `createUser`, `updateUser`, `deleteUser`, `changePassword` | Administrative methods require an admin account. `changePassword` changes only the Subsonic credential. |
 | Library maintenance | `startScan`, `getScanStatus` | Rescans every library the account owns or manages and reports progress. |
 | Bookmarks | `getBookmarks`, `createBookmark`, `deleteBookmark` | One position per account and track; setting it again moves it. |
 | Internet radio | `getInternetRadioStations`, `createInternetRadioStation`, `updateInternetRadioStation`, `deleteInternetRadioStation` | One list **per account**, where the reference server keeps a global one. The three writes answer the bare envelope. `homePageUrl` is returned with a capital `P` and set with `homepageUrl`, as the specification spells them. An address must be absolute `http` or `https`; the server stores it and never connects to it. `homepageUrl=` with no value clears the page rather than failing. |
 | Compatibility | `getTopSongs`, `getSimilarSongs`, `getSimilarSongs2` | `getTopSongs` answers the artist's most played tracks from this account's history. The other two take an artist, album or song id (`getSimilarSongs2` documents only an artist id, and accepts all three), resolved first (error 70 when the caller cannot reach it), and answer a random draw of at most `count` (default 50) from the artist's tracks and their visible neighbours', read from the metadata cache. The draw takes turns across artists, one track each, so an artist with many tracks does not fill the answer. The standard empty container when no provider is configured, which is the default. |
+| Podcasts | `getPodcasts`, `getNewestPodcasts`, `getPodcastEpisode`, `refreshPodcasts`, `createPodcastChannel`, `deletePodcastChannel`, `deletePodcastEpisode`, `downloadPodcastEpisode` | One list per instance: every account reads the channels and plays what is stored. Subscribing, refreshing, downloading and deleting need `podcastRole` — the operator's `WAVEFLOW_PODCASTS` switch on and an administrator account — and answer error 50 otherwise. |
 | Missing data | `getAvatar` | No avatars are stored, so it answers error code 70. |
+
+### Removed tracks and albums
+
+A track whose file is gone is not found, to reads and writes alike: `star`,
+`unstar`, `setRating`, `scrobble`, `createBookmark` and `deleteBookmark` on it
+answer error code 70 and write nothing. An album whose files all went is not
+found anywhere in the catalogue either, and `star`, `unstar` and `setRating` on
+it answer 70 the same way. What was written before the files went is not
+deleted: the star, the rating and the bookmark come back with the files, under
+the same identifier.
+
+`savePlayQueue` is the one exception: it saves the queue **without** the
+tracks that went, and if the current track is one of them, drops it and the
+position. An identifier that was never a track is still refused with 70, and
+the stored queue is left as it was.
 
 ### Genres
 
@@ -313,6 +329,14 @@ Songs carry `mediaType`, `isVideo`, `samplingRate`, `channelCount`, `bitDepth`,
 and `roles[]`. Both songs
 and albums carry `played` when they have been played.
 
+None of this reaches a client named in `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`
+(`DSub` by default, compared exactly with its `c` parameter, case included):
+it is answered in plain Subsonic 1.16.1, without the fields OpenSubsonic added
+to existing elements, and its XML is sent as `text/xml` rather than
+`application/xml`, errors included. The envelope still carries `openSubsonic`
+true, and the methods only OpenSubsonic defines still answer.
+See [operations](operations.md#older-subsonic-clients).
+
 `albumArtists[]` and `displayAlbumArtist` are the **album's** credit, not the
 track's: a guest appearance names the guest in `artists[]`, while the album still
 belongs under the album artist. An album's `artists[]` is the album's own credit
@@ -330,7 +354,9 @@ record are byte-identical.
 
 An artist credited in no album — a composer, say — is reachable by identifier
 and by search, but `getArtists` and `getIndexes` list only the artists an album
-is credited to.
+is credited to. `getIndexes` also answers the tracks that belong to no album,
+as root `child` elements — the files at the root of the folder view — up to
+2,000 of them; `getArtists`, whose schema has no `child`, stays artists only.
 
 What WaveFlow does not implement is absent rather than empty, which under the
 presence rule is what says so: `moods[]`, `explicitStatus`,
@@ -462,12 +488,11 @@ supported with credential-bearing requests.
 ## Public shares
 
 `createShare` returns an absolute URL when `WAVEFLOW_PUBLIC_URL` is configured,
-otherwise a relative `/share/{token}` URL. Preserve that creation response:
-`getShares` and synchronization snapshots omit the plaintext bearer token. A
-native `/api/v2` caller that supplied an operation ID can recover the same URL
-by replaying the identical creation operation, but the Subsonic method has no
-operation-ID parameter. The public metadata payload contains token-scoped
-stream URLs and cannot stream tracks outside the share.
+otherwise a relative `/share/{token}` URL. `getShares` and `updateShare` hand
+the owner the same URL on every read, derived again from the instance key;
+only the native API's later reads and synchronization snapshots omit it. The
+public metadata payload contains token-scoped stream URLs and cannot stream
+tracks outside the share.
 
 The URL is meant to be opened in a browser: a request that asks for HTML is
 handed the web client, which plays the share, and every other caller keeps the

@@ -11,6 +11,12 @@
 > It describes what Desktop expected on that date, what server v2 offered, and
 > what had no equivalent. No code had been modified during the survey. The
 > target contract is [RFC-003](../rfcs/RFC-003-waveflow-sync-v2.md).
+>
+> **Status as of 2026-10-29, `main` at `4ccf395`:** still closed; nothing here
+> has reopened. Two facts below have moved since, both noted where they stand:
+> `getOpenSubsonicExtensions` announces a fourth extension, and #374 strips the
+> OpenSubsonic fields for listed legacy clients while keeping the envelope the
+> detection relies on.
 
 ## What was found on 2026-08-10
 
@@ -150,6 +156,12 @@ therefore enough to decide whether `SyncProvider` can be switched on.
 > requires an authenticated call, whereas the decision to switch on
 > `SyncProvider` is taken before there is any credential. The discriminator
 > stays `type="waveflow"`.
+
+> **State on 2026-10-29.** Both points still hold. The envelope keeps
+> `type="waveflow"`, `serverVersion` and `openSubsonic="true"` for every client
+> (`src/subsonic/nodes.rs`), including the legacy clients from which #374
+> (2026-10-28) strips the OpenSubsonic fields. The extensions are now four:
+> `songLyrics` joined the three above (`src/subsonic/protocol.rs`).
 
 **What only WaveFlow offers**, and which must therefore be treated as an
 optional capability and not as a prerequisite: the journal (`/sync/snapshot`,

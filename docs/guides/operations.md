@@ -6,6 +6,12 @@ one path whose query string must not reach a reverse proxy's access log. What
 the server sends to other hosts, and how to stop it, is in
 [privacy](privacy.md).
 
+This guide covers the settings an operator usually changes, not all of them.
+The core ones — bind address, data directory, database pool, token lifetimes,
+scanning, transcoding and scrobbling — are listed with their defaults in
+[`.env.example`](../../.env.example) at the root of the repository; every
+setting is documented on its field of `Config`, in `src/config/`.
+
 ## The first account needs the setup token
 
 Until an account exists, whoever creates the first one becomes the
@@ -559,8 +565,12 @@ files' folder as a library of its own.
 
 A track whose file is gone stays in the catalogue, unavailable, with its
 favourites, playlist entries and plays, so a share that comes back brings it
-back whole. Owners and managers see them on the **Missing files** page, which
-says for each what a purge would take; the CLI lists them too:
+back whole. Until then it is out of every listing and search, and refuses a new
+favourite, rating, bookmark or play (Subsonic error 70, `404` natively); a
+queue saved with it is saved without it. An album whose files all went
+disappears the same way, and comes back with them under the same identifier.
+Owners and managers see the missing tracks on the **Missing files** page,
+which says for each what a purge would take; the CLI lists them too:
 
 ```bash
 waveflow-server library unavailable --actor admin --library-id <uuid>
@@ -641,6 +651,28 @@ inotify watch limit; raise it with `sysctl fs.inotify.max_user_watches=524288`
 (and in `/etc/sysctl.d/` to keep it), or the library falls back to the periodic
 scan.
 
+## Receiving files
+
+A library takes no uploaded file until an administrator opens it:
+
+```bash
+waveflow-server library set-uploads --actor admin --library-id <uuid> --accept
+```
+
+Run it without `--accept` to close the library again. Once it is open, its
+owners and managers may upload to it. These limits apply to every library:
+
+| Variable | Default | What it bounds |
+| --- | --- | --- |
+| `WAVEFLOW_UPLOAD_MAX_FILE_BYTES` | 1073741824 | The largest single file; may not exceed the quota |
+| `WAVEFLOW_UPLOAD_LIBRARY_QUOTA_BYTES` | 53687091200 | What received files may occupy in one library, open sessions included |
+| `WAVEFLOW_UPLOAD_CHUNK_BYTES` | 4194304 | The fragment size clients are told to send; may not exceed the largest file |
+| `WAVEFLOW_UPLOAD_BATCH_LIMIT` | 200 | How many files one negotiation may offer |
+| `WAVEFLOW_UPLOAD_SESSIONS_PER_USER` | 4 | Sessions one account may hold open at once, across libraries |
+| `WAVEFLOW_UPLOAD_SESSION_TTL_SECS` | 86400 | How long an untouched session survives |
+
+A combination the rules above refuse stops the server at boot.
+
 ## Levelling a Subsonic transcode
 
 Most Subsonic clients apply ReplayGain themselves. For those that cannot, set
@@ -658,10 +690,12 @@ collects every `<artist>` element in an answer, including those nested inside a
 track's credits, and then shows a composer as a starred artist. The clients
 named in **`WAVEFLOW_SUBSONIC_LEGACY_CLIENTS`** are answered in plain Subsonic
 1.16.1 instead, without credits, artist arrays, ReplayGain or any other
-OpenSubsonic field. Give client names separated by commas, as the client sends
-them in its `c` parameter; the comparison is exact, case included. The default
-is `DSub`, as in Navidrome. Set it empty to answer every client in full, or
-add a client that shows the same kind of confusion.
+OpenSubsonic field, and their XML is sent as `text/xml` rather than
+`application/xml`, errors included: DSub recognises an error in place of a
+stream only by that type. Give client names separated by commas, as the
+client sends them in its `c` parameter; the comparison is exact, case included.
+The default is `DSub`, as in Navidrome. Set it empty to answer every client in
+full, or add a client that shows the same kind of confusion.
 
 ## Offline listening in the web client
 

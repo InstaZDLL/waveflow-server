@@ -1,8 +1,8 @@
 # RFC-013 — Chosen artist imagery: a portrait and a banner, set by hand
 
 - **Status**: Proposed
-- **Implemented by**: in progress, in the order of "The order of the work"
-  below: [#308](https://github.com/InstaZDLL/waveflow-server/pull/308) (this
+- **Implemented by**: every step of "The order of the work" below, in that
+  order: [#308](https://github.com/InstaZDLL/waveflow-server/pull/308) (this
   RFC), [#309](https://github.com/InstaZDLL/waveflow-server/pull/309)
   (serving the choice: `artist_image_choice`, the effective portrait,
   `banner_hash`, the upload and removal routes),

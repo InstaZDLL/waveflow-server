@@ -3,7 +3,9 @@
 - **Status**: Proposed
 - **Implemented by**: [#334](https://github.com/InstaZDLL/waveflow-server/pull/334)
   (this RFC, LRCLIB lyrics, statistics, mixes, the local similar-songs
-  fallback, and the web client's statistics page and shelf). The *Status*
+  fallback, and the web client's statistics page and shelf), then
+  [#336](https://github.com/InstaZDLL/waveflow-server/pull/336) (artwork in the
+  statistics lists, client only). The *Status*
   field above never flips in this project; this line is the one that says
   what is running.
 - **Date**: 2026-10-25

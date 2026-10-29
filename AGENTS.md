@@ -2,7 +2,7 @@
 
 ## Product
 
-This monorepo is being rebuilt as WaveFlow Server v2. The accepted design is `docs/rfcs/RFC-002-waveflow-server-v2.md`; read it before adding a module or public route.
+This repository is WaveFlow Server v2. The accepted design is `docs/rfcs/RFC-002-waveflow-server-v2.md`; read it before adding a module or public route.
 
 - `/`: one axum binary with SQLite as the only v2 database.
 - `webapp/`: the embedded React client, built to `webapp/dist` and compiled into the binary by `rust_embed`. Build it before the server, never after.
@@ -36,7 +36,7 @@ Unit tests live in `tests.rs` beside their module (`foo/mod.rs` declares `#[cfg(
 - Audio files are read-only. Scanner and tag operations never rewrite them.
 - Passwords use Argon2id. Opaque tokens are stored hashed. Reversible Subsonic credentials are encrypted with the instance key and never logged.
 - HTTP tracing records `uri.path()` only. Never log headers, cookies, query parameters, tokens or passwords.
-- `/ready` reports API/database capability. Scan progress and FFmpeg capability have separate status surfaces in later milestones.
+- `/ready` reports API/database capability. Scan progress has its own surface (`/api/v2/scans/{scan_id}/events`), not the probe.
 - Web, native and Subsonic mutations must call the same domain services.
 
 ## Release sequence
@@ -50,6 +50,8 @@ Unit tests live in `tests.rs` beside their module (`foo/mod.rs` declares `#[cfg(
 7. M6: premium studio-nocturne web finish for v2.1.
 
 Do not begin a later milestone until the previous milestone's tests and release gate pass.
+
+All seven closed on 2026-08-18 (`docs/history/M4-handoff.md`) and were released as `2.0.0-beta.0` and `2.0.0-beta.1`; `v2.0` stable is not tagged yet. Work since is planned in GitHub issues and in `docs/plans/`, and every RFC from RFC-007 on records what implemented it.
 
 ## Repository hygiene
 

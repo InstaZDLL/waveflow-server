@@ -222,6 +222,11 @@ All catalogue queries are filtered by the authenticated account's library
 memberships. An inaccessible or foreign UUID normally returns `404`, not a
 distinguishing permission error.
 
+A track whose file is gone, and an album whose files all went, are treated the
+same way: `GET /api/v2/tracks/{track_id}` or `GET /api/v2/albums/{album_id}`
+answers `404`, and they leave every listing and search until the files come
+back.
+
 ```bash
 # Visible libraries
 curl https://music.example.com/api/v2/libraries \
@@ -945,6 +950,15 @@ Other user-data routes:
 | Queue | `GET/PUT /api/v2/queue` (`track_ids` allows repeated tracks; maximum 400) |
 | Shares | `GET/POST /api/v2/shares`, `PATCH/DELETE /api/v2/shares/{id}` (1–400 tracks, repeats allowed; optional `max_visits` ≥ 1) |
 
+A track whose file is gone is not found to a write any more than to a read: a
+favourite, a rating, a bookmark or a scrobble on it answers `404` and writes
+nothing, and so do a favourite or a rating on an album whose files all went.
+What was written before stays, and comes back with the files under the same
+identifier, so `GET /api/v2/favorites` and `GET /api/v2/ratings` keep listing
+it. `PUT /api/v2/queue` is the exception: it saves the queue without the
+tracks that went, and drops the current track and its position if it is one
+of them. An id that was never a track is still `404`.
+
 `POST /api/v2/shares` returns the bearer URL at creation and on an authenticated
 idempotent replay. Later list, snapshot and update responses omit it; only its
 hash is stored. Preserve the first response if the URL must be shown again.
@@ -1298,7 +1312,13 @@ with what purging each would cost, by
 `GET /api/v2/libraries/{library_id}/unavailable-tracks`, and purged by
 `POST /api/v2/libraries/{library_id}/unavailable-tracks/purge` with
 `{"track_ids": […]}` or `{"all": true}`. Both are for the library's owners,
-managers and administrators; a purge is not reversible (RFC-021 decision 4).
+managers and administrators. A purge can be taken back while the operator's
+grace window lasts (`WAVEFLOW_PURGE_GRACE_HOURS`, a week by default): the
+purge answers `restorable_until`, the tracks leave the listing at once,
+`GET /api/v2/libraries/{library_id}/purged-tracks` lists them, and
+`POST /api/v2/libraries/{library_id}/purged-tracks/restore` with the same body
+puts them back. Once the window has passed, or at once when it is `0`, the
+deletion is final (RFC-021 decision 4).
 
 A scan job also says what its walk left out: `excluded` (built-in exclusions
 and `.waveflowignore`) and `skipped_links` (symbolic links not followed).

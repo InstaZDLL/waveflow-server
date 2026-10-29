@@ -6,7 +6,11 @@
   links, missing tracks and their purge, the library lifecycle, the watcher),
   and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (everything *What is still open* listed: the journal on a
   deletion, link roots, undoing a purge, the per-library watch and scoped
-  watched scans). The *Status* field above never flips in this project; this line is the one
+  watched scans). Then [#370](https://github.com/InstaZDLL/waveflow-server/pull/370)
+  and [#377](https://github.com/InstaZDLL/waveflow-server/pull/377): a write on
+  an unavailable track, or on an album whose tracks are all unavailable, is
+  refused as not found and deletes nothing, and such an album is no longer
+  listed. The *Status* field above never flips in this project; this line is the one
   that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project

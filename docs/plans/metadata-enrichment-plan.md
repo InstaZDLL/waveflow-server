@@ -8,6 +8,14 @@
 > end and says so.
 >
 > No code was modified during this survey.
+>
+> **Status as of 2026-10-29, `main` at `4ccf395`:** the plan is carried out.
+> Steps A to G merged on 2026-10-15 and 2026-10-16 (InstaZDLL/WaveFlow#855,
+> then #270 to #276), and campaign H ran on 2026-10-27 and 2026-10-28, its
+> fixes #367 to #377 and its rows in
+> [`subsonic-compatibility.md`](../compatibility/subsonic-compatibility.md).
+> Still open: whether any client reads `largeImageUrl` (decision A), which the
+> campaign did not measure, and the RFC's own open questions in §5.
 
 [RFC-011](../rfcs/RFC-011-metadata-enrichment.md) was written from the shape of
 `waveflow-core`'s metadata module and of this server's surfaces. Planning the
@@ -115,6 +123,15 @@ C, RFC-002's amendment with D, RFC-007's with F.
 D and F both depend only on C and can run in either order. H is not a pull
 request: it is a session in front of DSub, Symfonium, Feishin and Juliet, and
 it gates the next tag, exactly as RFC-002's accepted deviations already do.
+
+> **State on 2026-10-29: every step is done.** A by InstaZDLL/WaveFlow#855
+> (`bd8d360c`), which closed #263 on 2026-10-15; B by #270, C by #271, D by
+> #272 and E by #273 (with #274), all on 2026-10-15; F by #275 and G by #276,
+> on 2026-10-16. H ran on 2026-10-27 and 2026-10-28 with Juliet 8, Feishin
+> 1.17.0, Symfonium 15.1.0 and DSub 5.5.3; what it found was fixed by #367 to
+> #377, and the matrix rows in
+> [`subsonic-compatibility.md`](../compatibility/subsonic-compatibility.md) now
+> record that campaign.
 
 ## 3. Each step
 
@@ -237,6 +254,10 @@ already carries. **Taken: absent in F**, and campaign H says whether a client in
 actually reads `largeImageUrl`. A ticket can be added then; a URL scheme
 cannot be withdrawn once clients cache it.
 
+> **State on 2026-10-29: still open.** The fields are still absent from `src/`,
+> and the 2026-10-27/28 campaign did not record whether any client in the
+> matrix reads `largeImageUrl`. The measurement remains to be taken.
+
 **B. Which provider supplies images?** Blocks F. TheAudioDB wants a key, and
 whether a personal one is free was not verified. Deezer's public API asks for
 none. **Taken: Deezer**, subject to its terms, which were not verified either.
@@ -258,7 +279,8 @@ A can offer. Wasmtime, which decision 2 settled.
 - Whether TheAudioDB issues personal API keys without a paid subscription, and
   what Deezer's API terms say about a server caching and re-serving its images.
 - Which Subsonic clients read `largeImageUrl` rather than `coverArt` for an
-  artist — the reason decision A is recommended as a measurement.
+  artist — the reason decision A is recommended as a measurement. Still not
+  verified on 2026-10-29: campaign H did not measure it.
 - What the 946 commits between the pin and the core's `main` change in scanning
   behaviour. B exists to find out under a full suite, not to assume it.
 - Last.fm's rate limit: "roughly five requests a second" is the core's own doc
