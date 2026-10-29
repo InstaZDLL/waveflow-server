@@ -512,7 +512,8 @@ async fn the_cli_authorises_last_fm_without_a_browser() {
 
 /// A server that never asked for Last.fm boots without being told its Last.fm
 /// destination has no application; one whose operator named a Last.fm
-/// instance still is.
+/// instance still is, and one whose operator emptied the variable, declaring
+/// none, is not.
 ///
 /// Through the real executable, because the warning is written by `serve` in
 /// `main.rs`, which no in-process test reaches. The port is held, so each boot
@@ -556,5 +557,13 @@ fn the_default_last_fm_instance_is_not_reported_at_boot() {
     assert!(
         named.contains(WARNING),
         "a Last.fm instance the operator named, with no application, went unreported: {named}"
+    );
+    // Emptied, the variable declares no instance: Last.fm switched off on
+    // purpose, with nothing to report. Read as unset instead, it would bring
+    // the default instance back, now counted as named, and warn.
+    let emptied = boot(Some(""));
+    assert!(
+        !emptied.contains(WARNING),
+        "Last.fm switched off by an empty WAVEFLOW_SCROBBLE_LASTFM_URL was warned about: {emptied}"
     );
 }
