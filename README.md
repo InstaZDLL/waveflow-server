@@ -63,15 +63,15 @@
   </tr>
   <tr>
     <td>📱&nbsp;<b>Your apps already work</b></td>
-    <td>Symfonium, Feishin, DSub, Juliet and the other Subsonic players connect as they are. Each release is run against real clients, and the results are <a href="docs/compatibility/subsonic-compatibility.md">published</a>.</td>
+    <td>Subsonic players connect as they are, with no plugin. Each release is run against Symfonium, Feishin, DSub and Juliet, and the results are <a href="docs/compatibility/subsonic-compatibility.md">published</a>.</td>
   </tr>
   <tr>
     <td>🌐&nbsp;<b>A player in the browser</b></td>
-    <td>No app to install: open the server's address and listen, on a desktop or a phone, even offline.</td>
+    <td>No app to install: open the server's address and listen, on a desktop or a phone, and keep tracks for when you are offline.</td>
   </tr>
   <tr>
     <td>🔁&nbsp;<b>Nothing moves under you</b></td>
-    <td>Album and artist IDs are derived from your tags, so a reinstall gives the same IDs back: favourites, playlists and links survive.</td>
+    <td>Album and artist IDs are derived from your tags, so rebuilding the catalogue gives the same IDs back: the links and references your apps hold keep working.</td>
   </tr>
   <tr>
     <td>🔍&nbsp;<b>Knows what your files really are</b></td>
@@ -91,7 +91,7 @@
 - **Mixes** made from your own listening, **listening statistics**, and **similar songs** drawn from your library.
 - **Synced lyrics** from the files or their `.lrc`, with a full-screen immersive view; LRCLIB fills the gaps once you switch it on.
 - **Streams the original**, or converts on the fly to MP3, Opus or AAC, with seeking inside a conversion and server-side volume levelling (ReplayGain).
-- **Offline listening**, installable as an app on a phone, keyboard shortcuts, media keys and lock-screen controls.
+- **Offline listening** for the tracks you keep, installable as an app on a phone, keyboard shortcuts, media keys and lock-screen controls.
 - **14 themes**, light and dark, in English and French.
 
 ### 📚 Your library
@@ -104,7 +104,7 @@
 
 ### ✨ Discovery
 
-- **Artist pages** with biographies, similar artists and portraits from Last.fm, TheAudioDB and Deezer, once you opt in.
+- **Artist pages** with biographies and similar artists from Last.fm, portraits from Deezer and fanart banners from TheAudioDB, once you opt in.
 - **Choose the portrait and the banner yourself**, or let the server find a banner.
 - **Smart playlists** that fill themselves from rules, **internet radio** and **podcasts**.
 
@@ -112,7 +112,7 @@
 
 - Playlists with repeats, **public playlists** for the other accounts, and **`.m3u` import and export**.
 - **Share links** that open a player page in any browser, with an optional expiry and visit limit.
-- **Scrobbling** to ListenBrainz, Last.fm and Maloja, queued so that no listen is lost when a service is down.
+- **Scrobbling** to ListenBrainz, Last.fm and Maloja, through a durable queue that survives restarts and retries a service that is down.
 
 ### 🔒 Accounts and safety
 
