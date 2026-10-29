@@ -281,8 +281,9 @@ closing (the same RFC) affects `/share/`, which is not part of the façade.
 
 ## Additions for RFC-025: smart playlists and podcasts
 
-Both land after the 2026-09-16 replay, and no client has been replayed against
-them yet. Nothing that existed changes shape, with the one exception named.
+Both land after the 2026-09-16 replay, and no client had been run against them
+before the third campaign of 2026-10-27/28, whose podcast results close this
+section. Nothing that existed changes shape, with the one exception named.
 
 **Smart playlists** ([RFC-025](../rfcs/RFC-025-smart-playlists-and-podcasts.md)
 decision 6). `getPlaylists` lists them after the ordinary playlists, and

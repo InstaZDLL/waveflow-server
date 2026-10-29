@@ -23,9 +23,11 @@ out first, whether or not it breaks a compile.
   `utf-8` or `windows-1252`. The two old values are spelled as before.
 - **A write on a removed track or an emptied album is refused as not found**
   (#370, #377): 70 on the façade, 404 on `/api/v2`, and nothing is written or
-  deleted. `savePlayQueue` is the exception: it saves the queue without the
-  tracks that went. An album whose files have all gone is no longer listed by
-  any read, native or Subsonic.
+  deleted. A replay under the operation id of a write that succeeded before
+  the files went answers as that write did. `savePlayQueue` is the exception:
+  it saves the queue without the tracks that went. An album whose files have
+  all gone leaves every catalogue listing and search, native or Subsonic; the
+  account's favourites and ratings keep its id.
 - **Legacy Subsonic clients get the Subsonic answer** (#374, #375).
   `WAVEFLOW_SUBSONIC_LEGACY_CLIENTS` (`DSub` by default) names clients that
   receive no OpenSubsonic fields and XML as `text/xml`, errors included. Every

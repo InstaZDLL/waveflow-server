@@ -7,10 +7,12 @@
   and [#335](https://github.com/InstaZDLL/waveflow-server/pull/335) (everything *What is still open* listed: the journal on a
   deletion, link roots, undoing a purge, the per-library watch and scoped
   watched scans). Then [#370](https://github.com/InstaZDLL/waveflow-server/pull/370)
-  and [#377](https://github.com/InstaZDLL/waveflow-server/pull/377): a write on
-  an unavailable track, or on an album whose tracks are all unavailable, is
-  refused as not found and deletes nothing, and such an album is no longer
-  listed. The *Status* field above never flips in this project; this line is the one
+  and [#377](https://github.com/InstaZDLL/waveflow-server/pull/377): a new write
+  on an unavailable track, or on an album whose tracks are all unavailable, is
+  refused as not found and deletes nothing (a replay under the operation id of
+  a write that succeeded earlier answers as that write did), and such an album
+  leaves the catalogue listings, while the account's favourites and ratings
+  keep its id. The *Status* field above never flips in this project; this line is the one
   that says what is running.
 - **Date**: 2026-10-25
 - **Authors**: the WaveFlow project

@@ -623,8 +623,8 @@ does it come before this version's one remaining lock: replaying Symfonium,
 Feishin and DSub against the current model, as Juliet was on 2026-08-31. The web
 client is not on that critical path.
 
-> **State on 2026-10-29.** That lock is gone: the three were replayed on
-> 2026-09-16 and `v2.0.0-beta.1` was tagged the same day. A third campaign ran
+> **State on 2026-10-29.** That lock is gone: all four clients, Juliet
+> included, were replayed on 2026-09-16 and `v2.0.0-beta.1` was tagged the same day. A third campaign ran
 > on 2026-10-27 and 2026-10-28, and its fixes, #367 to #377, include one
 > deliberate change to the frozen contract, for DSub alone (#374).
 
