@@ -5,7 +5,7 @@
 # the same tags and digest, for a host that pulls from there instead.
 services:
   waveflow:
-    image: ghcr.io/instazdll/waveflow-server:2.0.0-beta.1
+    image: ghcr.io/instazdll/waveflow-server:2.0.0
     # build: .
     restart: unless-stopped
     ports:
@@ -15,7 +15,7 @@ services:
       WAVEFLOW_BIND: 0.0.0.0:4533
       WAVEFLOW_PUBLIC_URL: ${WAVEFLOW_PUBLIC_URL:-}
       # The port above is published on every interface, so the first account
-      # asks for a one-time setup token (from the release after 2.0.0-beta.1).
+      # asks for a one-time setup token.
       # Leave this empty and the server writes one to /data/setup-token:
       #   docker compose exec waveflow cat /data/setup-token
       # or choose your own here, 16 characters at least.

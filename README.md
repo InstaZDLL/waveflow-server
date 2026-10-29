@@ -59,7 +59,7 @@
 <table>
   <tr>
     <td>📦&nbsp;<b>Up in a minute</b></td>
-    <td>One container or one binary, and FFmpeg. The catalogue lives in a single SQLite file: back up two files and you have backed up everything.</td>
+    <td>One container, on a server, a NAS or a Raspberry Pi 4 or 5. The catalogue lives in a single SQLite file: back up two files and you have backed up everything.</td>
   </tr>
   <tr>
     <td>📱&nbsp;<b>Your apps already work</b></td>
@@ -162,7 +162,7 @@ docker run -d --name waveflow \
   ghcr.io/instazdll/waveflow-server:2.0.0
 ```
 
-The image is built for `linux/amd64` and `linux/arm64` and published under the same tags on both registries:
+The image is built for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system) and published under the same tags on both registries:
 
 | Registry | Image |
 | --- | --- |

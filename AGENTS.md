@@ -51,7 +51,7 @@ Unit tests live in `tests.rs` beside their module (`foo/mod.rs` declares `#[cfg(
 
 Do not begin a later milestone until the previous milestone's tests and release gate pass.
 
-All seven closed on 2026-08-18 (`docs/history/M4-handoff.md`) and were released as `2.0.0-beta.0` and `2.0.0-beta.1`; `v2.0` stable is not tagged yet. Work since is planned in GitHub issues and in `docs/plans/`, and every RFC from RFC-007 on records what implemented it.
+All seven closed on 2026-08-18 (`docs/history/M4-handoff.md`) and were released as `2.0.0-beta.0`, `2.0.0-beta.1` and then `2.0.0`, the first stable release. Work since is planned in GitHub issues and in `docs/plans/`, and every RFC from RFC-007 on records what implemented it.
 
 ## Repository hygiene
 

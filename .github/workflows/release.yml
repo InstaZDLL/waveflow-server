@@ -84,6 +84,23 @@ jobs:
           fi
           echo "version=$tag_version" >> "$GITHUB_OUTPUT"
 
+      # A stable release is announced with notes written for the people who
+      # install it, in docs/releases/<tag>.md, as the desktop and QuickPlay
+      # repositories do. Checked here, before any build minute is spent: a
+      # release page made only of a list of merged pull requests is a release
+      # nobody can read. A pre-release may still go without them.
+      - name: Check the release notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          case "${TAG#v}" in
+            *-*) exit 0 ;;
+          esac
+          if [ ! -s "docs/releases/$TAG.md" ]; then
+            echo "::error::docs/releases/$TAG.md is missing: a stable release needs its notes"
+            exit 1
+          fi
+
       # `github.repository` keeps the owner's casing and GHCR refuses an
       # uppercase path outright — the whole publish failed on it. Folded
       # once, here, rather than in each of the three jobs that need it.
@@ -261,6 +278,13 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The notes, when there are some, are read from the tag itself, so the
+      # page says what was released rather than what `main` says today.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
       # A pre-release suffix marks the release as one on GitHub, the same rule
       # the desktop repository uses. The badge is what keeps
       # `releases/latest` from resolving to a beta, and what tells a watcher
@@ -282,23 +306,33 @@ jobs:
           # printf with a single-quoted format rather than a heredoc: the body
           # is mostly backticks, and every one of them would be a command
           # substitution in an unquoted here-document.
-          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64`.\n' \
-            "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" > notes.md
+          # Written notes come first, when the tag carries them; the pull
+          # commands follow, so a reader who scrolls past the prose still finds
+          # them. Without notes, the list of merged pull requests that
+          # `--generate-notes` appends is all the page has, as for a beta.
+          notes_file="docs/releases/$TAG.md"
+          generate=""
+          if [ -s "$notes_file" ]; then
+            cat "$notes_file" > notes.md
+            printf '\n' >> notes.md
+          else
+            : > notes.md
+            generate="--generate-notes"
+          fi
+          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system).\n' \
+            "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" >> notes.md
 
-          # `--generate-notes` appends the merged pull requests below this, so
-          # the install line stays at the top where it is useful.
-          #
-          # A release that already exists keeps its body. It was written once
-          # with the changelog appended, and re-applying our half alone would
-          # replace the whole thing — a retry would silently delete the
-          # changelog it is not meant to touch. Only the flag is re-asserted.
+          # A release that already exists keeps its body. It was written once,
+          # with the changelog appended for a beta, and re-applying our half
+          # alone would replace the whole thing — a retry would silently delete
+          # what it is not meant to touch. Only the flag is re-asserted.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" $release_flag
           else
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-file notes.md \
-              --generate-notes \
+              $generate \
               --verify-tag \
               $release_flag
           fi

@@ -23,7 +23,7 @@ use super::*;
 #[tokio::test]
 async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
     let total = MIGRATOR.iter().count();
-    let (tag, baseline) = RELEASED_SCHEMAS[RELEASED_SCHEMAS.len() - 1];
+    let (tag, baseline) = newest_schema_behind();
     let temp = tempfile::tempdir().expect("temporary directory");
     let config = Config::for_data_dir(temp.path().join("data"));
 
@@ -123,14 +123,35 @@ async fn a_key_change_reads_without_migrating_and_copies_before_it_migrates() {
         .expect("the rotated pair must boot");
 }
 
-/// A database at the newest released schema, bound to a key on disk, as an
-/// installation that is about to upgrade has it. Answers the key and how many
-/// migrations the database has run.
+/// The newest released schema the binary is still ahead of.
+///
+/// Not simply the last line of `RELEASED_SCHEMAS`: the PR that bumps the
+/// version for a release adds its line with the newest migration of that
+/// moment, so until the next migration lands that schema is the binary's own,
+/// and a database at it has nothing to upgrade. Both tests here need a database
+/// behind the binary, so they take the newest one that still is.
+fn newest_schema_behind() -> (&'static str, i64) {
+    let newest = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("at least one migration");
+    RELEASED_SCHEMAS
+        .iter()
+        .rev()
+        .copied()
+        .find(|(_, baseline)| *baseline < newest)
+        .expect("a released schema behind the binary")
+}
+
+/// A database at the newest released schema behind the binary, bound to a key
+/// on disk, as an installation that is about to upgrade has it. Answers the key
+/// and how many migrations the database has run.
 ///
 /// `extra` runs on the database before it is closed, for a test that needs it
 /// shaped some further way.
 async fn an_installation_behind(config: &Config, extra: Option<&'static str>) -> ([u8; 32], i64) {
-    let (tag, baseline) = RELEASED_SCHEMAS[RELEASED_SCHEMAS.len() - 1];
+    let (tag, baseline) = newest_schema_behind();
     let database = Database::open(config).await.expect("open the database");
     let mut connection = database.pool().acquire().await.expect("connection");
     connection

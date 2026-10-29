@@ -26,8 +26,25 @@ fn the_version_being_shipped_has_its_schema_recorded() {
 #[tokio::test]
 async fn every_released_schema_upgrades_with_the_rows_it_was_holding() {
     let total = MIGRATOR.iter().count();
+    // The version being shipped records its schema as the newest migration of
+    // that moment, so until the next migration lands it is the binary's own:
+    // a database at it has nothing to upgrade. Every other released schema is
+    // behind, and there is always one, the first tag's.
+    let newest = MIGRATOR
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .expect("at least one migration");
+    let behind: Vec<_> = RELEASED_SCHEMAS
+        .into_iter()
+        .filter(|(_, baseline)| *baseline < newest)
+        .collect();
+    assert!(
+        !behind.is_empty(),
+        "no released schema is behind the binary"
+    );
 
-    for (tag, baseline) in RELEASED_SCHEMAS {
+    for (tag, baseline) in behind {
         let temp = tempfile::tempdir().expect("temporary directory");
         let config = Config::for_data_dir(temp.path().join("data"));
 

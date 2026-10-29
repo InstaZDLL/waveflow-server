@@ -8,9 +8,9 @@ The desktop app at [`InstaZDLL/WaveFlow`](https://github.com/InstaZDLL/WaveFlow)
 consumes `/api/v2`, so anything that changes the shape of a response is called
 out first, whether or not it breaks a compile.
 
-## [Unreleased]
+## [2.0.0] — 2026-10-29
 
-325 commits since `2.0.0-beta.1`.
+The first stable release: 331 commits since `2.0.0-beta.1`.
 
 ### Changed — response shapes
 
@@ -84,6 +84,15 @@ out first, whether or not it breaks a compile.
   played (#252), links to each credited artist (#341), and a redesign across
   every theme (#289, #318, #347–#349).
 - **The image on Docker Hub** as well as GHCR, same tags and digest (#313).
+- **Running outside Docker** — `ffmpeg` and `ffprobe` found beside the
+  executable before `PATH` (#380), and laptop mode: a `laptop.env` beside the
+  executable, `WAVEFLOW_LAPTOP` moving the data folder to the system's
+  application-data folder and the cache to 2 GiB, and a second copy on the same
+  port handing over instead of starting (#383, #385). The standalone archives
+  that will carry them are not published yet.
+- **The source of the running version offered to its users** (#384), as
+  AGPL-3.0 §13 asks: a link under the sign-in form and in Settings, `source` in
+  `/health`, and the licence's URL in the OpenAPI document.
 
 ### Changed
 
@@ -272,6 +281,6 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.0.0-beta.1...HEAD
+[2.0.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0
 [2.0.0-beta.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.1
 [2.0.0-beta.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.0
