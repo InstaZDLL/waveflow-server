@@ -274,9 +274,9 @@ h3 {
 /* The source offer (AGPL-3.0 §13) sits in muted text, which links inherit
    here: underlined, so the offer reads as one without hovering. */
 .source-offer {
-  margin-top: 1.5rem;
+  margin-top: var(--space-6);
   text-align: center;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 
 .source-offer a {
