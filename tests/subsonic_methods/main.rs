@@ -25,6 +25,7 @@ mod bookmarks;
 mod playlists;
 mod radio;
 mod remaining_methods;
+mod removed_albums;
 mod removed_tracks;
 mod shares;
 mod transcoding;

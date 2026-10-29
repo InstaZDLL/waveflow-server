@@ -121,6 +121,15 @@ macro_rules! song_scope {
     };
 }
 
+/// The album projection. Only an album with a track still there is in it.
+///
+/// An album row outlives its files: the scan deletes an album only once no
+/// track row points at it, and the row of a removed track is kept for the
+/// file's return. Counting the available tracks was not enough, so an album
+/// whose files had all gone stayed in every list with no song in it, and
+/// opened on nothing. Filtering here covers every read built on this macro,
+/// the native ones included. The row and its star and rating stay, and come
+/// back with the files.
 macro_rules! album_select {
     () => {
         "SELECT al.id, al.library_id, al.title, al.album_artist_name, al.album_artist_id, \
@@ -139,7 +148,8 @@ macro_rules! album_select {
          FROM album al JOIN library_member m ON m.library_id=al.library_id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='album' AND us.entity_id=al.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='album' AND ur.entity_id=al.id \
-         WHERE m.user_id=?"
+         WHERE m.user_id=? \
+           AND EXISTS (SELECT 1 FROM track ta WHERE ta.album_id=al.id AND ta.is_available=1)"
     };
 }
 
