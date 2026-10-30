@@ -1,0 +1,53 @@
+// The attention lists and artist splits.
+import type { TranslationValue } from "..";
+import type { attention as en } from "../en/attention";
+
+export const attention: Record<keyof typeof en, TranslationValue> = {
+  "attention.lists": "列表",
+  "attention.total": {
+    one: "{count} 项待处理",
+    other: "{count} 项待处理",
+  },
+  "attention.nothing": "没有待处理的项目。",
+  "attention.notYours":
+    "只有这个音乐库的所有者和管理者才能看到其中的待处理项目。",
+  "attention.empty": "这个列表是空的。",
+  "attention.tracksNote": "在曲目菜单中修正曲目：修正后它就会离开这个列表。",
+  "attention.creditsNote":
+    "这些署名都在一个字符串里写了多位艺人。可以把它拆分成其中的各位艺人；如果它其实是一个名字，就保留为一位。之后的每次扫描都会沿用这个决定。",
+  "attention.pending": "待决定",
+  "attention.decided": "已决定",
+  "attention.split": "拆分",
+  "attention.confirmSplit": "确认：拆分为 {count} 位",
+  "attention.keep": "保留为一位",
+  "attention.splitDone": "{name} 已拆分。",
+  "attention.keepDone": "{name} 保留为一位艺人。",
+  "attention.undone": "已撤销对 {name} 的决定。",
+  "attention.alreadyDecided": "这个署名已在此期间被处理，列表已重新加载。",
+  "attention.failed": "操作失败，请重试。",
+  "attention.noCredits": "没有等待决定的署名。",
+  "attention.noDecisions": "还没有做出任何决定。",
+  "attention.fragments": "{name} 将拆分为",
+  "attention.knownFragment": "已是这个音乐库中的艺人",
+  "attention.decidedSplit": "已拆分为 {parts}",
+  "attention.decidedKeep": "已保留为一位",
+  "attention.decidedBy": "{who}，{when}",
+  "attention.undo": "撤销",
+  "attention.duplicateGroup": "疑似重复 {group}",
+  "attention.split_credits": "待拆分的艺人",
+  "attention.missing_artist": "缺少艺人",
+  "attention.missing_album": "缺少专辑",
+  "attention.missing_year": "缺少年份",
+  "attention.missing_track_number": "缺少曲目编号",
+  "attention.missing_cover": "缺少封面",
+  "attention.album_year_conflict": "年份不一致的专辑",
+  "attention.compilation_no_album_artist": "缺少专辑艺人的合辑",
+  "attention.duplicate_track_number": "曲目编号重复",
+  "attention.track_number_gap": "曲目编号不连续",
+  "attention.probable_duplicate": "疑似重复",
+  "attention.probable_fake_lossless": "疑似伪无损",
+  "artistSplit.offer": "拆分为 {count} 位艺人",
+  "artistSplit.confirm": "确认：拆分为 {count} 位",
+  "artistSplit.done": "已拆分为 {parts}。",
+  "artistSplit.failed": "无法拆分这个署名，请重试。",
+};

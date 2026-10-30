@@ -9,6 +9,7 @@ import {
 
 import { en } from "./en";
 import { fr } from "./fr";
+import { zhCN } from "./zh-CN";
 
 export type TranslationKey = keyof typeof en;
 export type TranslationValue = string | { one: string; other: string };
@@ -19,6 +20,7 @@ export type TranslationValue = string | { one: string; other: string };
 const LOCALES = {
   en: { name: "English", strings: en },
   fr: { name: "Français", strings: fr },
+  "zh-CN": { name: "简体中文", strings: zhCN },
 } satisfies Record<
   string,
   { name: string; strings: Record<TranslationKey, TranslationValue> }
@@ -32,7 +34,12 @@ function isLocale(value: string | null): value is Locale {
 
 /** The language to start in, from the one the browser prefers. */
 export function localeFor(language: string): Locale {
-  return language.toLowerCase().startsWith("fr") ? "fr" : "en";
+  const tag = language.toLowerCase();
+  if (tag.startsWith("fr")) return "fr";
+  // Simplified Chinese only: Taiwan, Hong Kong and Macao read Traditional,
+  // and are better served by English than by a script they do not use.
+  if (/^zh(-(cn|sg|my|hans)(-|$)|$)/.test(tag)) return "zh-CN";
+  return "en";
 }
 
 type I18n = {
