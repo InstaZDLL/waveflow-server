@@ -74,8 +74,12 @@ function placeholders(text: string): string {
   return [...new Set(text.match(/\{\w+\}/g) ?? [])].sort().join(" ");
 }
 
+// Each plural form is compared on its own, since `translate` shows only one of
+// them. The form for one may leave `{count}` out, as "la piste" says 1 by
+// itself; the other form never may.
 function allPlaceholders(value: TranslationValue | undefined): string {
   if (value === undefined) return "missing";
   if (typeof value === "string") return placeholders(value);
-  return placeholders(`${value.one} ${value.other}`);
+  const one = placeholders(value.one.replaceAll("{count}", ""));
+  return `one ${one} | other ${placeholders(value.other)}`;
 }

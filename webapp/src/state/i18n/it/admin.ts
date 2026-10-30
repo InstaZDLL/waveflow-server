@@ -98,30 +98,30 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "Solo i proprietari e i gestori di questa libreria, e gli amministratori, ne vedono i file mancanti.",
   "missing.note":
-    "Questi brani restano nel catalogo, con i loro preferiti, le voci nelle playlist e gli ascolti, finché non vengono eliminati definitivamente; se un file ricompare prima, conserva il suo brano. Per un certo periodo l’eliminazione si può annullare, poi il brano, insieme a tutto ciò che vi è collegato per ogni membro, sparisce per sempre.",
+    "Questi brani restano nel catalogo, con i loro preferiti, le voci nelle playlist e gli ascolti, finché non vengono rimossi dal catalogo; se un file ricompare prima, conserva il suo brano. Per un certo periodo la rimozione si può annullare, poi il brano, insieme a tutto ciò che vi è collegato per ogni membro, sparisce per sempre.",
   "missing.since": "mancante dal {date}",
   "missing.cost":
     "{playlists} nelle playlist · {favorites} preferiti · {plays} ascolti",
   "missing.select": "Seleziona {title}",
-  "missing.purgeSelected": "Elimina definitivamente i selezionati ({count})",
-  "missing.purgeAll": "Eliminali tutti definitivamente",
-  "missing.confirm": "Conferma: elimina definitivamente {count}",
+  "missing.purgeSelected": "Rimuovi dal catalogo i selezionati ({count})",
+  "missing.purgeAll": "Rimuovili tutti dal catalogo",
+  "missing.confirm": "Conferma: rimuovi {count} dal catalogo",
   "missing.purged": {
-    one: "{count} brano eliminato definitivamente.",
-    other: "{count} brani eliminati definitivamente.",
+    one: "{count} brano rimosso dal catalogo.",
+    other: "{count} brani rimossi dal catalogo.",
   },
   "missing.scanning":
     "La libreria è in fase di scansione. Riprova al termine della scansione.",
-  "missing.failed": "L’eliminazione non è riuscita. Riprova.",
+  "missing.failed": "La rimozione non è riuscita. Riprova.",
   "missing.more": "Mostra altri",
   "missing.purgedUntil": {
-    one: "{count} brano eliminato definitivamente. Puoi ripristinarlo fino al {date}.",
+    one: "{count} brano rimosso dal catalogo. Puoi ripristinarlo fino al {date}.",
     other:
-      "{count} brani eliminati definitivamente. Puoi ripristinarli fino al {date}.",
+      "{count} brani rimossi dal catalogo. Puoi ripristinarli fino al {date}.",
   },
   "missing.purgedTitle": {
-    one: "Eliminato, ancora ripristinabile ({count})",
-    other: "Eliminati, ancora ripristinabili ({count})",
+    one: "Rimosso, ancora ripristinabile ({count})",
+    other: "Rimossi, ancora ripristinabili ({count})",
   },
   "missing.purgedNote":
     "Di questi non è ancora andato perso nulla. Una volta ripristinato, un brano torna tra i file mancanti con tutto ciò che vi era collegato; se il file ricompare, il brano si ripristina da solo.",

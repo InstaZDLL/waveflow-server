@@ -96,26 +96,26 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "Nur Eigentümer und Verwalter dieser Bibliothek sowie Administratoren sehen ihre fehlenden Dateien.",
   "missing.note":
-    "Diese Titel bleiben samt Favoriten, Playlist-Einträgen und Wiedergaben im Katalog, bis sie endgültig entfernt werden; taucht eine Datei vorher wieder auf, behält sie ihren Titel. Das Entfernen lässt sich eine Zeit lang rückgängig machen, danach verschwindet der Titel endgültig – mit allem, was für jedes Mitglied daran hängt.",
+    "Diese Titel bleiben samt Favoriten, Playlist-Einträgen und Wiedergaben im Katalog, bis sie aus dem Katalog entfernt werden; taucht eine Datei vorher wieder auf, behält sie ihren Titel. Das Entfernen lässt sich eine Zeit lang rückgängig machen, danach verschwindet der Titel endgültig – mit allem, was für jedes Mitglied daran hängt.",
   "missing.since": "fehlt seit {date}",
   "missing.cost":
     "{playlists} in Playlists · {favorites} Favoriten · {plays} Wiedergaben",
   "missing.select": "{title} auswählen",
-  "missing.purgeSelected": "Auswahl endgültig entfernen ({count})",
-  "missing.purgeAll": "Alle endgültig entfernen",
-  "missing.confirm": "Bestätigen: {count} endgültig entfernen",
+  "missing.purgeSelected": "Auswahl aus dem Katalog entfernen ({count})",
+  "missing.purgeAll": "Alle aus dem Katalog entfernen",
+  "missing.confirm": "Bestätigen: {count} aus dem Katalog entfernen",
   "missing.purged": {
-    one: "{count} Titel endgültig entfernt.",
-    other: "{count} Titel endgültig entfernt.",
+    one: "{count} Titel aus dem Katalog entfernt.",
+    other: "{count} Titel aus dem Katalog entfernt.",
   },
   "missing.scanning":
     "Die Bibliothek wird gerade gescannt. Versuch es nach dem Scan noch einmal.",
   "missing.failed": "Das Entfernen hat nicht geklappt. Versuch es noch einmal.",
   "missing.more": "Mehr anzeigen",
   "missing.purgedUntil": {
-    one: "{count} Titel endgültig entfernt. Er kann bis {date} wiederhergestellt werden.",
+    one: "{count} Titel aus dem Katalog entfernt. Er kann bis {date} wiederhergestellt werden.",
     other:
-      "{count} Titel endgültig entfernt. Sie können bis {date} wiederhergestellt werden.",
+      "{count} Titel aus dem Katalog entfernt. Sie können bis {date} wiederhergestellt werden.",
   },
   "missing.purgedTitle": {
     one: "Entfernt, noch wiederherstellbar ({count})",

@@ -97,29 +97,30 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "このライブラリの見つからないファイルを見られるのは、オーナーとマネージャー、管理者だけです。",
   "missing.note":
-    "これらの曲は、完全に削除するまで、お気に入り、プレイリスト内の項目、再生記録とともにカタログに残ります。その前にファイルが戻れば、曲もそのまま残ります。完全に削除しても、しばらくの間は元に戻せます。その後は、曲と、すべてのメンバーについてそれに紐づくものが、すべて完全に失われます。",
+    "これらの曲は、カタログから削除するまで、お気に入り、プレイリスト内の項目、再生記録とともにカタログに残ります。その前にファイルが戻れば、曲もそのまま残ります。カタログから削除しても、しばらくの間は元に戻せます。その後は、曲と、すべてのメンバーについてそれに紐づくものが、すべて完全に失われます。",
   "missing.since": "{date}から見つかりません",
   "missing.cost":
     "プレイリスト {playlists} · お気に入り {favorites} · 再生 {plays}",
   "missing.select": "{title}を選択",
-  "missing.purgeSelected": "選択した項目を完全に削除（{count}）",
-  "missing.purgeAll": "すべて完全に削除",
-  "missing.confirm": "確認：{count}件を完全に削除",
+  "missing.purgeSelected": "選択した項目をカタログから削除（{count}）",
+  "missing.purgeAll": "すべてカタログから削除",
+  "missing.confirm": "確認：{count}件をカタログから削除",
   "missing.purged": {
-    one: "{count}曲を完全に削除しました。",
-    other: "{count}曲を完全に削除しました。",
+    one: "{count}曲をカタログから削除しました。",
+    other: "{count}曲をカタログから削除しました。",
   },
   "missing.scanning":
     "ライブラリをスキャン中です。スキャンが終わってから、もう一度お試しください。",
-  "missing.failed": "完全に削除できませんでした。もう一度お試しください。",
+  "missing.failed":
+    "カタログから削除できませんでした。もう一度お試しください。",
   "missing.more": "さらに表示",
   "missing.purgedUntil": {
-    one: "{count}曲を完全に削除しました。{date}まで元に戻せます。",
-    other: "{count}曲を完全に削除しました。{date}まで元に戻せます。",
+    one: "{count}曲をカタログから削除しました。{date}まで元に戻せます。",
+    other: "{count}曲をカタログから削除しました。{date}まで元に戻せます。",
   },
   "missing.purgedTitle": {
-    one: "完全に削除済み・まだ復元可能（{count}）",
-    other: "完全に削除済み・まだ復元可能（{count}）",
+    one: "カタログから削除済み・まだ復元可能（{count}）",
+    other: "カタログから削除済み・まだ復元可能（{count}）",
   },
   "missing.purgedNote":
     "まだ何も失われていません。復元した曲は、紐づいていたものすべてとともに見つからないファイルに戻ります。ファイルが戻ってきた場合は、その曲が自動的に復元されます。",

@@ -95,29 +95,29 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "이 보관함의 누락된 파일은 소유자, 매니저, 관리자만 볼 수 있어요.",
   "missing.note":
-    "이 곡들은 영구 삭제하기 전까지 즐겨찾기, 플레이리스트 항목, 재생 기록과 함께 카탈로그에 남아 있어요. 그전에 파일이 돌아오면 곡도 그대로 유지돼요. 영구 삭제는 일정 기간 동안 되돌릴 수 있지만, 그 후에는 곡과 그에 딸린 모든 멤버의 데이터가 완전히 사라져요.",
+    "이 곡들은 카탈로그에서 제거하기 전까지 즐겨찾기, 플레이리스트 항목, 재생 기록과 함께 카탈로그에 남아 있어요. 그전에 파일이 돌아오면 곡도 그대로 유지돼요. 카탈로그에서 제거는 일정 기간 동안 되돌릴 수 있지만, 그 후에는 곡과 그에 딸린 모든 멤버의 데이터가 완전히 사라져요.",
   "missing.since": "{date}부터 누락",
   "missing.cost":
     "플레이리스트 {playlists} · 즐겨찾기 {favorites} · 재생 {plays}",
   "missing.select": "{title} 선택",
-  "missing.purgeSelected": "선택한 항목 영구 삭제 ({count})",
-  "missing.purgeAll": "모두 영구 삭제",
-  "missing.confirm": "확인: {count}개 영구 삭제",
+  "missing.purgeSelected": "선택한 항목 카탈로그에서 제거 ({count})",
+  "missing.purgeAll": "모두 카탈로그에서 제거",
+  "missing.confirm": "확인: {count}개 카탈로그에서 제거",
   "missing.purged": {
-    one: "{count}곡을 영구 삭제했어요.",
-    other: "{count}곡을 영구 삭제했어요.",
+    one: "{count}곡을 카탈로그에서 제거했어요.",
+    other: "{count}곡을 카탈로그에서 제거했어요.",
   },
   "missing.scanning":
     "보관함을 스캔하는 중이에요. 스캔이 끝나면 다시 시도하세요.",
-  "missing.failed": "영구 삭제하지 못했어요. 다시 시도하세요.",
+  "missing.failed": "카탈로그에서 제거하지 못했어요. 다시 시도하세요.",
   "missing.more": "더 보기",
   "missing.purgedUntil": {
-    one: "{count}곡을 영구 삭제했어요. {date}까지 복원할 수 있어요.",
-    other: "{count}곡을 영구 삭제했어요. {date}까지 복원할 수 있어요.",
+    one: "{count}곡을 카탈로그에서 제거했어요. {date}까지 복원할 수 있어요.",
+    other: "{count}곡을 카탈로그에서 제거했어요. {date}까지 복원할 수 있어요.",
   },
   "missing.purgedTitle": {
-    one: "영구 삭제됨, 아직 복원 가능 ({count})",
-    other: "영구 삭제됨, 아직 복원 가능 ({count})",
+    one: "카탈로그에서 제거됨, 아직 복원 가능 ({count})",
+    other: "카탈로그에서 제거됨, 아직 복원 가능 ({count})",
   },
   "missing.purgedNote":
     "아직 아무것도 사라지지 않았어요. 복원한 곡은 딸려 있던 모든 데이터와 함께 누락된 파일 목록으로 돌아가요. 파일이 다시 나타나면 곡은 저절로 복원돼요.",

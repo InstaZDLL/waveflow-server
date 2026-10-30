@@ -95,30 +95,30 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "Solo los propietarios y gestores de esta biblioteca, y los administradores, ven sus archivos que faltan.",
   "missing.note":
-    "Estas pistas se quedan en el catálogo, con sus favoritos, entradas en listas de reproducción y reproducciones, hasta que se eliminen definitivamente; si el archivo vuelve antes, conserva su pista. Una eliminación definitiva puede deshacerse durante un tiempo; después, la pista y todo lo que depende de ella, para todos los miembros, desaparece para siempre.",
+    "Estas pistas se quedan en el catálogo, con sus favoritos, entradas en listas de reproducción y reproducciones, hasta que se quiten del catálogo; si el archivo vuelve antes, conserva su pista. Quitarlas del catálogo puede deshacerse durante un tiempo; después, la pista y todo lo que depende de ella, para todos los miembros, desaparece para siempre.",
   "missing.since": "falta desde el {date}",
   "missing.cost":
     "{playlists} en listas · {favorites} favoritos · {plays} reproducciones",
   "missing.select": "Seleccionar {title}",
-  "missing.purgeSelected": "Eliminar definitivamente la selección ({count})",
-  "missing.purgeAll": "Eliminar todas definitivamente",
-  "missing.confirm": "Confirmar: eliminar definitivamente {count}",
+  "missing.purgeSelected": "Quitar la selección del catálogo ({count})",
+  "missing.purgeAll": "Quitar todas del catálogo",
+  "missing.confirm": "Confirmar: quitar {count} del catálogo",
   "missing.purged": {
-    one: "{count} pista eliminada definitivamente.",
-    other: "{count} pistas eliminadas definitivamente.",
+    one: "{count} pista quitada del catálogo.",
+    other: "{count} pistas quitadas del catálogo.",
   },
   "missing.scanning":
     "La biblioteca se está escaneando. Vuelve a intentarlo cuando termine el escaneo.",
-  "missing.failed": "No se pudo eliminar definitivamente. Vuelve a intentarlo.",
+  "missing.failed": "No se pudieron quitar del catálogo. Vuelve a intentarlo.",
   "missing.more": "Mostrar más",
   "missing.purgedUntil": {
-    one: "{count} pista eliminada definitivamente. Puede restaurarse hasta el {date}.",
+    one: "{count} pista quitada del catálogo. Puede restaurarse hasta el {date}.",
     other:
-      "{count} pistas eliminadas definitivamente. Pueden restaurarse hasta el {date}.",
+      "{count} pistas quitadas del catálogo. Pueden restaurarse hasta el {date}.",
   },
   "missing.purgedTitle": {
-    one: "Eliminada definitivamente, aún restaurable ({count})",
-    other: "Eliminadas definitivamente, aún restaurables ({count})",
+    one: "Quitada del catálogo, aún restaurable ({count})",
+    other: "Quitadas del catálogo, aún restaurables ({count})",
   },
   "missing.purgedNote":
     "Todavía no se ha perdido nada de esto. Al restaurarla, una pista vuelve a los archivos que faltan con todo lo que dependía de ella; si su archivo vuelve, la pista se restaura sola.",
