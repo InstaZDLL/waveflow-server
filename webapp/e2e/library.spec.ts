@@ -182,7 +182,7 @@ test("gives random playback one clear primary action", async ({ page }) => {
   await page.goto("/random");
   const controls = page.locator(".page-header");
   const play = controls.getByRole("button", { name: "Play", exact: true });
-  const queue = controls.getByRole("button", { name: "Add queue" });
+  const queue = controls.getByRole("button", { name: "Add to queue" });
   const redraw = controls.getByRole("button", { name: "Draw again" });
   await expect(play).toBeVisible();
   await expect(queue).toBeVisible();
