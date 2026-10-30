@@ -1,0 +1,80 @@
+// Audio quality labels and the quality analysis.
+import type { TranslationValue } from "..";
+import type { quality as en } from "../en/quality";
+
+export const quality: Record<keyof typeof en, TranslationValue> = {
+  "quality.label": "文件音质",
+  "quality.unknown": "未知",
+  "quality.low": "低",
+  "quality.standard": "标准",
+  "quality.high": "高",
+  "quality.lossless": "无损",
+  "quality.hiRes": "高解析",
+  "quality.help":
+    "音质是从音频本身测出来的，而不是读取容器信息：看高频在哪里截止，以及采样实际用了多少位。一个高频在 16 kHz 左右截止的无损文件，在变成 FLAC 之前其实是 128 kbps 的 MP3。「未发现有损来源」并不能证明什么：保留全频带的编码器不会留下任何痕迹。",
+  "quality.progress": "已分析 {measured} / {lossless} 个无损文件",
+  "quality.disabled": "这台服务器已关闭音质分析。",
+  "quality.noLossless": "这个音乐库中没有无损文件。",
+  "quality.status.running":
+    "正在分析：已完成 {measured} / {lossless}，{inFlight} 个进行中。",
+  "quality.status.waitingForScan": "等待扫描完成后再开始分析。",
+  "quality.status.queued": "排队中：很快就会分析到这些文件。",
+  "quality.status.idle": "空闲。上次分析文件的时间：{when}。",
+  "quality.status.idleNever": "空闲。还没有分析过任何文件。",
+  "quality.filters": "判定结果",
+  "quality.all": "全部文件",
+  "quality.format": "格式",
+  "quality.allFormats": "全部格式",
+  "quality.empty": "没有符合这个判定结果的文件。",
+  "quality.column.track": "曲目",
+  "quality.column.container": "文件标称",
+  "quality.column.highs": "高频截止于",
+  "quality.column.verdict": "实测结果",
+  "quality.fullBand": "全频带",
+  "quality.khz": "{value} kHz",
+  "quality.db": "{value} dB",
+  "quality.analyseAgain": "重新分析",
+  "quality.confirmAnalyse": "确认：重新分析整个音乐库",
+  "quality.requested": "音乐库将在后台重新分析。",
+  "quality.requestFailed": "操作失败，请重试。",
+  "quality.section": "真实音质",
+  "quality.verdictLabel": "判定结果",
+  "quality.highsStop": "高频截止于",
+  "quality.wall": "截止处的衰减",
+  "quality.bitsUsed": "实测使用位数",
+  "quality.bitsOf": "{used} / {declared}",
+  "quality.bitsNote":
+    "这是对采样的测量，并不能证明是真正的高解析：一个用满标称位数的文件没有经过补位，但这不代表它就是以这个位深录制的。",
+  "quality.analysed": "分析时间",
+  "quality.chart": "平均频谱：高频截止于 {where}。",
+  "quality.chartFullBand": "平均频谱：高频一路延伸，没有截止。",
+  "quality.showSpectrogram": "显示频谱图",
+  "quality.drawing": "正在绘制…",
+  "quality.spectrogramAlt": "{title} 的频谱图，频率随时间变化",
+  "quality.spectrogramBusy": "已经在为你绘制一张频谱图，请稍后再试。",
+  "quality.spectrogramFailed": "无法绘制频谱图。",
+  "quality.verdict.lossy_source": "可能来自有损文件",
+  "quality.verdict.upsampled": "可能经过升采样",
+  "quality.verdict.padded": "位深经过补位",
+  "quality.verdict.unreadable": "无法读取",
+  "quality.verdict.silent": "静音",
+  "quality.verdict.pending": "等待分析",
+  "quality.verdict.consistent": "未发现有损来源",
+  "quality.verdict.lossy": "有损",
+  "quality.verdict.not_measured": "未测量",
+  "quality.explain.lossy_source":
+    "高频在有损编码器的截止位置戛然而止：这个文件很可能是从 MP3、AAC 或 Opus 文件解码后另存为无损格式的。",
+  "quality.explain.upsampled":
+    "采样率高于 48 kHz，但高频在 CD 或 48 kHz 录音的上限处截止：它很可能是从这类音源重新采样而来的。",
+  "quality.explain.padded":
+    "容器标称的位数多于采样实际使用的位数，例如以 24 位存储的 16 位录音。",
+  "quality.explain.unreadable":
+    "FFmpeg 无法解码这个文件。文件有变动时会再次尝试。",
+  "quality.explain.silent": "这个文件中没有足够响亮、可供测量的声音。",
+  "quality.explain.pending": "这个文件还没有分析。分析会在后台进行。",
+  "quality.explain.consistent":
+    "音频中没有与容器信息矛盾的地方。但这不能证明什么：保留全频带的编码器不会留下任何痕迹。",
+  "quality.explain.lossy":
+    "有损文件会如实标明自身格式，它的音质取决于编码器和码率，因此不做分析。",
+  "quality.explain.not_measured": "这种格式不做分析。",
+};

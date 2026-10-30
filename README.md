@@ -92,7 +92,7 @@
 - **Synced lyrics** from the files or their `.lrc`, with a full-screen immersive view; LRCLIB fills the gaps once you switch it on.
 - **Streams the original**, or converts on the fly to MP3, Opus or AAC, with seeking inside a conversion and server-side volume levelling (ReplayGain).
 - **Offline listening** for the tracks you keep, installable as an app on a phone, keyboard shortcuts, media keys and lock-screen controls.
-- **14 themes**, light and dark, in English and French.
+- **14 themes**, light and dark, in English, French and Simplified Chinese.
 
 ### 📚 Your library
 
