@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { I18nProvider, loadLocale, useI18n } from ".";
 
+// Japanese stands for a language whose chunk cannot be fetched, as offline.
+vi.mock("./ja", () => {
+  throw new Error("offline");
+});
+
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
@@ -73,5 +78,15 @@ describe("I18nProvider", () => {
     await act(() => loadLocale("de"));
     expect(container.textContent).toBe("de Einstellungen");
     expect(localStorage.getItem("waveflow.locale")).toBe("de");
+  });
+
+  it("says English when the starting language cannot be fetched", async () => {
+    localStorage.setItem("waveflow.locale", "ja");
+    mountWithBrowserLanguage("ja-JP");
+    await act(() => loadLocale("ja").catch(() => {}));
+    expect(container.textContent).toBe("en Settings");
+    expect(document.documentElement.lang).toBe("en");
+    // The reader chose Japanese; an outage does not choose for them.
+    expect(localStorage.getItem("waveflow.locale")).toBe("ja");
   });
 });

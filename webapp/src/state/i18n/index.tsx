@@ -135,17 +135,30 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // A fetch that fails renders all the same, in English.
   const [ready, setReady] = useState(() => loaded.has(locale));
   const wanted = useRef(locale);
+  // Set when the starting language could not be fetched and English stands
+  // in for it: the saved choice is the reader's, not a passing outage's.
+  const fellBack = useRef(false);
 
   useEffect(() => {
     if (ready) return;
-    const done = () => setReady(true);
-    loadLocale(locale).then(done, done);
+    loadLocale(locale).then(
+      () => setReady(true),
+      () => {
+        // The picker shows English too, so choosing the language again is a
+        // change that fetches it again rather than a choice already made.
+        fellBack.current = true;
+        wanted.current = "en";
+        setCurrent("en");
+        setReady(true);
+      },
+    );
   }, [ready, locale]);
 
   // The language on screen stays until the chosen one's strings arrive, so a
   // switch never passes through English, and only the last choice applies.
   const setLocale = useCallback((next: Locale) => {
     wanted.current = next;
+    fellBack.current = false;
     if (loaded.has(next)) {
       setCurrent(next);
       return;
@@ -163,6 +176,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     document.documentElement.lang = loaded.has(locale) ? locale : "en";
+    if (fellBack.current) return;
     try {
       localStorage.setItem(STORAGE_KEY, locale);
     } catch {
