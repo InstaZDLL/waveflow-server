@@ -1,0 +1,98 @@
+// Folders, filing and uploads.
+import type { TranslationValue } from "..";
+import type { folders as en } from "../en/folders";
+
+export const folders: Record<keyof typeof en, TranslationValue> = {
+  "folders.count": {
+    one: "這個音樂庫中已建立 {count} 個資料夾",
+    other: "這個音樂庫中已建立 {count} 個資料夾",
+  },
+  "folders.where": "資料夾路徑",
+  "folders.subfolders": "資料夾",
+  "folders.noLibrary": "這個帳號沒有可用的音樂庫。",
+  "folders.none": "這個音樂庫中還沒有建立資料夾。",
+  "folders.system": "由 WaveFlow 維護",
+  "folders.systemNote":
+    "「待整理」收納所有不在任何資料夾中的曲目。它由 WaveFlow 自行維護：不計入上方的資料夾，也無法重新命名、移動或刪除。",
+  "filed.unfiled": "待整理",
+  "filed.automatic": "自動",
+  "filed.topLevel": "最上層",
+  "filed.here": "目前位置",
+  "filed.destinations": "可選擇的資料夾",
+  "filed.loadError": "無法載入資料夾。",
+  "filed.moveFailed": "移動失敗，請再試一次。",
+  "filed.moveTrack": "將「{title}」移到資料夾",
+  "filed.moveFolder": "移動「{name}」",
+  "filed.note":
+    "這些資料夾只存在於 WaveFlow 中。把曲目歸類到這裡不會移動任何檔案。",
+  "filed.newFolder": "新增資料夾",
+  "filed.name": "資料夾名稱",
+  "filed.renameLabel": "新名稱",
+  "filed.create": "建立",
+  "filed.save": "儲存",
+  "filed.cancel": "取消",
+  "filed.rename": "重新命名",
+  "filed.move": "移動…",
+  "filed.delete": "刪除",
+  "filed.confirmDelete":
+    "要刪除「{name}」及其子資料夾嗎？其中的曲目會回到「待整理」，不會更動任何檔案。",
+  "filed.created": "已建立「{name}」。",
+  "filed.renamed": "已重新命名為「{name}」。",
+  "filed.deleted": {
+    one: "資料夾已刪除：{count} 首歌曲回到了「待整理」。",
+    other: "資料夾已刪除：{count} 首歌曲回到了「待整理」。",
+  },
+  "filed.filed": {
+    one: "已將 {count} 首歌曲歸類到 {folder}。",
+    other: "已將 {count} 首歌曲歸類到 {folder}。",
+  },
+  "filed.folderMoved": "已移動「{name}」。",
+  "filed.nameTaken": "這裡已有同名的資料夾。",
+  "filed.refused":
+    "這個資料夾無法放在這裡：請檢查名稱，或是資料夾層級太深、已滿。",
+  "filed.failed": "操作失敗，請再試一次。",
+  "filed.missing": "這個資料夾已不存在。",
+  "filed.empty": "這裡還沒有歸類任何內容。",
+  "filed.allFiled": "所有曲目都已歸類。",
+  "filed.uploadHere": "上傳到這裡",
+  "filed.unfiledNote":
+    "所有尚未放入任何資料夾的曲目。這個清單由 WaveFlow 自行維護：曲目一歸類就會離開這裡，清單本身無法重新命名或刪除。若要歸類曲目，請開啟它的選單並選擇「移到資料夾…」。",
+  "filed.unfiledNoteReader":
+    "所有尚未放入任何資料夾的曲目。這個清單由 WaveFlow 自行維護：曲目一歸類就會離開這裡。",
+  "upload.into": "收到的檔案會放入資料夾 {folder}。",
+  "upload.doneUnfiled": "已加入音樂庫，位於「待整理」",
+  "upload.folderMissing":
+    "找不到這次上傳的目標資料夾：收到的檔案會放入「待整理」。",
+  "upload.folderUnchecked":
+    "無法確認這次上傳的目標資料夾，因此暫時不接收任何檔案。",
+  "upload.checkAgain": "重新檢查",
+  "upload.title": "上傳到 {library}",
+  "upload.detail":
+    "每個檔案都會先在你的瀏覽器中計算指紋，所以音樂庫中已有的檔案不會重複傳送，中斷的傳輸也會從停下的地方繼續。",
+  "upload.pick": "選擇音訊檔案",
+  "upload.formats": "音樂庫可以建立索引的格式：{extensions}",
+  "upload.noLibrary": "請先選擇一個音樂庫。",
+  "upload.notAllowed": "只有這個音樂庫的擁有者或管理者可以新增檔案。",
+  "upload.closed": "這個音樂庫不接收檔案，這由伺服器的維運人員在伺服器上決定。",
+  "upload.waiting": "等待中",
+  "upload.hashing": "正在計算指紋…",
+  "upload.negotiating": "正在詢問伺服器…",
+  "upload.uploading": "傳送中…",
+  "upload.committing": "正在加入音樂庫…",
+  "upload.done": "已加入音樂庫",
+  "upload.present": "已在音樂庫中",
+  "upload.refused": "已拒絕：{reason}",
+  "upload.failed": "失敗：{reason}",
+  "upload.progress": "進度：{name}",
+  "upload.reason.unsupportedFormat": "不是音樂庫可以建立索引的音訊格式",
+  "upload.reason.tooLarge": "超過伺服器允許的大小",
+  "upload.reason.quotaExceeded": "音樂庫已經沒有剩餘空間",
+  "upload.reason.libraryClosed": "音樂庫不接收檔案",
+  "upload.reason.tooManySessions": "已開啟的傳輸太多，請稍後再試",
+  "upload.reason.refusedFile": "收到的內容與檔案不符，或不是音樂庫能讀取的音訊",
+  "upload.reason.unavailable": "伺服器暫時無法接收，請再試一次",
+  "upload.reason.network": "連線已中斷",
+  "upload.reason.notAllowed": "你已經無權在這個音樂庫新增檔案",
+  "upload.reason.error": "發生錯誤",
+  "upload.reason.hashing": "這個瀏覽器無法計算這個檔案的指紋",
+};

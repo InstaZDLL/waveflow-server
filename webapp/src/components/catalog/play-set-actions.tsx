@@ -25,7 +25,7 @@ export function PlaySetActions({ songs }: { songs: Song[] }) {
         disabled={!songs.length}
       >
         <Icon name="queue" size={17} />
-        {t("playlists.addQueue")}
+        {t("card.queue")}
       </button>
     </div>
   );

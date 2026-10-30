@@ -1,0 +1,53 @@
+// The attention lists and artist splits.
+import type { TranslationValue } from "..";
+import type { attention as en } from "../en/attention";
+
+export const attention: Record<keyof typeof en, TranslationValue> = {
+  "attention.lists": "清單",
+  "attention.total": {
+    one: "{count} 個項目待處理",
+    other: "{count} 個項目待處理",
+  },
+  "attention.nothing": "沒有需要處理的項目。",
+  "attention.notYours":
+    "只有這個音樂庫的擁有者和管理者可以看到其中待處理的項目。",
+  "attention.empty": "這個清單是空的。",
+  "attention.tracksNote": "從曲目的選單修正曲目：修正後它就會離開這個清單。",
+  "attention.creditsNote":
+    "這些署名都在同一個字串中寫了多位演出者。你可以把它拆分成其中的各位演出者；如果它其實是一個名字，就保留為一位。之後每次掃描都會沿用這個決定。",
+  "attention.pending": "待決定",
+  "attention.decided": "已決定",
+  "attention.split": "拆分",
+  "attention.confirmSplit": "確認：拆分為 {count} 位",
+  "attention.keep": "保留為一位",
+  "attention.splitDone": "{name} 已拆分。",
+  "attention.keepDone": "{name} 保留為一位演出者。",
+  "attention.undone": "已取消對 {name} 的決定。",
+  "attention.alreadyDecided": "這個署名已在這段期間被處理，清單已重新載入。",
+  "attention.failed": "操作失敗，請再試一次。",
+  "attention.noCredits": "沒有等待決定的署名。",
+  "attention.noDecisions": "還沒有做出任何決定。",
+  "attention.fragments": "{name} 會拆分為",
+  "attention.knownFragment": "已是這個音樂庫中的演出者",
+  "attention.decidedSplit": "已拆分為 {parts}",
+  "attention.decidedKeep": "已保留為一位",
+  "attention.decidedBy": "{who}，{when}",
+  "attention.undo": "復原",
+  "attention.duplicateGroup": "可能重複 {group}",
+  "attention.split_credits": "待拆分的演出者",
+  "attention.missing_artist": "缺少演出者",
+  "attention.missing_album": "缺少專輯",
+  "attention.missing_year": "缺少年份",
+  "attention.missing_track_number": "缺少曲目編號",
+  "attention.missing_cover": "缺少封面",
+  "attention.album_year_conflict": "年份不一致的專輯",
+  "attention.compilation_no_album_artist": "缺少專輯演出者的合輯",
+  "attention.duplicate_track_number": "曲目編號重複",
+  "attention.track_number_gap": "曲目編號不連續",
+  "attention.probable_duplicate": "可能重複",
+  "attention.probable_fake_lossless": "可能是偽無損",
+  "artistSplit.offer": "拆分為 {count} 位演出者",
+  "artistSplit.confirm": "確認：拆分為 {count} 位",
+  "artistSplit.done": "已拆分為 {parts}。",
+  "artistSplit.failed": "無法拆分這個署名，請再試一次。",
+};

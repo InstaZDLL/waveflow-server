@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { localeFor, translate } from "./i18n";
+import { loadLocale, localeFor, translate } from "./i18n";
 
 describe("count translations", () => {
+  beforeAll(() => Promise.all([loadLocale("fr"), loadLocale("zh-CN")]));
+
   it("uses singular only for one in English and French", () => {
     expect(translate("en", "common.tracks", { count: 0 })).toBe("0 tracks");
     expect(translate("en", "common.tracks", { count: 1 })).toBe("1 track");
@@ -26,13 +28,32 @@ describe("the starting language", () => {
     expect(localeFor("en-GB")).toBe("en");
     expect(localeFor("zh-CN")).toBe("zh-CN");
     expect(localeFor("zh")).toBe("zh-CN");
-    expect(localeFor("zh-Hans-HK")).toBe("zh-CN");
-    expect(localeFor("de-DE")).toBe("en");
+    expect(localeFor("de-DE")).toBe("de");
+    expect(localeFor("de-CH")).toBe("de");
+    expect(localeFor("es-419")).toBe("es");
+    expect(localeFor("it")).toBe("it");
+    expect(localeFor("ja-JP")).toBe("ja");
+    expect(localeFor("ko-KR")).toBe("ko");
+    expect(localeFor("pt-BR")).toBe("en");
   });
 
-  it("does not hand Simplified Chinese to a Traditional reader", () => {
-    expect(localeFor("zh-TW")).toBe("en");
-    expect(localeFor("zh-HK")).toBe("en");
-    expect(localeFor("zh-Hant")).toBe("en");
+  it("gives each Chinese reader the script they read", () => {
+    expect(localeFor("zh-TW")).toBe("zh-TW");
+    expect(localeFor("zh-HK")).toBe("zh-TW");
+    expect(localeFor("zh-MO")).toBe("zh-TW");
+    expect(localeFor("zh-Hant")).toBe("zh-TW");
+    expect(localeFor("zh-Hant-CN")).toBe("zh-TW");
+    expect(localeFor("zh-Hans-HK")).toBe("zh-CN");
+    expect(localeFor("zh-SG")).toBe("zh-CN");
+  });
+});
+
+// Every language but English is fetched on demand, and `translate` is called
+// outside React, where nothing waits for it.
+describe("a language whose strings have not arrived", () => {
+  it("reads in English until they do", async () => {
+    expect(translate("ko", "common.tracks", { count: 2 })).toBe("2 tracks");
+    await loadLocale("ko");
+    expect(translate("ko", "common.tracks", { count: 2 })).toBe("2곡");
   });
 });

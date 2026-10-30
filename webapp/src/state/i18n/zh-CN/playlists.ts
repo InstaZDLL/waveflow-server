@@ -10,7 +10,7 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "playlists.newName": "新歌单名称",
   "playlists.create": "新建歌单",
   "playlists.play": "播放",
-  "playlists.addQueue": "添加队列",
+  "playlists.addQueue": "将播放队列加入歌单",
   "playlists.emptyOne": "这个歌单还是空的。",
   "playlists.export": "保存为 .m3u8",
   "playlists.exportError": "无法保存这个歌单。",

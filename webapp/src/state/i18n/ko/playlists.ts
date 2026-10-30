@@ -1,0 +1,88 @@
+// Playlists and their import, the queue, shares and bookmarks.
+import type { TranslationValue } from "..";
+import type { playlists as en } from "../en/playlists";
+
+export const playlists: Record<keyof typeof en, TranslationValue> = {
+  "playlists.detail": {
+    one: "플레이리스트 {count}개",
+    other: "플레이리스트 {count}개",
+  },
+  "playlists.newName": "새 플레이리스트 이름",
+  "playlists.create": "플레이리스트 만들기",
+  "playlists.play": "재생",
+  "playlists.addQueue": "재생 대기열 추가",
+  "playlists.emptyOne": "이 플레이리스트는 비어 있어요.",
+  "playlists.export": ".m3u8로 저장",
+  "playlists.exportError": "플레이리스트를 저장할 수 없어요.",
+  "playlists.empty": "플레이리스트를 만들어 곡을 한데 모아 보세요.",
+  "playlists.createError": "플레이리스트를 만들 수 없어요.",
+  "playlists.queueError": "이 플레이리스트에 재생 대기열을 추가할 수 없어요.",
+  "playlists.deleteError": "플레이리스트를 삭제할 수 없어요.",
+  "playlists.public": "모든 계정에 공개",
+  "playlists.publicError": "플레이리스트를 공개할 수 없어요.",
+  "playlists.others": "다른 계정의 플레이리스트",
+  "playlists.othersDetail":
+    "다른 계정의 공개 플레이리스트예요. 내 보관함에 있는 곡만 표시돼요.",
+  "playlists.by": "만든 사람: {owner}",
+  "playlists.moveUp": "{title} 위로 이동",
+  "playlists.moveDown": "{title} 아래로 이동",
+  "playlists.removeEntry": "이 플레이리스트에서 {title} 삭제",
+  "playlists.moveError":
+    "항목을 이동할 수 없어요. 다른 곳에서 플레이리스트가 바뀌었을 수 있어서 다시 불러왔어요.",
+  "playlists.removeEntryError": "항목을 삭제할 수 없어요.",
+  "import.title": "다른 플레이어에서 플레이리스트 가져오기",
+  "import.detail":
+    ".m3u 또는 .m3u8 파일이에요. 무엇이 빠지는지 확인하기 전에는 아무것도 만들어지지 않아요.",
+  "import.pick": "플레이리스트 파일 선택",
+  "import.name": "플레이리스트 이름",
+  "import.found": "항목 {entries}개 중 {resolved}개가 내 보관함에 있어요.",
+  "import.encoding":
+    "파일이 UTF-8이 아니어서 {encoding}(으)로 읽었어요. 가져오기 전에 아래 이름을 확인하세요.",
+  "import.missing": {
+    one: "찾을 수 없는 항목 {count}개:",
+    other: "찾을 수 없는 항목 {count}개:",
+  },
+  "import.line": "{line}번째 줄",
+  "import.noMatch": "일치하는 곡 없음",
+  "import.ambiguous": "여러 곡과 일치",
+  "import.notAPath": "보관함 안의 파일이 아님",
+  "import.duplicate": "이미 이 플레이리스트에 있음",
+  "import.confirm": "가져오기",
+  "import.cancel": "취소",
+  "import.failed": "이 파일을 플레이리스트로 읽을 수 없어요.",
+  "queue.detail": {
+    one: "계정과 동기화된 {count}곡",
+    other: "계정과 동기화된 {count}곡",
+  },
+  "queue.playStart": "처음부터 재생",
+  "queue.clear": "재생 대기열 비우기",
+  "queue.remove": "삭제",
+  "queue.empty":
+    "앨범이나 플레이리스트를 재생하면 동기화되는 재생 대기열이 만들어져요.",
+  "shares.detail": "선택한 음악의 공개 링크",
+  "shares.description": "설명",
+  "shares.create": "현재 재생 대기열 공유",
+  "shares.needQueue": "링크를 만들기 전에 재생 대기열에 곡을 추가하세요.",
+  "shares.once": "이 링크는 한 번만 표시돼요:",
+  "shares.defaultName": "음악 공유",
+  "shares.empty": "만든 공개 링크가 없어요.",
+  "shares.createError": "공유를 만들 수 없어요.",
+  "shares.tooLong":
+    "공유에는 최대 {limit}곡을 담을 수 있는데 재생 대기열에는 {count}곡이 있어요. 공유하려면 재생 대기열을 줄이세요.",
+  "shares.deleteError": "공유를 삭제할 수 없어요.",
+  "shares.maxVisits": "방문 횟수 제한 (선택 사항)",
+  "shares.visits": { one: "방문 {count}회", other: "방문 {count}회" },
+  "shares.visitsOf": "방문 {max}회 중 {count}회",
+  "share.kicker": "나에게 공유됨",
+  "share.defaultTitle": "나에게 공유된 음악",
+  "share.until": "{date}까지 이용 가능",
+  "share.empty": "이제 재생할 수 있는 곡이 없어요.",
+  "share.player": "플레이어",
+  "share.unavailableTitle": "이 링크로는 아무것도 열 수 없어요",
+  "share.unavailableDetail":
+    "링크가 만료되었거나, 취소되었거나, 허용된 방문 횟수를 모두 채웠을 수 있어요.",
+  "bookmarks.title": "저장한 위치",
+  "bookmarks.detail": "곡마다 하나씩 저장돼요. 다시 저장하면 위치가 바뀌어요.",
+  "bookmarks.save": "현재 위치 저장",
+  "bookmarks.forget": "삭제",
+};

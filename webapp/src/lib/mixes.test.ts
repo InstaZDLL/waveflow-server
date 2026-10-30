@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import type { MixSummary } from "../api";
-import { translate } from "../state/i18n";
+import { loadLocale, translate } from "../state/i18n";
 import { barShares, listeningTime, mixTitle } from "./mixes";
 
 const mix = (overrides: Partial<MixSummary>): MixSummary => ({
@@ -13,6 +13,9 @@ const mix = (overrides: Partial<MixSummary>): MixSummary => ({
   artwork_hashes: [],
   ...overrides,
 });
+
+// French is a chunk of its own, fetched before anything reads it.
+beforeAll(() => loadLocale("fr"));
 
 describe("mix titles", () => {
   const en = (

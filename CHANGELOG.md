@@ -12,11 +12,12 @@ out first, whether or not it breaks a compile.
 
 ### Added
 
-- **The web client in Simplified Chinese.** Settings › Language offers 简体中文,
-  and a browser set to Chinese opens in it. A browser set to Traditional
-  Chinese (Taiwan, Hong Kong, Macao) still opens in English rather than in a
-  script it does not use. The translation was written without a native
-  speaker's review yet.
+- **The web client in seven more languages**: German, Spanish, Italian,
+  Japanese, Korean, and Simplified and Traditional Chinese, beside English and
+  French. Settings › Language offers each, and a browser set to one opens in
+  it. A Chinese browser gets the script its reader uses: Traditional for
+  Taiwan, Hong Kong and Macao, Simplified elsewhere. None of the seven has had
+  a native speaker's review yet.
 
 ## [2.0.1] — 2026-10-30
 
