@@ -270,9 +270,11 @@ compose exec`, `logs` and `down` work too. They would refuse to start without
   on that network, so each client keeps its own sign-in budget. Caddy replaces
   whatever `X-Forwarded-For` a client sends with the address it sees, so a
   client cannot claim another one.
-- **The certificate follows from the name.** A public name gets one from Let's
-  Encrypt, renewed by Caddy: its DNS must point at the host, and ports 80 and
-  443 must reach it from the internet. A name ending in `.internal` or
+- **The certificate follows from the name.** A public name gets one over ACME,
+  renewed by Caddy: from Let's Encrypt, or from ZeroSSL, which Caddy falls back
+  to when Let's Encrypt cannot issue. Its DNS must point at the host, and ports
+  80 and 443 must reach it from the internet. To hold Caddy to one authority,
+  name it in the `Caddyfile` with `tls { issuer acme { dir … } }`. A name ending in `.internal` or
   `.home.arpa`, `localhost` or an IP address gets one from Caddy's own local
   authority, and nothing is asked of the internet. Uncomment `tls internal` in
   the `Caddyfile` to use that authority for any other name.

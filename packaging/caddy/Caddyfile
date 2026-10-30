@@ -1,6 +1,7 @@
 # The name comes from WAVEFLOW_DOMAIN in docker-compose.yml. Caddy picks the
-# certificate from it: Let's Encrypt for a public name, its local authority for
-# `.internal`, `.home.arpa`, `localhost` or an IP address.
+# certificate from it: ACME for a public name (Let's Encrypt, with ZeroSSL as
+# its fallback), its local authority for `.internal`, `.home.arpa`, `localhost`
+# or an IP address.
 {$WAVEFLOW_DOMAIN} {
 	# To use the local authority for a public-looking name too, say on a
 	# network that the internet cannot reach:

@@ -5,14 +5,15 @@
 #   WAVEFLOW_DOMAIN=music.example.com
 #   WAVEFLOW_MUSIC_PATH=/path/to/music
 #
-# then `docker compose up -d`. Moving a server from the root docker-compose.yml?
-# Read "Moving a server" in docs/guides/operations.md first, or this one starts
-# on a new, empty data volume.
+# then `docker compose up -d`. Moving a server already running? Read "Moving an
+# existing server" in docs/guides/operations.md first, or this one starts on a
+# new, empty data volume.
 #
-# A public name gets a Let's Encrypt certificate: its DNS must point at this
-# host and ports 80 and 443 must reach it. A name ending in `.internal` or
-# `.home.arpa`, or an IP address, gets one from Caddy's own local authority
-# instead; docs/guides/operations.md says how to make your devices trust it.
+# A public name gets an ACME certificate (Let's Encrypt, or ZeroSSL when Let's
+# Encrypt cannot issue): its DNS must point at this host and ports 80 and 443
+# must reach it. A name ending in `.internal` or `.home.arpa`, or an IP address,
+# gets one from Caddy's own local authority instead; docs/guides/operations.md
+# says how to make your devices trust it.
 services:
   waveflow:
     image: ghcr.io/instazdll/waveflow-server:2.0.0
