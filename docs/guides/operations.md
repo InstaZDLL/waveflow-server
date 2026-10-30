@@ -283,19 +283,25 @@ compose exec`, `logs` and `down` work too. They would refuse to start without
 The first account and the library are created as on the README, through the
 `waveflow` service: `docker compose exec waveflow cat /data/setup-token`.
 
-**Moving a server started with the root `docker-compose.yml`.** Compose names
-a volume after its project, which is the directory's name by default. So the
-Caddy file, run from another directory, starts on a new and empty
-`waveflow-data`. To keep the existing one:
+**Moving an existing server.** The Caddy file keeps its data in a volume of
+its own, `waveflow-caddy-data`, so on its own it starts a new and empty server.
+To carry an existing one over:
 
-1. In the old directory, `docker compose down`, **without `-v`**, which would
-   delete the volume. Two servers must never run on the same volume, and the
-   old one would also keep publishing plain HTTP on 4533.
+1. Stop the old server, keeping its volume. Two servers must never run on the
+   same volume, and the old one would also keep publishing plain HTTP on 4533.
+   - Started with the root `docker-compose.yml`: `docker compose down` in its
+     directory, **without `-v`**, which would delete the volume.
+   - Started with the README's `docker run`: `docker rm -f waveflow`, which
+     removes the container and leaves the volume.
+
    `docker ps --filter publish=4533` should then list no container.
-2. Find the volume's name with `docker volume ls`: `<project>_waveflow-data`.
-3. Add `COMPOSE_PROJECT_NAME=<project>` to the new `.env`, then
+2. Find the volume's name with `docker volume ls`: `waveflow-data` for the
+   `docker run`, `<project>_waveflow-data` for the root compose file, where the
+   project is that file's directory name.
+3. Add `WAVEFLOW_DATA_VOLUME=<that name>` to the new `.env`, then
    `docker compose up -d`. The server starts on its accounts, libraries and
-   instance key as they were.
+   instance key as they were. Compose warns that the volume was not created by
+   this project, which is expected.
 
 **A certificate your devices do not trust breaks more than a warning.** Chrome
 and Edge refuse to register the web client's service worker on a page with a

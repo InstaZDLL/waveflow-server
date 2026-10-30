@@ -73,5 +73,9 @@ networks:
 
 volumes:
   waveflow-data:
+    # A name of its own by default, so this file never starts a second server
+    # on the volume of one still running. To move an existing server, set it
+    # to that server's volume: see "Moving a server" in the operations guide.
+    name: ${WAVEFLOW_DATA_VOLUME:-waveflow-caddy-data}
   caddy-data:
   caddy-config:
