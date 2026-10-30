@@ -1,8 +1,13 @@
 # WaveFlow behind Caddy, which terminates TLS and renews its own certificate.
-# Copy this file and the Caddyfile beside it into one directory, then:
+# Copy this file and the Caddyfile beside it into one directory, with a `.env`
+# beside them that Compose reads on every command:
 #
-#   WAVEFLOW_DOMAIN=music.example.com \
-#   WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
+#   WAVEFLOW_DOMAIN=music.example.com
+#   WAVEFLOW_MUSIC_PATH=/path/to/music
+#
+# then `docker compose up -d`. Moving a server from the root docker-compose.yml?
+# Read "Moving a server" in docs/guides/operations.md first, or this one starts
+# on a new, empty data volume.
 #
 # A public name gets a Let's Encrypt certificate: its DNS must point at this
 # host and ports 80 and 443 must reach it. A name ending in `.internal` or

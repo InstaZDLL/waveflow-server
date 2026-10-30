@@ -247,12 +247,20 @@ publish plain HTTP on every interface of the host:
 ### The recommended setup: Caddy in the same compose file
 
 [`packaging/caddy/`](../../packaging/caddy/) holds a `docker-compose.yml` and a
-`Caddyfile` that do all of the above. Copy both into one directory, then:
+`Caddyfile` that do all of the above. Copy both into one directory, write a
+`.env` beside them, and start it:
 
 ```bash
-WAVEFLOW_DOMAIN=music.example.com \
-WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
+cat > .env <<'END'
+WAVEFLOW_DOMAIN=music.example.com
+WAVEFLOW_MUSIC_PATH=/path/to/music
+END
+docker compose up -d
 ```
+
+Compose reads that `.env` on every command run from the directory, so `docker
+compose exec`, `logs` and `down` work too. They would refuse to start without
+`WAVEFLOW_DOMAIN`.
 
 - **The server publishes no port.** Only Caddy reaches it, over a network of
   their own, and Caddy answers on 80 and 443. Port 80 redirects to `https://`
@@ -275,6 +283,19 @@ WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
 The first account and the library are created as on the README, through the
 `waveflow` service: `docker compose exec waveflow cat /data/setup-token`.
 
+**Moving a server started with the root `docker-compose.yml`.** Compose names
+a volume after its project, which is the directory's name by default. So the
+Caddy file, run from another directory, starts on a new and empty
+`waveflow-data`. To keep the existing one:
+
+1. In the old directory, `docker compose down`, **without `-v`**, which would
+   delete the volume. Two servers must never run on the same volume, and the
+   old one would also keep publishing plain HTTP on 4533.
+2. Find the volume's name with `docker volume ls`: `<project>_waveflow-data`.
+3. Add `COMPOSE_PROJECT_NAME=<project>` to the new `.env`, then
+   `docker compose up -d`. The server starts on its accounts, libraries and
+   instance key as they were.
+
 **A certificate your devices do not trust breaks more than a warning.** Chrome
 and Edge refuse to register the web client's service worker on a page with a
 certificate error, so offline listening is unavailable even after the warning is
@@ -289,12 +310,22 @@ docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt waveflow-root
 For phones, a name that Let's Encrypt can certify is the reliable route even on
 a network the internet cannot reach: a domain whose DNS provider Caddy can
 answer the DNS challenge with (that takes a Caddy build with the provider's
-module), or a tailnet name that Tailscale certifies.
+module), or a `.ts.net` name that Tailscale certifies. Caddy fetches that
+certificate from the local `tailscaled`, so HTTPS must be enabled for the tailnet
+and the Caddy container needs the daemon's socket,
+`/var/run/tailscale/tailscaled.sock`, mounted. That variant is not part of the
+files here, and was not tried.
 
 **Already running nginx?** The same as the `Caddyfile`, for a server whose
 container is reachable as `waveflow`:
 
 ```nginx
+# In the http block: /api/v2/sync/socket is a WebSocket.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 443 ssl;
     server_name music.example.com;
@@ -307,6 +338,8 @@ server {
     location / {
         proxy_pass http://waveflow:4533;
         proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -322,7 +355,8 @@ nginx logs the full request line by default, so it also needs the
 Caddy keeps no access log unless you add one.
 
 The Caddy files were checked by hand on 2026-10-30 against Caddy 2.11, with a
-`.home.arpa` name, an `.internal` name and an IP address. The nginx block is an
+`.home.arpa` name, an `.internal` name and an IP address, and the move above
+from the root file with an account on it. The nginx block is an
 illustration; nothing in CI runs either.
 
 ### Sign-in attempts are limited per client

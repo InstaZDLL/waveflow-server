@@ -177,7 +177,7 @@ With Compose, set `WAVEFLOW_MUSIC_PATH` to your music folder, which is mounted r
 WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
 ```
 
-To reach it from outside your home over HTTPS, [`packaging/caddy/`](packaging/caddy/) runs the same server behind Caddy, which obtains and renews the certificate itself; the [operations guide](docs/guides/operations.md#the-recommended-setup-caddy-in-the-same-compose-file) explains it.
+To reach it from outside your home over HTTPS, [`packaging/caddy/`](packaging/caddy/) runs the same server behind Caddy, which obtains and renews the certificate itself; the [operations guide](docs/guides/operations.md#the-recommended-setup-caddy-in-the-same-compose-file) explains it, including how to move a server already started with the file above without starting over on an empty volume.
 
 ### First steps
 
