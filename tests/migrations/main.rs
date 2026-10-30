@@ -45,10 +45,11 @@ use waveflow_server::Config;
 /// `the_version_being_shipped_has_its_schema_recorded` now holds it: the PR
 /// that bumps `version` in `Cargo.toml` for a release fails until it adds that
 /// tag here, with the newest migration of that moment as its baseline.
-const RELEASED_SCHEMAS: [(&str, i64); 3] = [
+const RELEASED_SCHEMAS: [(&str, i64); 4] = [
     ("v2.0.0-beta.0", 20_260_823_020_000),
     ("v2.0.0-beta.1", 20_260_914_030_000),
     ("v2.0.0", 20_261_028_000_000),
+    ("v2.0.1", 20_261_028_000_000),
 ];
 
 /// The identifiers the fixture below writes and the assertions read back.

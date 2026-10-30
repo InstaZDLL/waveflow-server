@@ -16,7 +16,7 @@
 # says how to make your devices trust it.
 services:
   waveflow:
-    image: ghcr.io/instazdll/waveflow-server:2.0.0
+    image: ghcr.io/instazdll/waveflow-server:2.0.1
     restart: unless-stopped
     # No `ports`: the server is reached through Caddy only.
     environment:
