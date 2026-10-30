@@ -1,0 +1,17 @@
+# The name comes from WAVEFLOW_DOMAIN in docker-compose.yml. Caddy picks the
+# certificate from it: Let's Encrypt for a public name, its local authority for
+# `.internal`, `.home.arpa`, `localhost` or an IP address.
+{$WAVEFLOW_DOMAIN} {
+	# To use the local authority for a public-looking name too, say on a
+	# network that the internet cannot reach:
+	# tls internal
+
+	# No access log unless you add one. If you do, keep the query string of
+	# /api/v2/scrobble-links/lastfm/callback/ out of it: see "One path whose
+	# query string must not reach your proxy's log" in docs/guides/operations.md.
+
+	# Caddy replaces any X-Forwarded-For a client sends with the address it
+	# sees, which is what WAVEFLOW_TRUSTED_PROXIES relies on. The server
+	# compresses its own answers, so no `encode` here.
+	reverse_proxy waveflow:4533
+}

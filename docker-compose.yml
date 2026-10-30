@@ -8,6 +8,8 @@ services:
     image: ghcr.io/instazdll/waveflow-server:2.0.0
     # build: .
     restart: unless-stopped
+    # Plain HTTP on every interface. To reach the server from outside over
+    # HTTPS, use packaging/caddy/ instead, which publishes no port.
     ports:
       - "4533:4533"
     environment:

@@ -10,6 +10,15 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Added
+
+- **A compose file that puts the server behind Caddy**, in `packaging/caddy/`.
+  Caddy terminates TLS with a Let's Encrypt certificate for a public name, or
+  one from its local authority for a `.internal` or `.home.arpa` name or an IP
+  address. The server publishes no port, and the trusted proxy is already set.
+  The operations guide explains both certificates, why an untrusted one stops
+  offline listening and Android clients, and gives the nginx equivalent.
+
 ### Fixed
 
 - **A server that never asked for Last.fm no longer warns about it at every

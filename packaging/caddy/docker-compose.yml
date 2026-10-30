@@ -1,0 +1,72 @@
+# WaveFlow behind Caddy, which terminates TLS and renews its own certificate.
+# Copy this file and the Caddyfile beside it into one directory, then:
+#
+#   WAVEFLOW_DOMAIN=music.example.com \
+#   WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
+#
+# A public name gets a Let's Encrypt certificate: its DNS must point at this
+# host and ports 80 and 443 must reach it. A name ending in `.internal` or
+# `.home.arpa`, or an IP address, gets one from Caddy's own local authority
+# instead; docs/guides/operations.md says how to make your devices trust it.
+services:
+  waveflow:
+    image: ghcr.io/instazdll/waveflow-server:2.0.0
+    restart: unless-stopped
+    # No `ports`: the server is reached through Caddy only.
+    environment:
+      WAVEFLOW_DATA_DIR: /data
+      WAVEFLOW_BIND: 0.0.0.0:4533
+      WAVEFLOW_PUBLIC_URL: https://${WAVEFLOW_DOMAIN:?set WAVEFLOW_DOMAIN to the name your clients will use}
+      # Caddy's address below, so the server reads each client's own address
+      # from X-Forwarded-For rather than counting them all as Caddy.
+      WAVEFLOW_TRUSTED_PROXIES: 172.31.253.2
+      # Leave this empty and the server writes one to /data/setup-token:
+      #   docker compose exec waveflow cat /data/setup-token
+      # or choose your own here, 16 characters at least.
+      WAVEFLOW_SETUP_TOKEN: ${WAVEFLOW_SETUP_TOKEN:-}
+    volumes:
+      - waveflow-data:/data
+      - type: bind
+        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        target: /music
+        read_only: true
+    networks:
+      - proxy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      WAVEFLOW_DOMAIN: ${WAVEFLOW_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates, the ACME account and the local authority: keep it, or
+      # every restart asks Let's Encrypt again and devices lose the local root.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      proxy:
+        # Fixed, because WAVEFLOW_TRUSTED_PROXIES names it. If this subnet
+        # collides with one of yours, change it, this address and that line
+        # together.
+        ipv4_address: 172.31.253.2
+    depends_on:
+      - waveflow
+
+networks:
+  proxy:
+    ipam:
+      config:
+        - subnet: 172.31.253.0/24
+          # Docker hands addresses out from here only, so a container started
+          # before Caddy (the server, which Caddy depends on) cannot take its.
+          ip_range: 172.31.253.128/25
+
+volumes:
+  waveflow-data:
+  caddy-data:
+  caddy-config:

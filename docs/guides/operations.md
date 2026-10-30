@@ -244,6 +244,87 @@ publish plain HTTP on every interface of the host:
 | `WAVEFLOW_ALLOWED_ORIGINS=…` | Browser-hosted clients such as Feishin. Listed explicitly — **wildcards are rejected**, so credential-bearing requests can never be opened to arbitrary sites |
 | `WAVEFLOW_TRUSTED_PROXIES=10.0.0.2` | The proxy's own address, or a CIDR block such as `172.16.0.0/12` for a Docker network. Without it, every client reaches the server from the proxy's address, and they all share one sign-in budget per account |
 
+### The recommended setup: Caddy in the same compose file
+
+[`packaging/caddy/`](../../packaging/caddy/) holds a `docker-compose.yml` and a
+`Caddyfile` that do all of the above. Copy both into one directory, then:
+
+```bash
+WAVEFLOW_DOMAIN=music.example.com \
+WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
+```
+
+- **The server publishes no port.** Only Caddy reaches it, over a network of
+  their own, and Caddy answers on 80 and 443. Port 80 redirects to `https://`
+  and is how Let's Encrypt checks a public name.
+- **`WAVEFLOW_PUBLIC_URL` and `WAVEFLOW_TRUSTED_PROXIES` are already set.** The
+  first follows from `WAVEFLOW_DOMAIN`. The second names Caddy's fixed address
+  on that network, so each client keeps its own sign-in budget. Caddy replaces
+  whatever `X-Forwarded-For` a client sends with the address it sees, so a
+  client cannot claim another one.
+- **The certificate follows from the name.** A public name gets one from Let's
+  Encrypt, renewed by Caddy: its DNS must point at the host, and ports 80 and
+  443 must reach it from the internet. A name ending in `.internal` or
+  `.home.arpa`, `localhost` or an IP address gets one from Caddy's own local
+  authority, and nothing is asked of the internet. Uncomment `tls internal` in
+  the `Caddyfile` to use that authority for any other name.
+- **Keep the `caddy-data` volume.** It holds the certificates and the local
+  authority. Losing it makes every device that trusted the old root distrust
+  the new one.
+
+The first account and the library are created as on the README, through the
+`waveflow` service: `docker compose exec waveflow cat /data/setup-token`.
+
+**A certificate your devices do not trust breaks more than a warning.** Chrome
+and Edge refuse to register the web client's service worker on a page with a
+certificate error, so offline listening is unavailable even after the warning is
+accepted. Most Android apps, Subsonic clients included, ignore an authority the
+user installs, since Android 7. So for the local authority, install its root on
+each device that uses a browser:
+
+```bash
+docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt waveflow-root.crt
+```
+
+For phones, a name that Let's Encrypt can certify is the reliable route even on
+a network the internet cannot reach: a domain whose DNS provider Caddy can
+answer the DNS challenge with (that takes a Caddy build with the provider's
+module), or a tailnet name that Tailscale certifies.
+
+**Already running nginx?** The same as the `Caddyfile`, for a server whose
+container is reachable as `waveflow`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name music.example.com;
+    # ssl_certificate and ssl_certificate_key: yours, from certbot or elsewhere
+
+    # Above the largest request the server takes by default: an artist
+    # portrait of 10 MiB. nginx's own default, 1 MiB, refuses an upload chunk.
+    client_max_body_size 16m;
+
+    location / {
+        proxy_pass http://waveflow:4533;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # A scan's progress is a server-sent event stream, which buffering
+        # would hold back until the scan ends.
+        proxy_buffering off;
+    }
+}
+```
+
+nginx logs the full request line by default, so it also needs the
+[callback rule](#one-path-whose-query-string-must-not-reach-your-proxys-log);
+Caddy keeps no access log unless you add one.
+
+The Caddy files were checked by hand on 2026-10-30 against Caddy 2.11, with a
+`.home.arpa` name, an `.internal` name and an IP address. The nginx block is an
+illustration; nothing in CI runs either.
+
 ### Sign-in attempts are limited per client
 
 Failed sign-ins are counted per client address and account: twenty in a sliding
