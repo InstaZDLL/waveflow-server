@@ -638,8 +638,9 @@ The engine relabels the folder and everything under it on start, which takes a
 while on a large library the first time; no file's content is touched. Mind
 what the label replaces:
 
-- an uppercase `Z` labels the folder for this one container alone, so no other
-  container can read it;
+- an uppercase `Z` labels the folder for this one container alone (or this
+  one Podman pod, whose containers share a label), so no container outside it
+  can read it;
 - either one replaces the label the folder had, so a folder Samba already
   shares, for instance, stops being readable by Samba. Never point it at a
   system folder or the whole of `/home`.
