@@ -10,6 +10,8 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-30
+
 ### Added
 
 - **A compose file that puts the server behind Caddy**, in `packaging/caddy/`.
@@ -304,7 +306,8 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.0.0...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.0.1...main
+[2.0.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.1
 [2.0.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0
 [2.0.0-beta.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.1
 [2.0.0-beta.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.0

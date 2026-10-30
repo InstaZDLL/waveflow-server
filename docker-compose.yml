@@ -5,7 +5,7 @@
 # the same tags and digest, for a host that pulls from there instead.
 services:
   waveflow:
-    image: ghcr.io/instazdll/waveflow-server:2.0.0
+    image: ghcr.io/instazdll/waveflow-server:2.0.1
     # build: .
     restart: unless-stopped
     # Plain HTTP on every interface. To reach the server from outside over
