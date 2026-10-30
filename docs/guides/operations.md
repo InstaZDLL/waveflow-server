@@ -622,10 +622,21 @@ podman run -d --name waveflow \
   ghcr.io/instazdll/waveflow-server:2.0.1
 ```
 
-or `- /path/to/music:/music:ro,z` in a compose file. The engine relabels the
-folder and everything under it on start, which takes a while on a large
-library the first time; no file's content is touched. Mind what the label
-replaces:
+or `- /path/to/music:/music:ro,z` in a compose file. The two compose files in
+this repository spell the mount out in full, so there it is one more key:
+
+```yaml
+      - type: bind
+        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        target: /music
+        read_only: true
+        bind:
+          selinux: z
+```
+
+The engine relabels the folder and everything under it on start, which takes a
+while on a large library the first time; no file's content is touched. Mind
+what the label replaces:
 
 - an uppercase `Z` labels the folder for this one container alone, so no other
   container can read it;
