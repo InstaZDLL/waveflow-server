@@ -171,6 +171,8 @@ The image is built for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on
 
 Each release is tagged with its version, and `latest` follows the latest stable release.
 
+On Fedora, RHEL and other systems where SELinux is enforcing, Podman refuses the container your music folder until it is labelled for containers: mount it as `/path/to/music:/music:ro,z`. The [operations guide](docs/guides/operations.md#a-music-folder-under-selinux) says what that changes on the host.
+
 With Compose, set `WAVEFLOW_MUSIC_PATH` to your music folder, which is mounted read-only:
 
 ```bash
@@ -247,7 +249,7 @@ What each app does and does not use, and where an app has a limitation of its ow
 
 ## Documentation
 
-| | |
+| For | Read |
 | --- | --- |
 | **Run it** | [Operations](docs/guides/operations.md): setup, backups, the instance key, reverse proxies, optional features · [Privacy](docs/guides/privacy.md): every host the server can contact |
 | **Build a client** | [Native API v2](docs/guides/api-v2-guide.md) · [Subsonic / OpenSubsonic](docs/guides/subsonic-api-guide.md) · the interactive reference at `/reference` on any server |
@@ -256,7 +258,7 @@ What each app does and does not use, and where an app has a limitation of its ow
 
 ## How it works
 
-| | |
+| Principle | What it means |
 | --- | --- |
 | **One process** | `src/main.rs` loads the settings and serves; everything else sits behind `app()` in `src/app/router.rs`, so the test suite drives the very router `main` serves |
 | **One database** | SQLite in WAL mode with foreign keys and a single writer. Migrations are dated, embedded at compile time and checksummed |

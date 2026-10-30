@@ -604,6 +604,49 @@ covers. The artwork sweep collects it once nothing names it: when the channel
 or the station is deleted, or when the feed or the account names another
 image.
 
+## A music folder under SELinux
+
+On Fedora, RHEL and their relatives, SELinux keeps a container away from any
+host folder that does not carry the container label. Podman, and Docker when
+its daemon runs with SELinux enabled, then answer *Permission denied* on
+`/music` whatever its Unix permissions say, and the scan fails at the library
+root. Docker as Fedora ships it does not enable SELinux, and needs nothing.
+
+Mount the folder with a lowercase `z`:
+
+```bash
+podman run -d --name waveflow \
+  -p 4533:4533 \
+  -v waveflow-data:/data \
+  -v /path/to/music:/music:ro,z \
+  ghcr.io/instazdll/waveflow-server:2.0.1
+```
+
+or `- /path/to/music:/music:ro,z` in a compose file. The two compose files in
+this repository spell the mount out in full, so there it is one more key:
+
+```yaml
+      - type: bind
+        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        target: /music
+        read_only: true
+        bind:
+          selinux: z
+```
+
+The engine relabels the folder and everything under it on start, which takes a
+while on a large library the first time; no file's content is touched. Mind
+what the label replaces:
+
+- an uppercase `Z` labels the folder for this one container alone (or this
+  one Podman pod, whose containers share a label), so no container outside it
+  can read it;
+- either one replaces the label the folder had, so a folder Samba already
+  shares, for instance, stops being readable by Samba. Never point it at a
+  system folder or the whole of `/home`.
+
+The `waveflow-data` volume is the engine's own and is labelled already.
+
 ## Scanning
 
 A scan reads only what changed. A file whose size and modification time are
