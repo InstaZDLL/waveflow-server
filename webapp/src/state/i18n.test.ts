@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { localeFor, translate } from "./i18n";
+import { loadLocale, localeFor, translate } from "./i18n";
 
 describe("count translations", () => {
+  beforeAll(() => Promise.all([loadLocale("fr"), loadLocale("zh-CN")]));
+
   it("uses singular only for one in English and French", () => {
     expect(translate("en", "common.tracks", { count: 0 })).toBe("0 tracks");
     expect(translate("en", "common.tracks", { count: 1 })).toBe("1 track");
@@ -43,5 +45,15 @@ describe("the starting language", () => {
     expect(localeFor("zh-Hant-CN")).toBe("zh-TW");
     expect(localeFor("zh-Hans-HK")).toBe("zh-CN");
     expect(localeFor("zh-SG")).toBe("zh-CN");
+  });
+});
+
+// Every language but English is fetched on demand, and `translate` is called
+// outside React, where nothing waits for it.
+describe("a language whose strings have not arrived", () => {
+  it("reads in English until they do", async () => {
+    expect(translate("ko", "common.tracks", { count: 2 })).toBe("2 tracks");
+    await loadLocale("ko");
+    expect(translate("ko", "common.tracks", { count: 2 })).toBe("2곡");
   });
 });
