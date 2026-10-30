@@ -276,6 +276,9 @@ compose exec`, `logs` and `down` work too. They would refuse to start without
   `.home.arpa`, `localhost` or an IP address gets one from Caddy's own local
   authority, and nothing is asked of the internet. Uncomment `tls internal` in
   the `Caddyfile` to use that authority for any other name.
+- **Caddy follows its major version, `caddy:2`**, so it can take its security
+  fixes without a WaveFlow release: `docker compose pull` then
+  `docker compose up -d`. `up -d` alone keeps the image already pulled.
 - **Keep the `caddy-data` volume.** It holds the certificates and the local
   authority. Losing it makes every device that trusted the old root distrust
   the new one.
@@ -291,8 +294,9 @@ To carry an existing one over:
    same volume, and the old one would also keep publishing plain HTTP on 4533.
    - Started with the root `docker-compose.yml`: `docker compose down` in its
      directory, **without `-v`**, which would delete the volume.
-   - Started with the README's `docker run`: `docker rm -f waveflow`, which
-     removes the container and leaves the volume.
+   - Started with the README's `docker run`: `docker stop waveflow`, which
+     lets the server finish what it is writing, then `docker rm waveflow`,
+     which removes the container and leaves the volume.
 
    `docker ps --filter publish=4533` should then list no container.
 2. Find the volume's name with `docker volume ls`: `waveflow-data` for the
