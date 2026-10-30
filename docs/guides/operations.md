@@ -291,6 +291,7 @@ Caddy file, run from another directory, starts on a new and empty
 1. In the old directory, `docker compose down`, **without `-v`**, which would
    delete the volume. Two servers must never run on the same volume, and the
    old one would also keep publishing plain HTTP on 4533.
+   `docker ps --filter publish=4533` should then list no container.
 2. Find the volume's name with `docker volume ls`: `<project>_waveflow-data`.
 3. Add `COMPOSE_PROJECT_NAME=<project>` to the new `.env`, then
    `docker compose up -d`. The server starts on its accounts, libraries and
