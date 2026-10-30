@@ -26,13 +26,22 @@ describe("the starting language", () => {
     expect(localeFor("en-GB")).toBe("en");
     expect(localeFor("zh-CN")).toBe("zh-CN");
     expect(localeFor("zh")).toBe("zh-CN");
-    expect(localeFor("zh-Hans-HK")).toBe("zh-CN");
-    expect(localeFor("de-DE")).toBe("en");
+    expect(localeFor("de-DE")).toBe("de");
+    expect(localeFor("de-CH")).toBe("de");
+    expect(localeFor("es-419")).toBe("es");
+    expect(localeFor("it")).toBe("it");
+    expect(localeFor("ja-JP")).toBe("ja");
+    expect(localeFor("ko-KR")).toBe("ko");
+    expect(localeFor("pt-BR")).toBe("en");
   });
 
-  it("does not hand Simplified Chinese to a Traditional reader", () => {
-    expect(localeFor("zh-TW")).toBe("en");
-    expect(localeFor("zh-HK")).toBe("en");
-    expect(localeFor("zh-Hant")).toBe("en");
+  it("gives each Chinese reader the script they read", () => {
+    expect(localeFor("zh-TW")).toBe("zh-TW");
+    expect(localeFor("zh-HK")).toBe("zh-TW");
+    expect(localeFor("zh-MO")).toBe("zh-TW");
+    expect(localeFor("zh-Hant")).toBe("zh-TW");
+    expect(localeFor("zh-Hant-CN")).toBe("zh-TW");
+    expect(localeFor("zh-Hans-HK")).toBe("zh-CN");
+    expect(localeFor("zh-SG")).toBe("zh-CN");
   });
 });

@@ -7,9 +7,15 @@ import {
   useState,
 } from "react";
 
+import { de } from "./de";
 import { en } from "./en";
+import { es } from "./es";
 import { fr } from "./fr";
+import { it } from "./it";
+import { ja } from "./ja";
+import { ko } from "./ko";
 import { zhCN } from "./zh-CN";
+import { zhTW } from "./zh-TW";
 
 export type TranslationKey = keyof typeof en;
 export type TranslationValue = string | { one: string; other: string };
@@ -20,7 +26,13 @@ export type TranslationValue = string | { one: string; other: string };
 const LOCALES = {
   en: { name: "English", strings: en },
   fr: { name: "Français", strings: fr },
+  de: { name: "Deutsch", strings: de },
+  es: { name: "Español", strings: es },
+  it: { name: "Italiano", strings: it },
+  ja: { name: "日本語", strings: ja },
+  ko: { name: "한국어", strings: ko },
   "zh-CN": { name: "简体中文", strings: zhCN },
+  "zh-TW": { name: "繁體中文", strings: zhTW },
 } satisfies Record<
   string,
   { name: string; strings: Record<TranslationKey, TranslationValue> }
@@ -28,18 +40,25 @@ const LOCALES = {
 
 export type Locale = keyof typeof LOCALES;
 
+export const locales = Object.keys(LOCALES) as Locale[];
+
 function isLocale(value: string | null): value is Locale {
   return value !== null && Object.hasOwn(LOCALES, value);
 }
 
 /** The language to start in, from the one the browser prefers. */
 export function localeFor(language: string): Locale {
-  const tag = language.toLowerCase();
-  if (tag.startsWith("fr")) return "fr";
-  // Simplified Chinese only: Taiwan, Hong Kong and Macao read Traditional,
-  // and are better served by English than by a script they do not use.
-  if (/^zh(-(cn|sg|my|hans)(-|$)|$)/.test(tag)) return "zh-CN";
-  return "en";
+  const [primary, ...subtags] = language.toLowerCase().split("-");
+  if (primary === "zh") {
+    // The script decides when the tag names one; otherwise the region does,
+    // Taiwan, Hong Kong and Macao reading Traditional and the rest Simplified.
+    if (subtags.includes("hant")) return "zh-TW";
+    if (subtags.includes("hans")) return "zh-CN";
+    return subtags.some((subtag) => ["tw", "hk", "mo"].includes(subtag))
+      ? "zh-TW"
+      : "zh-CN";
+  }
+  return isLocale(primary) ? primary : "en";
 }
 
 type I18n = {
