@@ -3,15 +3,16 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-10-29:** steps 1 and 2 of §8 are built. FFmpeg is
+> **Status as of 2026-10-31:** steps 1 and 2 of §8 are built. FFmpeg is
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
 > the data folder and the cache size, checks the port before the boot, and
 > prints the banner (§5); the file the archives will carry is
-> `packaging/standalone/laptop.env`. Not built yet: opening the browser and
-> the setup-token fragment (step 3), the source link §13 asks for (§3), the
-> FFmpeg build, the release jobs and signing — each its own pull request, in
-> the order of §8.
+> `packaging/standalone/laptop.env`. The source link §13 asks for is built too
+> (#384, §3). Not built yet, each its own pull request in the order of §8 and
+> each an issue: opening the browser and the setup-token fragment (step 3,
+> #397), the FFmpeg build (step 4, #398) and the release jobs (step 5, #399),
+> all three in the v2.1.0 milestone; signing (step 6, #401) after it.
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web

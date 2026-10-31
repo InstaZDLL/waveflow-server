@@ -9,12 +9,13 @@
 >
 > No code was modified during this survey.
 >
-> **Status as of 2026-10-29, `main` at `4ccf395`:** the four batches are
+> **Status as of 2026-10-31, `main` at `be51935`:** the four batches are
 > delivered, batch C included, and of Navidrome's five server gaps four are
-> closed — smart playlists by #333 on 2026-10-25. Still open: jukebox,
-> per-account transcoding profiles, a third language, a screen for
-> `GET /transcode/status`, and any use of the library event stream by the web
-> client.
+> closed — smart playlists by #333 on 2026-10-25. The client speaks nine
+> languages since #391 and #392, all but English fetched on demand (#393). Still open, each
+> now an issue: jukebox (#402), per-account transcoding profiles (#403), a
+> screen for `GET /transcode/status` (#404), and any use of the library event
+> stream by the web client (#405).
 
 ## What was found
 
@@ -92,6 +93,10 @@ format or bitrate profile. And **translation**: 34 languages against two.
 > are done (#333); **jukebox is the one left**, still declared `false`. Both
 > gaps of degree are **still open**: no per-account transcoding profile, and
 > the client still carries English and French only (`webapp/src/state/i18n/`).
+>
+> **State on 2026-10-31.** Translation is no longer a gap of this size: the
+> client carries nine languages (#391, #392), the seven added ones still
+> awaiting a native read (#406). Jukebox is #402, transcoding profiles #403.
 
 ### What Navidrome does, the server already knows how to do, and the screen ignores
 
@@ -673,3 +678,6 @@ client is not on that critical path.
   demand**, the active language plus English as a fallback. Optimising today for
   thirty-four languages that do not exist would be premature; carrying on with a
   static `Record` the day they exist would be a mistake.
+  **Applied on 2026-10-31**: the third language came with #391, and #393,
+  landed through #392, made every language but English a chunk fetched when
+  it is chosen.
