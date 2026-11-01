@@ -201,7 +201,10 @@ fn is_waveflow_health(body: &serde_json::Value) -> bool {
 
 /// The address to reach a server bound to `address` from this machine: the
 /// loopback of the same family when it listens on every interface.
-fn reachable(address: SocketAddr) -> SocketAddr {
+///
+/// Also the address `waveflow-server health` asks, so the probe and a second
+/// double-click agree on where the server is.
+pub(crate) fn reachable(address: SocketAddr) -> SocketAddr {
     let ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
         IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),

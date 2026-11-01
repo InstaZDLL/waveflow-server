@@ -930,6 +930,22 @@ the instance key only work together — and point `WAVEFLOW_DATA_DIR` at it.
 | `/health` | The process is up |
 | `/ready` | The database is open and migrated |
 
+On the host itself, `waveflow-server health` asks `/ready` for you, at the
+address `WAVEFLOW_BIND` names — on the loopback of the same family when the
+bind is `0.0.0.0` or `[::]`. It prints nothing and exits 0 when the answer is
+the probe's own 200, and prints one line and exits 1 otherwise: a refused
+connection, another status, a 200 from something other than WaveFlow, or no
+answer within three seconds. It reads the same settings as
+`serve` and never opens the database, so it is safe to run beside the server.
+The Docker image's `HEALTHCHECK` is this command, which is why the image needs
+no curl; a compose file or an orchestrator that declares its own check can use
+it the same way:
+
+```yaml
+healthcheck:
+  test: ["CMD", "waveflow-server", "health"]
+```
+
 Logging is `tracing` with `RUST_LOG`; set `WAVEFLOW_LOG_FORMAT=json` in
 production. Traces record `uri.path()` only — never headers, query strings,
 tokens or passwords — with share tokens and stream tickets redacted.

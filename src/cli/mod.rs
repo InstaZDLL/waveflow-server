@@ -1,16 +1,19 @@
 //! The command line: what an operator does on the host itself — accounts and
 //! credentials, libraries and their members, database backups and restores,
-//! the instance key and scrobbling links.
+//! the instance key and scrobbling links — and asking a running server whether
+//! it is ready.
 //!
 //! It predates the web administration and outlived it on purpose: it is how the
 //! first administrator is made without the setup page, and how a library is
 //! administered from a shell script. Most commands run against the same
 //! `AppState` the server builds; `restore` and `key` take only the
-//! `Config`, because they run on a database the boot would refuse.
+//! `Config`, because they run on a database the boot would refuse, and so does
+//! `health`, because the database it asks about belongs to another process.
 
 mod account;
 mod args;
 mod database;
+mod health;
 mod key;
 mod library;
 mod scrobble;
@@ -24,6 +27,7 @@ pub use args::{
     SetUploadsArgs, SetWatchArgs, TokenCommand, UnavailableArgs, UnlinkScrobbleArgs,
 };
 pub use database::restore;
+pub use health::health;
 pub use key::key;
 
 use anyhow::Context;
@@ -47,6 +51,7 @@ pub async fn execute(command: Command, state: &AppState) -> anyhow::Result<()> {
     let db = &state.db;
     match command {
         Command::Serve => anyhow::bail!("serve is handled by the runtime"),
+        Command::Health => anyhow::bail!("health must run before server initialization"),
         Command::Account { command } => {
             match command {
                 AccountCommand::CreateAdmin(args) => {

@@ -20,6 +20,9 @@ async fn main() -> anyhow::Result<()> {
         // Both of these run on a database the boot would refuse, so they run
         // instead of the boot rather than after it.
         Some(cli::Command::Key { command }) => cli::key(&config, command).await,
+        // Instead of the boot as well: the database it asks about is the
+        // running server's, and a probe must not open or migrate it.
+        Some(cli::Command::Health) => cli::health(&config).await,
         command => {
             let serving = matches!(command, Some(cli::Command::Serve) | None);
             // Only when serving: a command's standard output is not the place
