@@ -160,10 +160,12 @@ cover macOS, and it carries the size and source-offer cost above.
 - `LICENSES/FFmpeg.txt` — FFmpeg's LGPL text, and the GPL text the LGPLv3
   incorporates when the version-3 variant is used;
 - `LICENSES/LAME.txt`, `LICENSES/Opus.txt`, `LICENSES/libwebp.txt`;
+- `LICENSES/musl.txt` in the Linux archives, whose static binaries carry musl;
 - `LICENSES/SOURCE.txt` — the FFmpeg configure line, the version of each
   component, and the names of the source tarballs attached to the release;
 - on the release itself, `ffmpeg-<version>-sources.tar.gz`: the four upstream
-  tarballs exactly as downloaded (with their checksums) and the build script.
+  tarballs exactly as downloaded (with their checksums), the build script and
+  the musl notice it copies.
 
 ### The server's own source
 

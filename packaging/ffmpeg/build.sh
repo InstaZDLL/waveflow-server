@@ -7,12 +7,12 @@
 #   sh packaging/ffmpeg/build.sh sources <out>    pack the corresponding source
 #
 # `build` leaves in <out> the two executables and `LICENSES/`: the texts of
-# FFmpeg, LAME, Opus and libwebp, and `SOURCE.txt` (the versions, the tarballs
-# and the configure line), where the standalone archives carry them (§2 and §3
-# of docs/plans/standalone-download-plan.md). `sources` leaves
-# `ffmpeg-<version>-sources.tar.gz`: the four tarballs exactly as downloaded,
-# their checksums and this script — the corresponding source a release owes
-# for the binaries.
+# FFmpeg, LAME, Opus and libwebp, musl's on a musl target, and `SOURCE.txt` (the
+# versions, the tarballs and the configure line), where the standalone archives
+# carry them (§2 and §3 of docs/plans/standalone-download-plan.md). `sources`
+# leaves `ffmpeg-<version>-sources.tar.gz`: the four tarballs exactly as
+# downloaded, their checksums, this script and the musl notice it copies — the
+# corresponding source a release owes for the binaries.
 #
 # The work happens under $WORK_DIR (default: a folder in the system's temporary
 # directory); the tarballs are kept in $WORK_DIR/downloads and checked against
@@ -38,6 +38,10 @@ OPUS_VERSION=1.6.1
 OPUS_SHA256=6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
 WEBP_VERSION=1.6.0
 WEBP_SHA256=e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564
+# The musl release that musl-COPYRIGHT, beside this script, was copied from:
+# Alpine's packages carry no licence text, and a static Linux binary owes
+# musl's notice.
+MUSL_VERSION=1.2.6
 
 FFMPEG_TARBALL=ffmpeg-$FFMPEG_VERSION.tar.xz
 LAME_TARBALL=lame-$LAME_VERSION.tar.gz
@@ -128,6 +132,7 @@ sha256() {
 }
 
 SCRIPT=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
+MUSL_NOTICE=$(dirname "$SCRIPT")/musl-COPYRIGHT
 WORK_DIR=$(absolute "${WORK_DIR:-${TMPDIR:-/tmp}/waveflow-ffmpeg}")
 DOWNLOADS=$WORK_DIR/downloads
 
@@ -326,6 +331,20 @@ check_protocols() {
     log "protocols: $found"
 }
 
+# The notice has to be the one of the musl being linked, so a build against
+# another version stops here, before any compiling, until the copy is refreshed.
+check_musl_notice() {
+    case "$TARGET" in
+        *-musl*) ;;
+        *) return 0 ;;
+    esac
+    linked=$(ldd --version 2>&1 | sed -n 's/^Version //p')
+    if [ "$linked" != "$MUSL_VERSION" ]; then
+        echo "this links musl $linked, but musl-COPYRIGHT is from $MUSL_VERSION" >&2
+        exit 1
+    fi
+}
+
 write_source() {
     {
         echo "FFmpeg for WaveFlow Server, built by packaging/ffmpeg/build.sh"
@@ -341,6 +360,9 @@ write_source() {
         echo "  LAME    $LAME_VERSION   (LGPL-2.0-or-later)"
         echo "  Opus    $OPUS_VERSION   (BSD-3-Clause)"
         echo "  libwebp $WEBP_VERSION   (BSD-3-Clause)"
+        case "$TARGET" in
+            *-musl*) echo "  musl    $MUSL_VERSION   (MIT), the C library, linked statically" ;;
+        esac
         echo
         echo "Source tarballs (SHA-256), as downloaded from upstream:"
         sed 's/^/  /' "$DOWNLOADS/SHA256SUMS"
@@ -370,6 +392,9 @@ write_licences() {
         echo
         cat "$SOURCES/libwebp-$WEBP_VERSION/PATENTS"
     } > "$OUT/LICENSES/libwebp.txt"
+    case "$TARGET" in
+        *-musl*) cp "$MUSL_NOTICE" "$OUT/LICENSES/musl.txt" ;;
+    esac
 }
 
 build() {
@@ -386,6 +411,7 @@ build() {
     CC=cc
     command -v cc >/dev/null 2>&1 || CC=gcc
     TARGET=$($CC -dumpmachine)
+    check_musl_notice
 
     build_lame
     build_opus
@@ -423,6 +449,7 @@ sources() {
         "$DOWNLOADS/$OPUS_TARBALL" "$DOWNLOADS/$WEBP_TARBALL" \
         "$DOWNLOADS/SHA256SUMS" "$staging/"
     cp "$SCRIPT" "$staging/build.sh"
+    cp "$MUSL_NOTICE" "$staging/"
     tar -czf "$OUT/$bundle.tar.gz" -C "$WORK_DIR" "$bundle"
     log "packed $OUT/$bundle.tar.gz"
 }
