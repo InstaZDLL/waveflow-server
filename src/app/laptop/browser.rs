@@ -5,10 +5,11 @@
 //!
 //! On a first start the setup token rides along in the URL **fragment**. A
 //! browser never sends the fragment to the server, so the token is in no
-//! request line, no trace and no proxy log; the sign-in screen moves it into
-//! its token field and removes it from the address bar. The token file stays
-//! the source: the fragment is a hand-over, and a user who closes the tab can
-//! still read the file.
+//! request line, no server trace and no proxy log; the sign-in screen moves it
+//! into its token field and removes it from the address bar. The fragment is
+//! only a hand-over: a user who closes the tab still has the token where it
+//! came from, the file for one the server drew, `WAVEFLOW_SETUP_TOKEN` for one
+//! an operator set.
 //!
 //! Only the copy that drew the token hands it over. A second copy that finds
 //! WaveFlow on the port opens the bare address: all it knows of what answered
@@ -17,12 +18,27 @@
 //! the file and passed it on could be handing it to a stranger holding the
 //! port.
 //!
+//! The copy that drew it hands it over only where nothing else on the machine
+//! can pick it up on the way ([`may_hand_over`]). The URL is on the command
+//! line of the opener, and often of the browser it starts, for as long as that
+//! browser runs: Windows and macOS keep a process's arguments from other
+//! accounts, but Linux and the BSDs show them to anyone, while the token file
+//! is readable by its owner alone. And the browser opens the loopback address,
+//! which a server listening on every interface does not own: Windows and the
+//! BSDs let another program bind `127.0.0.1` on the same port, more specific,
+//! and take the browser's connection. Elsewhere the browser opens the bare
+//! address, and the log names the file or the variable that holds the token.
+//! What this does not cover is a machine that logs every command line it
+//! starts (Windows' event 4688, Sysmon, an endpoint agent): its log readers see
+//! the token. The operations guide documents that case and the variable that
+//! turns the opening off.
+//!
 //! Through the opener each platform ships rather than a crate: `rundll32`'s
 //! URL handler on Windows, `open` on macOS, `xdg-open` elsewhere. A failure to
 //! open — a Linux machine with no desktop, no opener installed — is a log
 //! line, never a reason to stop serving: the banner still says where to go.
 
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
@@ -46,6 +62,23 @@ const FRAGMENT_VALUE: &AsciiSet = &NON_ALPHANUMERIC
 /// opener keeps running if it outlives the wait: `xdg-open` can stay in the
 /// foreground for as long as the browser it started does.
 const OPENER_WAIT: Duration = Duration::from_secs(5);
+
+/// Whether another account of this machine is kept from reading the command
+/// line of this account's processes: on Windows it needs rights over the
+/// process, on macOS it needs root (xnu's `sysctl_procargsx`, which `ps`
+/// reads, answers `EINVAL` to another uid that is not the superuser, and
+/// `open` hands the URL to the browser through Launch Services rather than on
+/// its command line). Linux shows every command line in `/proc`
+/// unless it is mounted with `hidepid`, and the BSDs show them through `ps`.
+pub const COMMAND_LINES_ARE_PRIVATE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// Whether the setup token may ride along when the browser opens a server
+/// listening on `listening`: only where command lines are private, and only on
+/// an address the listener owns. A wildcard listener is opened on the loopback
+/// address, which another program may hold more specifically.
+pub fn may_hand_over(listening: SocketAddr, command_lines_private: bool) -> bool {
+    command_lines_private && !listening.ip().is_unspecified()
+}
 
 /// The address to open: `base` — the server's root, with its trailing slash —
 /// or, when there is a setup token to hand over, its sign-in screen with the
@@ -106,11 +139,9 @@ fn opener(url: &str) -> tokio::process::Command {
 /// how it went.
 ///
 /// `address` is what the log names: `url` without its fragment, so a failure
-/// is reported without the token it carried. The token does sit on the
-/// opener's command line for the moment it runs, which other accounts of the
-/// same machine can list on Linux. That is the trade the plan accepts: a
-/// laptop's accounts are its owner's, and the token opens nothing once the
-/// administrator exists.
+/// is reported without the token it carried. A `url` that carries one is
+/// passed only where [`may_hand_over`] said so: it sits on the opener's
+/// command line.
 pub async fn open(url: String, address: &str) {
     let mut child = match opener(&url).spawn() {
         Ok(child) => child,

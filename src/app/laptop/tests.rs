@@ -330,3 +330,18 @@ fn the_token_handed_over_is_the_one_setup_accepts() {
         None
     );
 }
+
+/// The token rides along only where command lines are private and the address
+/// opened is the listener's own: a wildcard listener is opened on a loopback
+/// address another program may hold more specifically.
+#[test]
+fn the_token_is_handed_over_only_where_nothing_else_can_take_it() {
+    let loopback: std::net::SocketAddr = "127.0.0.1:4533".parse().unwrap();
+    let lan: std::net::SocketAddr = "192.168.1.20:4533".parse().unwrap();
+    assert!(browser::may_hand_over(loopback, true));
+    assert!(browser::may_hand_over(lan, true));
+    for wildcard in ["0.0.0.0:4533", "[::]:4533"] {
+        assert!(!browser::may_hand_over(wildcard.parse().unwrap(), true));
+    }
+    assert!(!browser::may_hand_over(loopback, false));
+}

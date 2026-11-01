@@ -922,15 +922,35 @@ warning about the setting.
 
 Once listening, it opens the default browser on its address (through
 `rundll32`'s URL handler on Windows, `open` on macOS, `xdg-open` elsewhere; a
-failure is a warning in the log, never a reason to stop). While setup is open
-it opens the sign-in screen with the setup token in the URL fragment,
-`/login#setup-token=…`: a browser never sends a fragment, so the token is in
-no request line and no trace, and the sign-in screen moves it into its field
-and out of the address bar. The token file stays where it was and still
-works. A second copy opens the running one's bare address, without the token:
-what answers `/health` on the port is not proof enough to hand it over.
+failure is a warning in the log, never a reason to stop). What it opens while
+setup is open depends on whether the token can be handed over, which takes
+Windows or macOS, which keep a process's command line from other accounts, and
+a server listening on the address it opens:
+
+- Handed over: the sign-in screen with the setup token in the URL fragment,
+  `/login#setup-token=…`. A browser never sends a fragment, so the token is in
+  no request line and none of the server's traces, and the sign-in screen moves
+  it into its field and out of the address bar. A token the server drew stays
+  in its file, which still works.
+- Not handed over, on Linux or a BSD, or bound to `0.0.0.0` or `[::]`: the bare
+  address. Type the token in yourself, the content of `<data>/setup-token`, or
+  the value of `WAVEFLOW_SETUP_TOKEN` when it is set.
+
+A second copy opens the running one's bare address, without the token: what
+answers `/health` on the port is not proof enough to hand it over.
 `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off; outside laptop mode
 the variable is read and refused when misspelt, but no browser is ever opened.
+
+A machine that records the command line of every process it starts keeps the
+token too: Windows' process-creation event 4688 once command lines are
+included, Sysmon, or an endpoint agent on any platform, readable by whoever
+reads those logs. The token creates the first administrator until setup
+succeeds, for anyone who can reach the server: the machine itself on the
+default `127.0.0.1`, its network too on an explicit LAN address. On such a
+machine, set `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` before the first start and
+paste the token yourself — the value of `WAVEFLOW_SETUP_TOKEN` when it is set,
+the content of `<data>/setup-token` otherwise — or finish setup at once, which
+closes it.
 
 An installed server never needs it, and no default changes without it. To move
 a laptop install onto a server, copy its data folder whole — the database and

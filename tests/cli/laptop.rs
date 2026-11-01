@@ -235,11 +235,18 @@ fn a_double_clicked_server_keeps_its_data_in_the_os_folder_and_a_second_copy_sto
     assert!(!program.with_file_name("data").exists());
     let port = port_in(&banner);
     let token = std::fs::read_to_string(data.join("setup-token")).unwrap();
-    let handover = format!("http://127.0.0.1:{port}/login#setup-token={}", token.trim());
+    let bare = format!("http://127.0.0.1:{port}/");
+    // On macOS the browser opens on the sign-in screen with the token in the
+    // fragment, which no request carries. Elsewhere on Unix every account can
+    // read the opener's command line, so it opens the bare address and the
+    // token stays in its owner's file.
+    let first = if cfg!(target_os = "macos") {
+        format!("{bare}login#setup-token={}", token.trim())
+    } else {
+        bare.clone()
+    };
     if cfg!(unix) {
-        // The browser opens on the sign-in screen with the token in the
-        // fragment, which no request carries.
-        assert_eq!(opened(&home, 1), std::slice::from_ref(&handover));
+        assert_eq!(opened(&home, 1), std::slice::from_ref(&first));
     }
 
     // An operator token makes the boot delete the drawn token file, so the
@@ -270,10 +277,7 @@ fn a_double_clicked_server_keeps_its_data_in_the_os_folder_and_a_second_copy_sto
         // And brings the first copy forward on its bare address: neither
         // the token in that copy's file nor this one's operator token goes
         // to a server known only by its `/health` answer.
-        assert_eq!(
-            opened(&home, 2),
-            [handover, format!("http://127.0.0.1:{port}/")]
-        );
+        assert_eq!(opened(&home, 2), [first, bare]);
     }
 }
 
