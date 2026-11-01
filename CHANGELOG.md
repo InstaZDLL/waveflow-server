@@ -19,6 +19,19 @@ out first, whether or not it breaks a compile.
   Taiwan, Hong Kong and Macao, Simplified elsewhere. None of the seven has had
   a native speaker's review yet.
 
+### Changed
+
+- **The image runs on Debian 13 (trixie)** instead of Debian 12, and its FFmpeg
+  goes from 5.1 to 7.1 (#395). **Its first boot measures every lossless file
+  again**: a quality measurement is current only for the FFmpeg that took it
+  (RFC-016), so the boot deletes every row of `track_quality` and the
+  background analysis takes each lossless file anew, one at a time by default
+  and never while a scan runs. On a large library that is hours of one core,
+  and each file reads `pending` until its turn comes.
+  `WAVEFLOW_QUALITY_PARALLELISM` paces it: raise it to finish sooner on a
+  machine with cores to spare, or set it to `0` to hold the analysis off until
+  a quieter moment.
+
 ## [2.0.1] — 2026-10-30
 
 ### Added
