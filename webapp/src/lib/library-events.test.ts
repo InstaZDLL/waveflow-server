@@ -8,6 +8,7 @@ import {
   artistsQuery,
   artistTopSongsQuery,
   attentionSummaryQuery,
+  bookmarksQuery,
   canvasQuery,
   creditCandidatesQuery,
   creditDecisionsQuery,
@@ -26,13 +27,16 @@ import {
   qualityTracksQuery,
   randomSongsQuery,
   searchQuery,
+  sharesQuery,
   smartPlaylistQuery,
   smartPlaylistsQuery,
   songsQuery,
+  statsQuery,
   trackEditQuery,
   trackPropertiesQuery,
   trackQualityQuery,
   unavailableTracksQuery,
+  uncertainScrobblesQuery,
 } from "../api/queries";
 import { everythingIn, staleAfter } from "./library-events";
 
@@ -94,6 +98,8 @@ describe("staleAfter", () => {
     expect(stale(key(artistQuery("ar1")))).toBe(true);
     expect(stale(key(artistQuery("ar2")))).toBe(false);
     expect(stale(key(albumQuery("any-album")))).toBe(false);
+    expect(stale(key(playlistsQuery()))).toBe(false);
+    expect(stale(key(uncertainScrobblesQuery()))).toBe(false);
     expect(stale(key(artistsQuery("lib-a")))).toBe(true);
   });
 
@@ -108,7 +114,8 @@ describe("staleAfter", () => {
   it("leaves a fresh draw and user state alone", () => {
     const stale = staleAfter("lib-a", [track("t1"), album("al1")]);
     expect(stale(key(randomSongsQuery("lib-a")))).toBe(false);
-    expect(stale(key(playlistsQuery()))).toBe(false);
+    // A share holds track ids and its own counters, no track's name.
+    expect(stale(key(sharesQuery()))).toBe(false);
   });
 
   it("marks nothing for an empty page", () => {
@@ -163,8 +170,12 @@ describe("every root a library change can make stale", () => {
     artistQuery("ar9"),
     artistAlbumsQuery("ar9"),
     artistTopSongsQuery("ar9"),
+    bookmarksQuery(),
     favoriteTracksQuery(),
     historyTracksQuery(50),
+    playlistsQuery(),
+    statsQuery("all", DAY),
+    uncertainScrobblesQuery(),
     smartPlaylistQuery("sp9"),
   ];
   const trackPanels = (trackId: string) => [

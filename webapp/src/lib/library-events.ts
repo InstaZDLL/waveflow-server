@@ -50,16 +50,22 @@ const LIBRARY_PANELS = new Set([
 /**
  * Pages that show tracks or albums but are keyed by something the feed does
  * not name — an album page lists its tracks, an artist page its albums and
- * counts, the favourites and history their rows. A track or album event may
- * concern any of them, so all are marked.
+ * counts, the favourites and history their rows, a playlist or a bookmark the
+ * tracks it holds, the statistics their top tracks and albums, an uncertain
+ * listen the title of its track. A track or album event may concern any of
+ * them, so all are marked.
  */
 const CONTENT_PAGES = new Set([
   "album",
   "artist",
   "artist-albums",
   "artist-top-songs",
+  "bookmarks",
   "favorite-tracks",
   "history-tracks",
+  "playlists",
+  "stats",
+  "uncertain-scrobbles",
 ]);
 
 /** One track's panels, keyed by its id second. */
