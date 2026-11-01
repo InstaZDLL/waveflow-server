@@ -6,9 +6,10 @@
 //! On a first start the setup token rides along in the URL **fragment**. A
 //! browser never sends the fragment to the server, so the token is in no
 //! request line, no server trace and no proxy log; the sign-in screen moves it
-//! into its token field and removes it from the address bar. The token file
-//! stays the source: the fragment is a hand-over, and a user who closes the tab can
-//! still read the file.
+//! into its token field and removes it from the address bar. The fragment is
+//! only a hand-over: a user who closes the tab still has the token where it
+//! came from, the file for one the server drew, `WAVEFLOW_SETUP_TOKEN` for one
+//! an operator set.
 //!
 //! Only the copy that drew the token hands it over. A second copy that finds
 //! WaveFlow on the port opens the bare address: all it knows of what answered
@@ -26,11 +27,11 @@
 //! which a server listening on every interface does not own: Windows and the
 //! BSDs let another program bind `127.0.0.1` on the same port, more specific,
 //! and take the browser's connection. Elsewhere the browser opens the bare
-//! address, and the token is in the file the log names. What this does not
-//! cover is a machine that logs every command line it starts (Windows' event
-//! 4688, Sysmon, an endpoint agent): its log readers see the token. The
-//! operations guide documents that case and the variable that turns the
-//! opening off.
+//! address, and the log names the file or the variable that holds the token.
+//! What this does not cover is a machine that logs every command line it
+//! starts (Windows' event 4688, Sysmon, an endpoint agent): its log readers see
+//! the token. The operations guide documents that case and the variable that
+//! turns the opening off.
 //!
 //! Through the opener each platform ships rather than a crate: `rundll32`'s
 //! URL handler on Windows, `open` on macOS, `xdg-open` elsewhere. A failure to

@@ -932,9 +932,9 @@ a server listening on the address it opens:
   no request line and none of the server's traces, and the sign-in screen moves
   it into its field and out of the address bar. A token the server drew stays
   in its file, which still works.
-- Not handed over, on Linux or bound to `0.0.0.0` or `[::]`: the bare address.
-  Type the token in yourself, the content of `<data>/setup-token`, or the value
-  of `WAVEFLOW_SETUP_TOKEN` when it is set.
+- Not handed over, on Linux or a BSD, or bound to `0.0.0.0` or `[::]`: the bare
+  address. Type the token in yourself, the content of `<data>/setup-token`, or
+  the value of `WAVEFLOW_SETUP_TOKEN` when it is set.
 
 A second copy opens the running one's bare address, without the token: what
 answers `/health` on the port is not proof enough to hand it over.
