@@ -3,7 +3,7 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-11-01:** steps 1 to 5 of §8 are built. FFmpeg is
+> **Status as of 2026-11-02:** steps 1 to 6 of §8 are built. FFmpeg is
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
 > the data folder and the cache size, checks the port before the boot,
@@ -17,7 +17,9 @@
 > (#399, §7); the image keeps Debian's FFmpeg, now trixie's 7.1 (#395). No tag
 > has produced the archives yet: the check that each one, extracted on its
 > platform, starts in laptop mode and plays a file waits for the first release
-> candidate. Not built yet: signing (step 6, #401).
+> candidate. The executables are signed as the desktop's are, self-signed on
+> Windows and ad hoc on macOS (#401, §6), and both systems still warn: the
+> project chose that on 2026-11-02, and §6 keeps what would remove the warnings.
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web
@@ -27,9 +29,9 @@ Almost. The binary is already self-contained — SQLite is compiled in, the web
 client is embedded by `rust_embed`, there is no service to install beside it.
 Three things stand in the way, and this plan takes them in turn: FFmpeg has to
 be on `PATH` (§2 to §4), every setting is an environment variable with
-server-room defaults (§5), and an unsigned executable downloaded from the
-internet is something both Windows and macOS refuse to open without a fight
-(§6).
+server-room defaults (§5), and an executable downloaded from the internet, with
+no signature they trust, is something both Windows and macOS refuse to open
+without a fight (§6).
 
 ## 1. What stays as it is
 
@@ -64,8 +66,8 @@ internet is something both Windows and macOS refuse to open without a fight
   says where the corresponding source of each is (§3).
 - **`README.txt`** is the page a non-technical user reads: what to double-click,
   what the first screen asks for, where the music library is set, how to stop
-  the server, and what to click past on first launch while the archives are
-  unsigned (§6).
+  the server, and what to click past on first launch, for as long as neither
+  system trusts the signatures (§6).
 - **Linux is `tar.gz`, not `zip`:** a zip loses the executable bit on most
   extractors. An AppImage is the Linux equivalent of a double-clickable file
   and is noted in §8 as a later option, not part of the first archives.
@@ -325,35 +327,94 @@ data folder, as documented in the operations guide.
 
 ## 6. Signing
 
-Until the archives are signed, the first launch shows a warning on Windows and
-macOS, and `README.txt` says what to click. That is acceptable for a beta; not
-for a download offered to people who have never seen the warning.
+**Decision of 2026-11-02: the archives are signed the way the desktop app's
+builds are**, with a self-signed Authenticode certificate on Windows and an
+ad-hoc signature on macOS. *Built (#401).* It costs nothing and depends on
+nobody outside the project, and **it removes no warning**: the first launch
+still warns on Windows and macOS, and `README.txt` says what to click. This
+replaces this section's first decision, SignPath and a Developer ID. That
+reasoning stays below, because it is what would remove the warnings if the
+project wants that later.
 
-### Windows: SmartScreen
+### What the project chose
+
+- **Windows.** `signtool` signs `waveflow-server.exe`, `ffmpeg.exe` and
+  `ffprobe.exe`, timestamped, from the `SIGNTOOL_PFX_BASE64` (the PFX, in
+  base64) and `SIGNTOOL_PFX_PASSWORD` repository secrets, the names the desktop
+  uses. An Actions secret belongs to one repository, so both are set on this one
+  too. A tag without them stops before any build. A pull request or a manual run
+  signs nothing on Windows, even when the secrets are readable, so the
+  certificate only ever signs what is released.
+- **macOS.** `codesign --force --sign -` with a stable identifier
+  (`app.waveflow.server`, and `.ffmpeg` and `.ffprobe` for the tools) on all
+  three executables of both targets, on every run, since it needs no secret.
+  Moving to a Developer ID changes that identity and adds the steps described
+  below.
+- **Linux.** Nothing.
+
+Both sign before `pack.sh`, so the archive and `SHA256SUMS` hold the signed
+files and `smoke.sh` runs them, and both read the signatures back out of the
+archive afterwards.
+
+**What it gives.** A file changed after signing no longer matches its signature:
+`Get-AuthenticodeSignature` answers `HashMismatch` and `codesign --verify` fails.
+On Windows the three files name one publisher's certificate, for as long as the
+project keeps that certificate, and each run's log prints its thumbprint, so
+someone who wants to can compare a download against it. The timestamp keeps the
+signature readable once the certificate has expired. On macOS the executables
+have a stable identifier rather than the one the linker generates on arm64, and
+x86_64, which had no signature at all, has one.
+
+**What it does not give.** Trust, on either system:
+
+- The certificate's chain ends at a root outside Microsoft's Trusted Root
+  Program, so Windows calls the publisher unknown, `Get-AuthenticodeSignature`
+  answers `UnknownError` rather than `Valid`, and SmartScreen goes on warning.
+  More downloads will not change that. Smart App Control can block the executable
+  outright, as the desktop has seen (`docs/RELEASING.md` there,
+  InstaZDLL/WaveFlow#610).
+- A certificate's name proves nothing: anyone can make a self-signed one under
+  the same name. Only the thumbprint tells them apart.
+- An ad-hoc signature names nobody, and anyone can re-sign a changed file ad hoc.
+  It is a seal, not an identity, and it does not satisfy Gatekeeper, which
+  refuses the quarantined file as it refuses an unsigned one.
+- Nothing checks any of this for the user. A signature shows tampering only to
+  someone who looks.
+
+### Windows: what would remove SmartScreen's warning
+
+Not done; this is what the first decision rested on.
 
 - An unsigned `.exe` from the internet gets "Windows protected your PC", with
   the run button behind "More info". Signing with an Authenticode certificate
-  removes "unknown publisher"; SmartScreen's warning itself disappears only as
-  the certificate builds reputation — an EV certificate no longer skips that.
+  from a CA in the Trusted Root Program removes "unknown publisher"; SmartScreen's
+  warning itself disappears only as the certificate builds reputation — an EV
+  certificate no longer skips that. A self-signed certificate does neither.
+  With a CA's certificate Smart App Control lets the executable through as well,
+  by the desktop's account of it.
 - **Azure Artifact Signing** (formerly Trusted Signing) is the cheapest
   managed option, but Microsoft's documentation limits it to organisations in
   the US, Canada, the EU and the UK and to *individual* developers in the US
   and Canada; an individual maintainer in the EU does not qualify today.
-- **Decision: apply to the [SignPath Foundation](https://signpath.org/)**, which
-  signs open-source releases for free from a CI pipeline, with the key in its
-  HSM. Its conditions — an OSI licence, a public build from the tagged source,
-  no proprietary components — the project already meets. A commercial OV
-  certificate is the fallback.
+- **The first decision, set aside on 2026-11-02: apply to the
+  [SignPath Foundation](https://signpath.org/)**, which signs open-source
+  releases for free from a CI pipeline, with the key in its HSM. Its conditions —
+  an OSI licence, a public build from the tagged source, no proprietary
+  components — the project already meets. A commercial OV certificate is the
+  fallback. An OV certificate would take the place of the one behind the two
+  secrets; SignPath, of the signing step.
 - All three executables are signed: `ffmpeg.exe` and `ffprobe.exe` are
   executables the user runs indirectly, and an unsigned one would be flagged
   by the same reputation system on its own.
 
-### macOS: Gatekeeper and notarization
+### macOS: what would satisfy Gatekeeper
 
-- A quarantined unsigned binary is refused. Since macOS 15 the Control-click
-  bypass is gone: the user must open System Settings › Privacy & Security and
-  choose "Open Anyway". That is the page `README.txt` explains while the
-  archives are unsigned.
+Not done either.
+
+- A quarantined binary without a Developer ID is refused, ad-hoc signature or
+  not. Since macOS 15 the Control-click bypass is gone: the user must open System
+  Settings › Privacy & Security and choose "Open Anyway". That is the page
+  `README.txt` explains, beside the `xattr` line.
 - Signing needs an **Apple Developer Program** membership (99 USD a year) and a
   *Developer ID Application* certificate. Every Mach-O in the archive is
   signed with the hardened runtime (`codesign --options runtime --timestamp`),
@@ -378,7 +439,8 @@ instead (below), which also covers the other platforms for anyone who checks.
 `verify`, beside the image's build; that file calls `ffmpeg.yml`. Nothing in
 either publishes, so a pull request that touches `packaging/standalone/` or a
 manual dispatch runs the same jobs and stops at a workflow artifact, which is
-how they are exercised without a tag. In order:
+how they are exercised without a tag. First, on a tag, `signing-secrets` refuses
+one that lacks the certificate of §6, before anything is built. Then, in order:
 
 1. **`ffmpeg`** — `ffmpeg.yml` as it stands: one native runner per target
    builds the minimal FFmpeg, runs the `media`, `quality` and `canvas` targets
@@ -391,13 +453,15 @@ how they are exercised without a tag. In order:
    what this page first proposed: what a release ships is compiled from its
    tag, and its build costs minutes, on a day that is rare.
 2. **`webapp`** — the client, once, for all five.
-3. **`archive`** — one native runner per target builds the server, packs the
-   archive of §2 with `packaging/standalone/pack.sh`, and starts it with
+3. **`archive`** — one native runner per target builds the server, signs the
+   three executables (§6), packs the archive of §2 with
+   `packaging/standalone/pack.sh`, and starts it with
    `packaging/standalone/smoke.sh`: the files of §2, nothing loaded that the
    system lacks, laptop mode from the `laptop.env` in the archive, and an empty
    `PATH`, so the tools can only be the ones beside it, then a FLAC file turned
-   into an MP3 through the Subsonic façade. macOS builds on a runner of each
-   architecture rather than cross-compiling, as `ffmpeg.yml` does.
+   into an MP3 through the Subsonic façade. It then reads the signatures back out
+   of the archive. macOS builds on a runner of each architecture rather than
+   cross-compiling, as `ffmpeg.yml` does.
 
    Two builds differ from the image's, because a laptop is not a container
    whose libraries we choose. **On Linux the server is static against musl**,
@@ -449,7 +513,10 @@ Each line is one pull request.
    with `README.txt` saying what to click past; the header rewritten. *Done*
    (#399), §7 says how; the first release candidate is what checks each archive
    on a real desktop.
-6. **Signing**: SignPath for Windows once accepted, Developer ID and
-   notarization for macOS once the membership exists.
-7. Later, as asked for: a macOS `.app` in a stapled `.dmg`, an AppImage, a tray
-   icon on Windows and macOS, and an update notice in the web client.
+6. **Signing**: a self-signed certificate on Windows, ad hoc on macOS, as the
+   desktop does. *Done* (#401). It leaves both warnings in place, by the decision
+   of 2026-11-02 in §6, and a tag is what first signs with the real certificate.
+7. Later, as asked for: what would remove those warnings (a CA certificate or
+   SignPath for Windows, a Developer ID and notarization for macOS), a macOS
+   `.app` in a stapled `.dmg`, an AppImage, a tray icon on Windows and macOS, and
+   an update notice in the web client.

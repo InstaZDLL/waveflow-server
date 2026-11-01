@@ -12,8 +12,9 @@ To start it
 
 2. Double-click waveflow-server.exe.
 
-   The first time, Windows may say "Windows protected your PC", because this
-   download is not signed yet. Click "More info", then "Run anyway".
+   The first time, Windows may say "Windows protected your PC" and call the
+   publisher unknown: this download is signed, but with a certificate of our
+   own, which Windows does not know. Click "More info", then "Run anyway".
 
    A window opens, and your web browser opens on the server's page.
 
