@@ -1,0 +1,183 @@
+name: FFmpeg
+
+# Builds the minimal LGPL FFmpeg of the standalone download
+# (docs/plans/standalone-download-plan.md §3, §8 step 4) for its five targets,
+# with packaging/ffmpeg/build.sh, and tests each build against the server
+# before uploading it. Nothing here publishes: the release job that attaches
+# these binaries to an archive is a later step of the plan.
+#
+# Every target builds on a runner of its own OS and architecture, so the
+# integration targets run on the binaries they test, natively:
+#
+# - linux-x86_64 and linux-arm64 build inside Alpine (pinned by digest) on
+#   ubuntu-24.04 and ubuntu-24.04-arm, so the binaries are static against musl
+#   and run on any distribution; the tests then run on the Ubuntu host.
+# - macos-arm64 on macos-15, macos-x86_64 on macos-15-intel. macOS has no
+#   static libSystem, so these link the system's and nothing else; the
+#   deployment target is the oldest each architecture's Rust target supports
+#   well, 11.0 and 10.15.
+# - windows-x86_64 builds with MinGW-w64 in MSYS2's UCRT64 environment, linked
+#   statically, and is tested from the ordinary Windows shell with the MSVC
+#   toolchain the server uses.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packaging/ffmpeg/**"
+      - ".github/workflows/ffmpeg.yml"
+  pull_request:
+    paths:
+      - "packaging/ffmpeg/**"
+      - ".github/workflows/ffmpeg.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ffmpeg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The corresponding source of every build below: the four upstream tarballs
+  # exactly as downloaded, their checksums, and the script.
+  sources:
+    name: Sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: version
+        run: echo "version=$(sed -n 's/^FFMPEG_VERSION=//p' packaging/ffmpeg/build.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Pack the sources
+        run: sh packaging/ffmpeg/build.sh sources dist
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-${{ steps.version.outputs.version }}-sources
+          path: dist/ffmpeg-${{ steps.version.outputs.version }}-sources.tar.gz
+          if-no-files-found: error
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: sources
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-15
+            macos-deployment-target: "11.0"
+          - target: macos-x86_64
+            runner: macos-15-intel
+            macos-deployment-target: "10.15"
+          - target: windows-x86_64
+            runner: windows-2025
+    env:
+      # The pull request's own head rather than the merge commit GitHub tests,
+      # which exists nowhere once the run is over: SOURCE.txt links the script
+      # at this commit.
+      BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build (Alpine)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            --volume "$PWD:/src" --workdir /src \
+            --env WORK_DIR=/work --env BUILD_COMMIT --env GITHUB_REPOSITORY \
+            alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
+            sh -c '
+              set -eu
+              packages="build-base pkgconf curl xz linux-headers"
+              [ "$(uname -m)" = x86_64 ] && packages="$packages nasm"
+              apk add --no-cache $packages
+              sh packaging/ffmpeg/build.sh build /src/out
+            '
+
+      - name: Install the build tools (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: brew install nasm pkgconf
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
+        run: sh packaging/ffmpeg/build.sh build out
+
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            make diffutils curl tar xz
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: sh packaging/ffmpeg/build.sh build out
+
+      # The suite runs `ffmpeg` and `ffprobe` by their bare names, for the
+      # server and for its fixtures alike, so the build has to be what PATH
+      # finds first. This proves it does, by asking the shell rather than
+      # assuming the runner has no FFmpeg of its own.
+      - name: Put the build first on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $env:GITHUB_WORKSPACE 'out')
+
+      - name: Check the build
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:GITHUB_WORKSPACE 'out'
+          foreach ($tool in 'ffmpeg', 'ffprobe') {
+            $found = (Get-Command $tool -CommandType Application | Select-Object -First 1).Source
+            if ((Split-Path -Parent $found) -ne $out) {
+              throw "$tool resolves to $found, not to the build in $out"
+            }
+          }
+          ffmpeg -hide_banner -version
+          ffmpeg -hide_banner -protocols
+          Get-ChildItem $out | Format-Table Name, Length
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ffmpeg-${{ matrix.target }}
+
+      # The three targets that exercise what the build was configured for:
+      # transcoding and its formats, the quality analysis and its spectrogram,
+      # canvases. A component the configure line forgot fails here, before
+      # anything is uploaded.
+      - name: cargo test
+        run: cargo test --all-features --test media --test quality --test canvas
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-${{ needs.sources.outputs.version }}-${{ matrix.target }}
+          path: out/
+          if-no-files-found: error
