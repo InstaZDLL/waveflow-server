@@ -3,7 +3,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import { resetAndMockApi } from "./fixtures/api";
-import { albums, library } from "./fixtures/catalogue";
+import { albums, library, song } from "./fixtures/catalogue";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -27,6 +27,17 @@ const upsert = (cursor: number) => ({
   changed_at: 1_700_000_000_000,
   origin_device_id: null,
 });
+
+/** What the feed answers past `after`, over the events written so far. */
+const pageAfter = (written: ReturnType<typeof upsert>[], after: number) => {
+  const events = written.filter((event) => event.cursor > after);
+  return {
+    events,
+    next_cursor: events.at(-1)?.cursor ?? after,
+    has_more: false,
+    purged_through: 0,
+  };
+};
 
 /**
  * A feed the test writes to, and an album list it changes: what a scan does
@@ -69,15 +80,7 @@ test("an album a scan adds appears in an open tab without a reload", async ({
     { ...library("library-1", "Ma musique"), events_cursor: 7 },
   ];
   let written: ReturnType<typeof upsert>[] = [];
-  const feed = await serveFeed(page, (after) => {
-    const events = written.filter((event) => event.cursor > after);
-    return {
-      events,
-      next_cursor: events.at(-1)?.cursor ?? after,
-      has_more: false,
-      purged_through: 0,
-    };
-  });
+  const feed = await serveFeed(page, (after) => pageAfter(written, after));
   await page.clock.install();
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Albums" })).toBeVisible();
@@ -99,6 +102,42 @@ test("an album a scan adds appears in an open tab without a reload", async ({
   // And the next ask starts where that answer ended.
   await page.clock.fastForward(ONE_POLL_MS);
   await expect.poll(() => feed.asks.at(-1)).toBe(8);
+});
+
+test("a track a scan adds appears in an open song list without a reload", async ({
+  page,
+}) => {
+  mock.libraries = [
+    { ...library("library-1", "Ma musique"), events_cursor: 7 },
+  ];
+  let written: ReturnType<typeof upsert>[] = [];
+  const feed = await serveFeed(page, (after) => pageAfter(written, after));
+  let listed = [song(1, "Hidden Place", 0, false)];
+  let songAsks = 0;
+  await page.route("**/api/v2/songs?*", async (route) => {
+    songAsks += 1;
+    await route.fulfill({ json: listed });
+  });
+  await page.clock.install();
+  await page.goto("/songs");
+  await expect(page.getByText("Hidden Place")).toBeVisible();
+  let loads = 0;
+  page.on("load", () => {
+    loads += 1;
+  });
+
+  // The list changes on the server, and the tab has no reason to ask yet.
+  listed = [...listed, song(8, "Pagan Poetry", 0, false)];
+  await page.clock.fastForward(ONE_POLL_MS);
+  await expect.poll(() => feed.asks).toEqual([7]);
+  await expect(page.getByText("Pagan Poetry")).toHaveCount(0);
+  const before = songAsks;
+
+  written = [upsert(8)];
+  await page.clock.fastForward(ONE_POLL_MS);
+  await expect(page.getByText("Pagan Poetry")).toBeVisible();
+  expect(songAsks).toBeGreaterThan(before);
+  expect(loads).toBe(0);
 });
 
 test("a cursor older than retention re-reads the screen and resumes from the head", async ({
