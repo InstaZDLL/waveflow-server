@@ -223,9 +223,9 @@ format=$("$ffprobe" -hide_banner -loglevel error -show_entries format=format_nam
 
 # This script may run on a machine that goes on being used.
 stop_server
-server_pid=
 if curl --silent --output /dev/null --max-time 5 "$base/ready"; then
     fail "the server still answers after being stopped"
 fi
+server_pid=
 
 echo "smoke: $name started in laptop mode and played a file"
