@@ -1,0 +1,201 @@
+name: CI (image)
+
+# Builds the container image and boots it, on both architectures, before a
+# change reaches a tag. Until this workflow, nothing on a pull request built
+# the `Dockerfile`: `ci-rust.yml` tests the crate on Ubuntu with Ubuntu's
+# FFmpeg, and the image was built for the first time by `release.yml`, on a
+# tag, where a broken build is a failed release rather than a red check.
+#
+# The paths are everything that goes into the image, not only the files that
+# shape it. `src/**` belongs: the image runs the binary as an unprivileged user
+# from `/`, on Debian's FFmpeg, with the settings its `ENV` gives it, and a
+# change to the code can break that alone — a file written relative to the
+# working directory, a default that needs configuration, a probe the
+# `HEALTHCHECK` calls. `tests/**` belongs because the FFmpeg-bound targets run
+# inside the image below. The cost is a build per architecture, side by side
+# and on free runners, in about the time `ci-rust.yml` takes beside it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "src/**"
+      - "migrations-v2/**"
+      - "tests/**"
+      - "webapp/**"
+      # The API reference page is compiled in with `include_bytes!`.
+      - "assets/scalar/**"
+      - ".github/workflows/ci-image.yml"
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "src/**"
+      - "migrations-v2/**"
+      - "tests/**"
+      - "webapp/**"
+      # The API reference page is compiled in with `include_bytes!`.
+      - "assets/scalar/**"
+      - ".github/workflows/ci-image.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Native runners, as in `release.yml`, never QEMU: a Rust release build
+  # emulated for arm64 takes hours.
+  #
+  # No build cache. `COPY . .` precedes `cargo build` in the `Dockerfile`, so
+  # any change to the context — a README included — rebuilds the binary, and
+  # what a cache could carry is the base images and the web stage, a minute or
+  # two. It would cost gigabytes in a repository cache already most of the way
+  # to its 10 GB cap, and could not reach the release anyway: a cache written
+  # by a pull request is readable by that pull request only, and the daily
+  # sweep in `cache-cleanup.yml` deletes what a tag writes.
+  image:
+    name: Image (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      IMAGE: waveflow-server:ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This workflow compiles code from the pull request, build scripts
+          # included. Leave no token behind in `.git/config` for one to read.
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Loaded into the runner's Docker rather than pushed: the image is only
+      # needed by the steps below.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+
+      # What the image is made of, for whoever reads a failure later. The
+      # FFmpeg is the one the server is told to use, wherever the image puts it.
+      - name: Show the base system
+        run: |
+          docker run --rm --entrypoint sh "$IMAGE" -c \
+            'cat /etc/debian_version; ldd --version | head -1; "$WAVEFLOW_FFMPEG_PATH" -version | head -1'
+
+      # Booted with no configuration at all, as a first `docker run` would be.
+      # The probes are reached from the runner, through the published port,
+      # so the check holds whether or not the image carries curl.
+      - name: Boot the image
+        run: |
+          docker run --detach --name waveflow --publish 127.0.0.1:4533:4533 "$IMAGE"
+
+          ready=""
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect --format '{{.State.Running}}' waveflow)" != "true" ]; then
+              echo "::error::the container exited before answering /ready"
+              exit 1
+            fi
+            code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 http://127.0.0.1:4533/ready || true)"
+            if [ "$code" = "200" ]; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::/ready did not answer 200 within 60 seconds (last answer: ${code:-none})"
+            exit 1
+          fi
+          echo "/ready answered 200"
+
+          # The first check runs one interval (30 s) after the start, so this
+          # waits past it and past a retry before calling the probe broken.
+          for _ in $(seq 1 120); do
+            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' waveflow)"
+            case "$status" in
+              healthy)
+                echo "the HEALTHCHECK reports healthy"
+                exit 0
+                ;;
+              "")
+                echo "::error::the image declares no HEALTHCHECK"
+                exit 1
+                ;;
+              unhealthy)
+                echo "::error::the HEALTHCHECK reports unhealthy"
+                exit 1
+                ;;
+            esac
+            sleep 1
+          done
+          echo "::error::the HEALTHCHECK still reports '$status' after 120 seconds"
+          exit 1
+
+      - name: Show the container on failure
+        if: failure()
+        run: |
+          # A build that failed left no container behind, and nothing to show.
+          if ! docker inspect waveflow > /dev/null 2>&1; then
+            exit 0
+          fi
+          docker inspect --format '{{json .State}}' waveflow
+          docker logs --tail 100 waveflow
+
+      # The targets bound to FFmpeg's behaviour, held to the FFmpeg the image
+      # ships rather than Ubuntu's. They are compiled on the image's own
+      # builder (the `rust:` line of the `Dockerfile`, so the same Debian and
+      # glibc as the runtime) and then run inside the image, as its user, with
+      # the image's FFmpeg first on `PATH`.
+      - name: Test against the image's FFmpeg
+        run: |
+          builder="$(sed -n 's/^FROM[[:space:]]\{1,\}\(rust:[^[:space:]]*\).*/\1/p' Dockerfile | head -1)"
+          if [ -z "$builder" ]; then
+            echo "::error::the Dockerfile names no rust: builder image"
+            exit 1
+          fi
+          echo "compiling on $builder"
+
+          docker run --rm \
+            --volume "$PWD:/work" --workdir /work \
+            --env CARGO_TARGET_DIR=/work/target-image \
+            "$builder" \
+            cargo test --locked --all-features --no-run --message-format=json \
+              --test media --test quality --test canvas > artifacts.json
+
+          executables="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' artifacts.json)"
+          if [ "$(printf '%s\n' "$executables" | grep -c .)" -ne 3 ]; then
+            echo "::error::expected three test executables, found: $executables"
+            exit 1
+          fi
+
+          for executable in $executables; do
+            echo "::group::$(basename "$executable")"
+            docker run --rm \
+              --volume "$PWD:/work" --workdir /work \
+              --env CARGO_MANIFEST_DIR=/work \
+              --entrypoint sh "$IMAGE" \
+              -c 'PATH="$(dirname "$WAVEFLOW_FFMPEG_PATH"):$PATH" exec "$0"' "$executable"
+            echo "::endgroup::"
+          done
