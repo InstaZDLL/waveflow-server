@@ -60,7 +60,10 @@ const OPENER_WAIT: Duration = Duration::from_secs(5);
 
 /// Whether another account of this machine is kept from reading the command
 /// line of this account's processes: on Windows it needs rights over the
-/// process, on macOS it needs root. Linux shows every command line in `/proc`
+/// process, on macOS it needs root (xnu's `sysctl_procargsx`, which `ps`
+/// reads, answers `EINVAL` to another uid that is not the superuser, and
+/// `open` hands the URL to the browser through Launch Services rather than on
+/// its command line). Linux shows every command line in `/proc`
 /// unless it is mounted with `hidepid`, and the BSDs show them through `ps`.
 pub const COMMAND_LINES_ARE_PRIVATE: bool = cfg!(any(windows, target_os = "macos"));
 
