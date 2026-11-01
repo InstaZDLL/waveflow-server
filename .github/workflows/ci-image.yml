@@ -28,6 +28,8 @@ on:
       - "migrations-v2/**"
       - "tests/**"
       - "webapp/**"
+      # The API reference page is compiled in with `include_bytes!`.
+      - "assets/scalar/**"
       - ".github/workflows/ci-image.yml"
   pull_request:
     paths:
@@ -40,6 +42,8 @@ on:
       - "migrations-v2/**"
       - "tests/**"
       - "webapp/**"
+      # The API reference page is compiled in with `include_bytes!`.
+      - "assets/scalar/**"
       - ".github/workflows/ci-image.yml"
 
 permissions:
