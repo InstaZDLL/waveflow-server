@@ -70,10 +70,11 @@ wrapped_avframe"
 # from PATH, so the release is tested with this one FFmpeg rather than two.
 ENCODERS="aac flac libmp3lame libopus libwebp mjpeg mpeg4 pcm_s16le pcm_s32le"
 DEMUXERS="aac aiff dsf flac iff matroska mov mp3 ogg wav"
-# The transcode writes `mp3`, `ogg` and `adts`; the analysis `s32le`,
-# `image2pipe` and `webp`; a canvas is remuxed into `mp4` or `webm`
-# (src/services/canvas/probe.rs). `flac`, `wav` and `mp4` again for fixtures.
-MUXERS="adts flac image2pipe matroska mov mp3 mp4 ogg s32le wav webm webp"
+# The transcode writes `mp3`, `ogg` and `adts`; the analysis `-f s32le`, whose
+# component is `pcm_s32le`, then `image2pipe` and `webp`; a canvas is remuxed
+# into `mp4` or `webm` (src/services/canvas/probe.rs). `flac`, `wav` and `mp4`
+# again for fixtures.
+MUXERS="adts flac image2pipe matroska mov mp3 mp4 ogg pcm_s32le wav webm webp"
 PARSERS="aac flac mpegaudio opus vorbis"
 # The ones the mp4 and Matroska muxers insert on their own.
 BSFS="aac_adtstoasc pgs_frame_merge vp9_superframe"
@@ -253,8 +254,30 @@ build_ffmpeg() {
     unpack "$FFMPEG_TARBALL" "ffmpeg-$FFMPEG_VERSION"
     cd "$SOURCES/ffmpeg-$FFMPEG_VERSION"
     configure_ffmpeg
+    check_enabled DECODER "$DECODERS"
+    check_enabled ENCODER "$ENCODERS"
+    check_enabled DEMUXER "$DEMUXERS"
+    check_enabled MUXER "$MUXERS"
+    check_enabled PARSER "$PARSERS"
+    check_enabled BSF "$BSFS"
+    check_enabled FILTER "$FILTERS"
+    check_enabled PROTOCOL "$PROTOCOLS"
+    check_enabled INDEV "$INDEVS"
     make -j "$JOBS"
     make install
+}
+
+# Configure takes a name it does not know with a warning lost in its output and
+# builds without it: `--enable-muxer=s32le` once left the analysis with no way
+# to write its samples. Every name listed above must come out enabled.
+check_enabled() {
+    for name in $2; do
+        variable=$(echo "CONFIG_${name}_$1" | tr 'abcdefghijklmnopqrstuvwxyz' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
+        if ! grep -q "^$variable=yes\$" ffbuild/config.mak; then
+            echo "configure did not enable the $name $(echo "$1" | tr 'A-Z' 'a-z')" >&2
+            exit 1
+        fi
+    done
 }
 
 # The protocols the build answers with must be exactly `file` and `pipe`, for
