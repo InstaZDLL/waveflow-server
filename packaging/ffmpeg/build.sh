@@ -138,7 +138,11 @@ fetch_one() {
     expected=$3
     if [ ! -f "$DOWNLOADS/$tarball" ]; then
         log "downloading $tarball"
-        curl --fail --silent --show-error --location --retry 3 \
+        # Every error is retried, a reset connection included, which plain
+        # `--retry` leaves alone: a mirror that hiccups is not a broken
+        # tarball, and the checksum below still catches one that is.
+        curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors --retry-delay 5 \
             --output "$DOWNLOADS/$tarball.part" "$url"
         mv "$DOWNLOADS/$tarball.part" "$DOWNLOADS/$tarball"
     fi
