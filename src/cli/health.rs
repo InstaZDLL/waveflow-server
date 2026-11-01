@@ -48,9 +48,10 @@ pub async fn health(config: &Config) -> anyhow::Result<()> {
     }
     // The body too, as the laptop probe checks `/health`'s: any path this
     // server does not route answers 200 with the web client's page, and
-    // another program on the port may answer 200 to anything.
+    // another program on the port may answer 200 to anything. Both fields
+    // `crate::api::probes::ready` writes, so a lookalike needs the whole shape.
     match response.json::<serde_json::Value>().await {
-        Ok(body) if body["status"] == "ready" => Ok(()),
+        Ok(body) if body["status"] == "ready" && body["database"] == "ok" => Ok(()),
         _ => anyhow::bail!("{url} answered 200, but not as WaveFlow's readiness probe"),
     }
 }

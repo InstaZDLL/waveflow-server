@@ -118,16 +118,27 @@ async fn a_server_that_is_not_ready_fails_with_its_status() {
 /// anything, JSON included. (WaveFlow's own web client answers 200 too, with
 /// its page, on any path it does not route — which a misspelt path in the
 /// command would reach, and `a_ready_server_passes_in_silence` catches.)
+///
+/// One body per field the probe writes, each with the other field right, so
+/// neither half of the check can go missing unnoticed.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_200_that_is_not_the_readiness_probe_fails() {
-    let address = serving(Router::new().route(
-        "/ready",
-        get(|| async { axum::Json(serde_json::json!({ "status": "ok" })) }),
-    ))
-    .await;
+    for body in [
+        serde_json::json!({ "status": "ok", "database": "ok" }),
+        serde_json::json!({ "status": "ready" }),
+    ] {
+        let address = serving(Router::new().route(
+            "/ready",
+            get(move || {
+                let body = body.clone();
+                async move { axum::Json(body) }
+            }),
+        ))
+        .await;
 
-    let outcome = health_against(address).await;
-    assert_one_line(&outcome, "not as WaveFlow's readiness probe");
+        let outcome = health_against(address).await;
+        assert_one_line(&outcome, "not as WaveFlow's readiness probe");
+    }
 }
 
 /// A port that takes the connection and never answers: the check gives up on
