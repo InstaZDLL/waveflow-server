@@ -3,17 +3,20 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-11-01:** steps 1 to 3 of §8 are built. FFmpeg is
+> **Status as of 2026-11-01:** steps 1 to 4 of §8 are built. FFmpeg is
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
 > the data folder and the cache size, checks the port before the boot,
 > prints the banner, and opens the browser — on a first start on the sign-in
 > screen with the setup token in the URL fragment (§5, #397); the file the
 > archives will carry is `packaging/standalone/laptop.env`. The source link
-> §13 asks for is built too (#384, §3). Not built yet, each its own pull
-> request in the order of §8 and each an issue: the FFmpeg build (step 4,
-> #398) and the release jobs (step 5, #399), both in the v2.1.0 milestone;
-> signing (step 6, #401) after it.
+> §13 asks for is built too (#384, §3). The minimal FFmpeg of §3 is built by
+> `packaging/ffmpeg/build.sh` and `.github/workflows/ffmpeg.yml` for the five
+> targets, each tested against the server (#398); nothing ships it yet, and
+> the image keeps Debian's FFmpeg, now trixie's 7.1 (#395). Not built yet,
+> each its own pull request in the order of §8 and each an issue: the release
+> jobs (step 5, #399), in the v2.1.0 milestone; signing (step 6, #401) after
+> it.
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web
@@ -97,9 +100,13 @@ FFmpeg's binaries:
 WaveFlow needs no GPL code from FFmpeg. What it actually asks of FFmpeg, read
 from the code:
 
-- **decode** every format the scanner indexes — MP3, FLAC, ALAC and AAC in MP4,
-  Vorbis and Opus in Ogg, WAV, AIFF, WavPack, APE, DSD (`dsf`, `dff`) — for
-  transcoding and for the quality analysis (`src/quality/`);
+- **decode** every format the scanner indexes — MP3, FLAC, ALAC and AAC in MP4
+  and raw AAC, Vorbis, Opus and FLAC in Ogg, PCM in WAV and AIFF, DSD (`dsf`,
+  `dff`) — for transcoding and for the quality analysis (`src/quality/`). The
+  list is `waveflow-core`'s `AUDIO_EXTENSIONS`; WavPack and APE, which an
+  earlier draft of this page named, are not in it. Speex in Ogg is the one
+  stream an indexed extension can carry that this build does not decode; the
+  desktop's engine refuses it as well;
 - **encode** MP3 through `libmp3lame` (LGPL), Opus through `libopus` (BSD), AAC
   through FFmpeg's own encoder (`src/media/transcode.rs`), the analysis's raw
   `pcm_s32le` and its spectrum image through `mjpeg`, or through `libwebp`
@@ -108,8 +115,10 @@ from the code:
   muxers of the transcode, `s32le`, `image2pipe` and `webp` of the analysis,
   and `mp4` and `webm`, into which `strip_canvas_audio` copies a canvas's video
   stream without re-encoding it (`src/services/canvas/probe.rs`);
-- **probe** canvases, which are short H.264, HEVC or VP9 loops in MP4 or WebM,
-  and embedded cover images;
+- **probe** canvases, which are short H.264, HEVC or VP9 loops in MP4 or WebM:
+  the server reads only their container, their duration and which streams
+  they carry, then copies the video stream, so no video decoder is needed.
+  Embedded covers are read by the tag library, never by FFmpeg;
 - the filters the transcode and the analysis use (`-af` for ReplayGain,
   `-filter_complex` for the spectrum walk);
 - the `file` and `pipe` protocols, and **nothing else**: RFC-023 already
@@ -151,10 +160,12 @@ cover macOS, and it carries the size and source-offer cost above.
 - `LICENSES/FFmpeg.txt` — FFmpeg's LGPL text, and the GPL text the LGPLv3
   incorporates when the version-3 variant is used;
 - `LICENSES/LAME.txt`, `LICENSES/Opus.txt`, `LICENSES/libwebp.txt`;
+- `LICENSES/musl.txt` in the Linux archives, whose static binaries carry musl;
 - `LICENSES/SOURCE.txt` — the FFmpeg configure line, the version of each
   component, and the names of the source tarballs attached to the release;
 - on the release itself, `ffmpeg-<version>-sources.tar.gz`: the four upstream
-  tarballs exactly as downloaded (with their checksums) and the build script.
+  tarballs exactly as downloaded (with their checksums), the build script and
+  the musl notice it copies.
 
 ### The server's own source
 
@@ -371,10 +382,11 @@ parallel with the image:
    therefore makes the test configuration and the fixture generators read
    `WAVEFLOW_FFMPEG_PATH` and `WAVEFLOW_FFPROBE_PATH` when they are set, and
    the job sets them to job 1's two files. The fixtures then also need what
-   they generate from — the `lavfi` sources and the FLAC and PCM encoders — so
-   those are added to the build: a few components, against a release tested
-   with one FFmpeg rather than two. Linux builds target an old enough glibc — or
-   `musl` — that the binary runs on the distributions people actually have.
+   they generate from — the `lavfi` sources and the FLAC and PCM encoders — and
+   the build of step 4 already carries them: a few components, against a
+   release tested with one FFmpeg rather than two. Its Linux builds are static
+   against musl, so they run on the distributions people actually have
+   whatever their glibc.
 3. **`checksums`** — one `SHA256SUMS` over every archive and the source
    bundle, signed keylessly with Sigstore (`cosign sign-blob`), the bundle
    attached beside it. The image already carries provenance; this gives the
@@ -399,7 +411,17 @@ Each line is one pull request.
    browser on start. *Done (#397).* A second copy opens the browser on the
    first, without the token.
 4. **The minimal FFmpeg build** script and its CI job, tested against the
-   three integration targets on all five platforms.
+   three integration targets on all five platforms. *Done* (#398):
+   `packaging/ffmpeg/build.sh` pins FFmpeg 8.1.3, LAME 3.100, Opus 1.6.1 and
+   libwebp 1.6.0 by SHA-256, fails if configure leaves out any component it
+   lists or enables one it does not (those a listed component or the `ffmpeg`
+   tool selects are named), or lets in any protocol but `file` and `pipe`, and
+   writes `LICENSES/`, `SOURCE.txt` included, beside the two tools; `sources`
+   packs the four tarballs and the script. `.github/workflows/ffmpeg.yml`
+   builds on a native runner per target — Linux inside Alpine, so the binaries
+   are static against musl — and runs the `media`, `quality` and `canvas`
+   targets with the build first on `PATH`. Each tool weighs 5.5 to 8 MB. The release job of §7 reuses the
+   script; the workflow stays as the check of a change to it.
 5. **The standalone archives and `SHA256SUMS`** in `release.yml`, unsigned,
    with `README.txt` saying what to click past; the header rewritten.
 6. **Signing**: SignPath for Windows once accepted, Developer ID and

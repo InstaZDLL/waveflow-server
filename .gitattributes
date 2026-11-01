@@ -16,6 +16,9 @@
 *.md        text eol=lf
 *.html      text eol=lf
 *.css       text eol=lf
+# Run by sh on every platform, MSYS2 on Windows included, where a carriage
+# return at the end of each line breaks the script.
+*.sh        text eol=lf
 
 # Lockfiles benefit from native diff/merge but stay LF so CI on Linux runners
 # doesn't see noisy diffs against Windows contributors.
