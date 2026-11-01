@@ -253,3 +253,85 @@ fn the_network_hint_opens_the_bind_or_names_the_lan_address() {
         "{one_interface}"
     );
 }
+
+/// No token, no fragment: the address as the banner prints it.
+#[test]
+fn the_browser_opens_on_the_bare_address_without_a_token() {
+    let base = "http://127.0.0.1:4533/";
+    assert_eq!(browser::handover_url(base, None), base);
+    assert_eq!(browser::handover_url(base, Some("  ")), base);
+}
+
+/// A token travels in the fragment and only there, on the sign-in screen: the
+/// path and the query, which a browser sends, carry nothing of it.
+#[test]
+fn a_setup_token_travels_in_the_fragment_only() {
+    let base = "http://127.0.0.1:4533/";
+    let drawn = crate::auth::security::generate_token("wfsetup_");
+    let url = browser::handover_url(base, Some(&drawn));
+    assert_eq!(url, format!("{base}login#setup-token={drawn}"));
+    let parsed = url::Url::parse(&url).unwrap();
+    assert_eq!(parsed.path(), "/login");
+    assert_eq!(parsed.query(), None);
+    assert_eq!(
+        parsed.fragment(),
+        Some(format!("setup-token={drawn}").as_str())
+    );
+}
+
+/// A token an operator chose may hold anything; escaped, it reads back as it
+/// was, and leaves nothing in the URL a command line could split on.
+#[test]
+fn an_operator_token_is_escaped_and_reads_back_unchanged() {
+    let token = "my token & 100% sure #1+2=3 é";
+    let url = browser::handover_url("http://127.0.0.1:4533/", Some(token));
+    let fragment = url.split_once('#').unwrap().1;
+    assert!(
+        fragment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-._~%=".contains(c)),
+        "{fragment}"
+    );
+    let value = fragment.strip_prefix("setup-token=").unwrap();
+    assert_eq!(
+        percent_encoding::percent_decode_str(value)
+            .decode_utf8()
+            .unwrap(),
+        token
+    );
+}
+
+/// What is handed over is the token the gate accepts: the file's content
+/// without its newline, or the operator's value. Nothing once setup is
+/// closed, and nothing — rather than a failure — when the file is gone.
+#[test]
+fn the_token_handed_over_is_the_one_setup_accepts() {
+    use crate::auth::setup_token::TokenSource;
+
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("setup-token");
+    std::fs::write(&file, "wfsetup_drawn\n").unwrap();
+    assert_eq!(
+        browser::handover_token(Some(&TokenSource::File(file.clone())), None).as_deref(),
+        Some("wfsetup_drawn")
+    );
+    assert_eq!(
+        browser::token_left_in(temp.path()).as_deref(),
+        Some("wfsetup_drawn")
+    );
+    assert_eq!(
+        browser::handover_token(
+            Some(&TokenSource::Operator),
+            Some(" chosen by the operator ")
+        ),
+        Some("chosen by the operator".to_owned())
+    );
+    assert_eq!(browser::handover_token(None, Some("ignored")), None);
+
+    std::fs::remove_file(&file).unwrap();
+    assert_eq!(
+        browser::handover_token(Some(&TokenSource::File(file)), None),
+        None
+    );
+    assert_eq!(browser::token_left_in(temp.path()), None);
+}

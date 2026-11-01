@@ -41,6 +41,12 @@ pub struct Config {
     /// banner for the person reading the console window
     /// (`docs/plans/standalone-download-plan.md`, §5).
     pub laptop: bool,
+    /// Whether a server in laptop mode opens the default browser on its own
+    /// address when it starts, and a second copy on the one it found
+    /// (`src/app/laptop/browser.rs`). `WAVEFLOW_LAPTOP_OPEN_BROWSER`, on by
+    /// default in laptop mode, and off outside it whatever the variable says:
+    /// an installed server, in a container or under systemd, never opens one.
+    pub laptop_open_browser: bool,
     pub bind_addr: SocketAddr,
     pub public_url: Option<String>,
     pub request_timeout: Duration,
@@ -310,6 +316,7 @@ impl std::fmt::Debug for Config {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Config")
             .field("laptop", &self.laptop)
+            .field("laptop_open_browser", &self.laptop_open_browser)
             .field("bind_addr", &self.bind_addr)
             .field("public_url", &self.public_url)
             .field("request_timeout", &self.request_timeout)

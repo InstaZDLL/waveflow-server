@@ -39,6 +39,13 @@ async fn main() -> anyhow::Result<()> {
                     laptop::Startup::Listening(listener) => Some(listener),
                     laptop::Startup::AlreadyRunning(url) => {
                         println!("WaveFlow Server is already running at {url}");
+                        // Bring it forward: a second double-click is someone
+                        // who closed the tab, or never saw it open.
+                        if config.laptop_open_browser {
+                            let token = laptop::browser::token_left_in(&config.data_dir);
+                            let target = laptop::browser::handover_url(&url, token.as_deref());
+                            laptop::browser::open(target, &url).await;
+                        }
                         return Ok(());
                     }
                 }
@@ -84,7 +91,8 @@ async fn serve(
     // Here for the same reason as the warning above: a CLI command's standard
     // output is not the place for it. Where to find the token, never the token
     // (RFC-019 decision 1).
-    match state.setup.source() {
+    let setup_source = state.setup.source();
+    match &setup_source {
         Some(waveflow_server::auth::setup_token::TokenSource::File(path)) => tracing::warn!(
             path = %path.display(),
             "no account exists yet: the first administrator is created with the setup token stored in this file"
@@ -141,6 +149,17 @@ async fn serve(
             tracing::info!("{}", laptop::network_hint(local_addr));
         }
         println!("{}", laptop::banner(local_addr, &config.data_dir));
+    }
+    // Off outside laptop mode whatever the environment says
+    // (`Config::laptop_open_browser`). Spawned, so a slow opener never holds
+    // up serving: the listener is bound, and the browser's first request
+    // waits in its queue until `axum::serve` reads it.
+    if config.laptop_open_browser {
+        let address = laptop::browser_url(local_addr);
+        let token =
+            laptop::browser::handover_token(setup_source.as_ref(), config.setup_token.as_deref());
+        let target = laptop::browser::handover_url(&address, token.as_deref());
+        tokio::spawn(async move { laptop::browser::open(target, &address).await });
     }
     // With the peer's address on every request: the sign-in limiter counts
     // failures per client (RFC-017 decision 2).

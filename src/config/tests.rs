@@ -653,6 +653,7 @@ fn the_shipped_laptop_env_switches_laptop_mode_on_and_nothing_else() {
         "# WAVEFLOW_BIND=127.0.0.1:4534",
         "# WAVEFLOW_DATA_DIR=",
         "# WAVEFLOW_TRANSCODE_CACHE_MAX_BYTES=",
+        "# WAVEFLOW_LAPTOP_OPEN_BROWSER=false",
     ] {
         assert!(text.contains(suggestion), "{suggestion} is missing");
     }
@@ -737,4 +738,38 @@ fn only_a_last_fm_destination_the_operator_named_is_reported_without_an_applicat
         secret: "secret".to_owned(),
     });
     assert_eq!(config.lastfm_destinations_without_application().count(), 0);
+}
+
+/// Laptop mode opens a browser unless told not to; nothing else ever does.
+/// A container that inherits `WAVEFLOW_LAPTOP_OPEN_BROWSER=true` from a copied
+/// file still has no desktop, and opens nothing.
+#[test]
+fn only_laptop_mode_opens_a_browser() {
+    use super::laptop::{resolve, Platform};
+
+    let home = ("HOME", "/home/ada");
+    let opens = |vars: &[(&str, &str)]| resolve(lookup(vars), Platform::Unix).unwrap().open_browser;
+    assert!(opens(&[home, ("WAVEFLOW_LAPTOP", "true")]));
+    assert!(!opens(&[
+        home,
+        ("WAVEFLOW_LAPTOP", "true"),
+        ("WAVEFLOW_LAPTOP_OPEN_BROWSER", "false"),
+    ]));
+    assert!(!opens(&[home]));
+    assert!(!opens(&[home, ("WAVEFLOW_LAPTOP_OPEN_BROWSER", "true")]));
+    assert!(!opens(&[
+        home,
+        ("WAVEFLOW_LAPTOP", "false"),
+        ("WAVEFLOW_LAPTOP_OPEN_BROWSER", "true"),
+    ]));
+    assert!(resolve(
+        lookup(&[
+            home,
+            ("WAVEFLOW_LAPTOP", "true"),
+            ("WAVEFLOW_LAPTOP_OPEN_BROWSER", "never")
+        ]),
+        Platform::Unix
+    )
+    .is_err());
+    assert!(!crate::Config::for_data_dir("data".into()).laptop_open_browser);
 }

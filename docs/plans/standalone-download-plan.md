@@ -3,16 +3,17 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-10-31:** steps 1 and 2 of §8 are built. FFmpeg is
+> **Status as of 2026-11-01:** steps 1 to 3 of §8 are built. FFmpeg is
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
-> the data folder and the cache size, checks the port before the boot, and
-> prints the banner (§5); the file the archives will carry is
-> `packaging/standalone/laptop.env`. The source link §13 asks for is built too
-> (#384, §3). Not built yet, each its own pull request in the order of §8 and
-> each an issue: opening the browser and the setup-token fragment (step 3,
-> #397), the FFmpeg build (step 4, #398) and the release jobs (step 5, #399),
-> all three in the v2.1.0 milestone; signing (step 6, #401) after it.
+> the data folder and the cache size, checks the port before the boot,
+> prints the banner, and opens the browser — on a first start on the sign-in
+> screen with the setup token in the URL fragment (§5, #397); the file the
+> archives will carry is `packaging/standalone/laptop.env`. The source link
+> §13 asks for is built too (#384, §3). Not built yet, each its own pull
+> request in the order of §8 and each an issue: the FFmpeg build (step 4,
+> #398) and the release jobs (step 5, #399), both in the v2.1.0 milestone;
+> signing (step 6, #401) after it.
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web
@@ -266,12 +267,17 @@ other. It changes **defaults** only; any variable set explicitly still wins.
   change. Navidrome also defaults to 4533, so this will happen.
 - **The browser opens on every start**, at `http://127.0.0.1:4533/`. On the
   first start, while setup is open, at
-  `http://127.0.0.1:4533/#setup-token=<token>`: a fragment is never sent to the
-  server, so it is in no request line and no trace. The sign-in screen moves it
-  into the token field and removes it from the address bar with
-  `history.replaceState`. The token is still drawn and written to
-  `<data>/setup-token` exactly as today; the fragment is a hand-over, the file
-  stays the source. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off.
+  `http://127.0.0.1:4533/login#setup-token=<token>`: a fragment is never sent
+  to the server, so it is in no request line and no trace. The sign-in screen
+  itself rather than the root, because the root's client-side redirect to
+  `/login` drops the fragment. The sign-in screen moves it into the token
+  field and removes it from the address bar with `history.replaceState`. The
+  token is still drawn and written to `<data>/setup-token` exactly as today;
+  the fragment is a hand-over, the file stays the source, and a second copy
+  hands over what it reads there. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns
+  the opening off. *Built (#397)*, through each platform's own opener —
+  `rundll32`'s URL handler on Windows rather than `cmd /c start`, whose
+  command line would split on `&` and expand `%` — so no crate was added.
 - **The console window is the server.** On Windows and macOS (where a
   double-clicked executable opens in Terminal) the window prints one banner —
   the address, the data folder, "close this window to stop the server" — and
@@ -388,7 +394,8 @@ Each line is one pull request.
    without packaging. *Done.* A second copy that finds WaveFlow on the port
    prints its address and exits; opening the browser on it is step 3.
 3. **The setup-token fragment** in the sign-in screen, and opening the
-   browser on start.
+   browser on start. *Done (#397).* A second copy opens the browser on the
+   first, with the token the first copy is still waiting for.
 4. **The minimal FFmpeg build** script and its CI job, tested against the
    three integration targets on all five platforms.
 5. **The standalone archives and `SHA256SUMS`** in `release.yml`, unsigned,

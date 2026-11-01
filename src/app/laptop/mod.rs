@@ -1,11 +1,13 @@
 //! What a server in laptop mode does at boot that an installed one does not
 //! (`docs/plans/standalone-download-plan.md`, §5): make sure the port is not
-//! already this server's, and tell the person reading the console window what
-//! they are looking at.
+//! already this server's, tell the person reading the console window what
+//! they are looking at, and open their browser on it ([`browser`]).
 //!
 //! None of it runs unless [`Config::laptop`] is on, so a server under systemd
 //! or Docker binds, warns and logs exactly as it did before laptop mode
 //! existed.
+
+pub mod browser;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
@@ -214,7 +216,7 @@ pub(crate) fn reachable(address: SocketAddr) -> SocketAddr {
 }
 
 /// The address a browser on this machine opens.
-fn browser_url(address: SocketAddr) -> String {
+pub fn browser_url(address: SocketAddr) -> String {
     format!("http://{}/", reachable(address))
 }
 

@@ -25,6 +25,7 @@ impl Config {
         // decides where nearly everything below lives.
         let super::laptop::Resolved {
             laptop,
+            open_browser: laptop_open_browser,
             data_dir,
             transcode_cache_max_bytes,
         } = super::laptop::resolve(|name| std::env::var_os(name), Platform::current())?;
@@ -312,6 +313,7 @@ impl Config {
 
         Ok(Self {
             laptop,
+            laptop_open_browser,
             bind_addr,
             public_url,
             request_timeout: Duration::from_secs(request_timeout_secs),
