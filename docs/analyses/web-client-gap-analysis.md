@@ -15,8 +15,9 @@
 > languages since #391 and #392, all but English fetched on demand (#393).
 > Every route of the "server knows, screen ignores" table is wired, the
 > transcoding state last (#404). Still open, each now an issue: jukebox
-> (#402), per-account transcoding profiles (#403), and any use of the library
-> event stream by the web client (#405).
+> (#402) and per-account transcoding profiles (#403). **Amended 2026-11-01:**
+> the web client follows the library event stream since #405; the user
+> journal (`/api/v2/sync/*`) is still unread by it.
 
 ## What was found
 
@@ -151,6 +152,15 @@ next.
 > (2026-09-11): tag correction, upload and canvas. **The library event stream
 > still has none**: no file under `webapp/src/` calls
 > `/libraries/{id}/events` or `/sync/*`.
+>
+> **State on 2026-11-01.** The stream has no screen and needs none: since
+> #405 an open tab reads `/libraries/{id}/events` for every library its account
+> can see, every fifteen seconds from the head `GET /libraries` names, and
+> refreshes the lists and pages an event concerns (`webapp/src/lib/library-feed.ts`).
+> It stops asking after a minute hidden, and a cursor past retention re-reads
+> the screens once. It acknowledges nothing: RFC-007's acknowledgement tells
+> the operator what a purge costs a device, and a tab that starts from the head
+> on every load loses nothing to one. `/sync/*` is still not called.
 
 ### What is not a goal
 

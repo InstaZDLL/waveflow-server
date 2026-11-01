@@ -23,9 +23,49 @@ export type Library = {
    * explains what the library holds.
    */
   follow_links: boolean;
+  /**
+   * The head of the library's change feed (RFC-007), read with the list: where
+   * a client that has just read the catalogue starts following it.
+   */
+  events_cursor: number;
 };
 
 export const listLibraries = () => call<Library[]>("/api/v2/libraries");
+
+/** One change to a library's catalogue, as its feed announces it (RFC-007). */
+export type LibraryEvent = {
+  cursor: number;
+  entity_type: "track" | "album" | "artist";
+  entity_id: string;
+  action: "upsert" | "delete";
+  changed_at: number;
+};
+
+export type LibraryEventPage = {
+  events: LibraryEvent[];
+  next_cursor: number;
+  has_more: boolean;
+  /** The highest cursor retention has cut; one below it answers 409. */
+  purged_through: number;
+};
+
+/** The most a page of the feed may hold, which is the server's `MAX_SYNC_LIMIT`. */
+export const LIBRARY_EVENT_PAGE = 500;
+
+/**
+ * What changed in a library after `after`. A JSON page and not a stream: the
+ * client asks again to learn more, which is why a 409 — `after` is older than
+ * what retention kept — is an answer and not a failure.
+ */
+export const listLibraryEvents = (
+  libraryId: string,
+  after: number,
+  signal?: AbortSignal,
+) =>
+  call<LibraryEventPage>(
+    `/api/v2/libraries/${libraryId}/events?after=${after}&limit=${LIBRARY_EVENT_PAGE}`,
+    { signal },
+  );
 
 /** A library as an administrator manages it, its root on the server included. */
 export type LibrarySettings = {

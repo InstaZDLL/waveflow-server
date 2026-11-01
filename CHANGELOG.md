@@ -38,6 +38,12 @@ out first, whether or not it breaks a compile.
   the transcodes running against the global limit, the per-account limit and
   the output formats, read from `GET /api/v2/transcode/status` and asked again
   every ten seconds while the screen is open.
+- **The web client follows the library event stream** (#405): an open tab
+  shows what a scan, an upload from another device or a tag correction changed
+  without a reload. `GET /api/v2/libraries` answers a new field for it,
+  `events_cursor`, the head of each library's change feed — where a client that
+  has just read the catalogue starts following, which the feed alone cannot
+  say once retention has trimmed it.
 
 ### Changed
 

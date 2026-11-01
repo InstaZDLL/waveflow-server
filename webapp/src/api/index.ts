@@ -126,6 +126,8 @@ export {
 } from "./folders";
 export type {
   Library,
+  LibraryEvent,
+  LibraryEventPage,
   LibraryMember,
   LibrarySettings,
   ScanJob,
@@ -137,7 +139,9 @@ export {
   drainEventStream,
   getLibrarySettings,
   getScan,
+  LIBRARY_EVENT_PAGE,
   listLibraries,
+  listLibraryEvents,
   listLibraryMembers,
   listPurgedTracks,
   listUnavailableTracks,

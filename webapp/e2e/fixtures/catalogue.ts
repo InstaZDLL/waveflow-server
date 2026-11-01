@@ -81,6 +81,8 @@ export const library = (id: string, name: string) => ({
   accepts_uploads: false as boolean,
   accepts_canvas: false as boolean,
   follow_links: false as boolean,
+  /** The head of its change feed; the feed's own tests move it. */
+  events_cursor: 0,
 });
 
 /**

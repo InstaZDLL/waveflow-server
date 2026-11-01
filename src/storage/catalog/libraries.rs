@@ -54,6 +54,15 @@ pub struct LibraryAccess {
     /// (RFC-021 decision 3). An administrator's setting, shown to every
     /// member because it explains what the library holds.
     pub follow_links: bool,
+    /// The head of the library's change feed (RFC-007): the furthest cursor a
+    /// client can stand at — the newest event, or for a feed trimmed to
+    /// nothing, the watermark of what was cut.
+    ///
+    /// Where a client that has just read the catalogue starts following it.
+    /// The feed cannot say so itself: `after=0` on a trimmed feed is refused
+    /// with 409, and the refusal does not name the cut, so a client that has
+    /// never read the feed would have nowhere to begin.
+    pub events_cursor: i64,
 }
 
 impl Database {
@@ -64,7 +73,10 @@ impl Database {
         let rows = sqlx::query(
             "SELECT l.id, l.name, l.visibility, m.role, l.last_scan_started_at, \
                     l.last_scan_completed_at, l.accepts_uploads, l.accepts_canvas, \
-                    l.follow_links \
+                    l.follow_links, \
+                    MAX(l.events_purged_through, \
+                        COALESCE((SELECT MAX(e.cursor) FROM library_event e \
+                                   WHERE e.library_id=l.id), 0)) AS events_cursor \
              FROM library l JOIN library_member m ON m.library_id=l.id \
              WHERE m.user_id=? ORDER BY l.name COLLATE NOCASE, l.id",
         )
@@ -89,6 +101,7 @@ impl Database {
                     accepts_uploads: row.try_get::<i64, _>("accepts_uploads")? != 0,
                     accepts_canvas: row.try_get::<i64, _>("accepts_canvas")? != 0,
                     follow_links: row.try_get::<i64, _>("follow_links")? != 0,
+                    events_cursor: row.try_get("events_cursor")?,
                 })
             })
             .collect()

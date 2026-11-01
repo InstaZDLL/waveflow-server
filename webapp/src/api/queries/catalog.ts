@@ -67,8 +67,10 @@ export const ENRICHMENT_RETRY_MS = 3_000;
 /**
  * When to ask for an artist again, or `false` for never.
  *
- * The web client does not read the library event stream, so it learns that a
- * provider answered only by asking. It asks while the state is `pending`, up
+ * A portrait found is announced on the library feed, but the feed is read
+ * every fifteen seconds and an artist page opened on a pending enrichment
+ * wants the answer sooner — and a provider that found nothing announces
+ * nothing at all. So the page also asks while the state is `pending`, up
  * to {@link ENRICHMENT_ASKS} answers in all, and then stops: a provider that
  * is unreachable stays `pending` on the server, and a page left open must
  * not ask forever. The count is the query's, so a later visit refetches once
