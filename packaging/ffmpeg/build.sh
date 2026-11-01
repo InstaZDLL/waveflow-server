@@ -56,10 +56,13 @@ WEBP_URL=https://storage.googleapis.com/downloads.webmproject.org/releases/webp/
 # AIFF carry PCM in any of the listed layouts; `dst` is the compressed form of
 # DSDIFF. No video decoder: a canvas is only probed for its container and its
 # streams and then remuxed with `-c copy`, and covers are never decoded here.
+# `wrapped_avframe` is not a format but how the lavfi device hands a video
+# source's frames to the encoder, which the fixtures' canvases need.
 DECODERS="aac alac dsd_lsbf dsd_lsbf_planar dsd_msbf dsd_msbf_planar dst flac
 mp1 mp1float mp2 mp2float mp3 mp3float opus vorbis
 pcm_alaw pcm_f32be pcm_f32le pcm_f64be pcm_f64le pcm_mulaw pcm_s16be pcm_s16le
-pcm_s24be pcm_s24le pcm_s32be pcm_s32le pcm_s8 pcm_u8"
+pcm_s24be pcm_s24le pcm_s32be pcm_s32le pcm_s8 pcm_u8
+wrapped_avframe"
 # Encoders: the transcode's `libmp3lame`, `libopus` and `aac`
 # (src/media/transcode.rs); the analysis's `pcm_s32le`, and its spectrogram's
 # `libwebp` or `mjpeg` (src/quality/). `flac`, `pcm_s16le` and `mpeg4` are
@@ -339,6 +342,13 @@ build() {
     esac
     cp "$PREFIX/bin/ffmpeg$exe" "$PREFIX/bin/ffprobe$exe" "$OUT/"
     check_protocols "$OUT/ffmpeg$exe"
+    # What the binaries still load from the system, for the log: libSystem on
+    # macOS, Windows' own DLLs on Windows. The Linux ones are static.
+    case "$PLATFORM" in
+        macos) otool -L "$OUT/ffmpeg" ;;
+        windows) objdump -p "$OUT/ffmpeg.exe" | grep 'DLL Name' ;;
+        *) ;;
+    esac
     write_licences
     write_source
     log "built into $OUT"

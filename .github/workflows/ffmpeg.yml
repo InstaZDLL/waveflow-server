@@ -172,9 +172,9 @@ jobs:
       # The three targets that exercise what the build was configured for:
       # transcoding and its formats, the quality analysis and its spectrogram,
       # canvases. A component the configure line forgot fails here, before
-      # anything is uploaded.
+      # anything is uploaded. `--no-fail-fast` so one run reports all three.
       - name: cargo test
-        run: cargo test --all-features --test media --test quality --test canvas
+        run: cargo test --all-features --no-fail-fast --test media --test quality --test canvas
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
