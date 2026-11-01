@@ -289,9 +289,9 @@ other. It changes **defaults** only; any variable set explicitly still wins.
 - **The browser opens on every start**, at `http://127.0.0.1:4533/`. On the
   first start, while setup is open, at
   `http://127.0.0.1:4533/login#setup-token=<token>`: a fragment is never sent
-  to the server, so it is in no request line and no trace. The sign-in screen
-  itself rather than the root, because the root's client-side redirect to
-  `/login` drops the fragment. The sign-in screen moves it into the token
+  to the server, so it is in no request line and none of the server's traces.
+  The sign-in screen itself rather than the root, because the root's
+  client-side redirect to `/login` drops the fragment. The sign-in screen moves it into the token
   field and removes it from the address bar with `history.replaceState`. The
   token is still drawn and written to `<data>/setup-token` exactly as today;
   the fragment is a hand-over and the file stays the source. A second copy

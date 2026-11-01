@@ -5,9 +5,9 @@
 //!
 //! On a first start the setup token rides along in the URL **fragment**. A
 //! browser never sends the fragment to the server, so the token is in no
-//! request line, no trace and no proxy log; the sign-in screen moves it into
-//! its token field and removes it from the address bar. The token file stays
-//! the source: the fragment is a hand-over, and a user who closes the tab can
+//! request line, no server trace and no proxy log; the sign-in screen moves it
+//! into its token field and removes it from the address bar. The token file
+//! stays the source: the fragment is a hand-over, and a user who closes the tab can
 //! still read the file.
 //!
 //! Only the copy that drew the token hands it over. A second copy that finds

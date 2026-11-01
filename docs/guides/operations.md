@@ -929,9 +929,9 @@ a server listening on the address it opens:
 
 - Handed over: the sign-in screen with the setup token in the URL fragment,
   `/login#setup-token=…`. A browser never sends a fragment, so the token is in
-  no request line and no trace, and the sign-in screen moves it into its field
-  and out of the address bar. The token file stays where it was and still
-  works.
+  no request line and none of the server's traces, and the sign-in screen moves
+  it into its field and out of the address bar. A token the server drew stays
+  in its file, which still works.
 - Not handed over, on Linux or bound to `0.0.0.0` or `[::]`: the bare address.
   Type the token in yourself, the content of `<data>/setup-token`, or the value
   of `WAVEFLOW_SETUP_TOKEN` when it is set.
