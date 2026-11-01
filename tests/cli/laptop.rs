@@ -46,6 +46,12 @@ fn shipped_laptop_env() -> String {
 
 /// `program` with every place a system keeps application data pointed at
 /// `home`, started in `working`.
+///
+/// Laptop mode opens a browser, and a test must not. On Unix the opener is a
+/// script of `home`'s ahead of the real one on `PATH`, which writes down the
+/// address it was asked to open ([`opened`]); Windows reaches `rundll32` by
+/// the system's own path whatever `PATH` says, so there the opening is turned
+/// off.
 fn laptop_command(program: &Path, home: &Path, working: &Path) -> Command {
     let mut command = command_for(program);
     command
@@ -55,7 +61,59 @@ fn laptop_command(program: &Path, home: &Path, working: &Path) -> Command {
         .env("RUST_LOG", "info")
         .current_dir(working)
         .stdin(Stdio::null());
+    if cfg!(unix) {
+        let bin = fake_opener(home);
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        command.env("PATH", std::env::join_paths(paths).unwrap());
+    } else {
+        command.env("WAVEFLOW_LAPTOP_OPEN_BROWSER", "false");
+    }
     command
+}
+
+/// A directory holding `xdg-open` and `open`, each appending its argument to
+/// `home/opened` instead of starting a browser.
+#[cfg(unix)]
+fn fake_opener(home: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = home.join("fake-opener");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\n",
+        home.join("opened").display()
+    );
+    for name in ["xdg-open", "open"] {
+        let path = bin.join(name);
+        std::fs::write(&path, &script).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    bin
+}
+
+#[cfg(not(unix))]
+fn fake_opener(_home: &Path) -> PathBuf {
+    unreachable!("the opener is only replaced on Unix")
+}
+
+/// The addresses the fake opener was asked to open, once there are `count`
+/// of them: the first copy opens its browser in the background, so its line
+/// may come a moment after the banner.
+fn opened(home: &Path, count: usize) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let lines: Vec<String> = std::fs::read_to_string(home.join("opened"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        if lines.len() >= count || std::time::Instant::now() > deadline {
+            return lines;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// Where laptop mode keeps its data on this platform, under `home`.
@@ -176,6 +234,13 @@ fn a_double_clicked_server_keeps_its_data_in_the_os_folder_and_a_second_copy_sto
     assert!(!root.path().join("data").exists());
     assert!(!program.with_file_name("data").exists());
     let port = port_in(&banner);
+    let token = std::fs::read_to_string(data.join("setup-token")).unwrap();
+    let handover = format!("http://127.0.0.1:{port}/login#setup-token={}", token.trim());
+    if cfg!(unix) {
+        // The browser opens on the sign-in screen with the token in the
+        // fragment, which no request carries.
+        assert_eq!(opened(&home, 1), std::slice::from_ref(&handover));
+    }
 
     // An operator token makes the boot delete the drawn token file, so the
     // file still being there afterwards is the proof that the second copy
@@ -201,6 +266,15 @@ fn a_double_clicked_server_keeps_its_data_in_the_os_folder_and_a_second_copy_sto
         "{stdout}"
     );
     assert!(data.join("setup-token").is_file());
+    if cfg!(unix) {
+        // And brings the first copy forward on its bare address: neither
+        // the token in that copy's file nor this one's operator token goes
+        // to a server known only by its `/health` answer.
+        assert_eq!(
+            opened(&home, 2),
+            [handover, format!("http://127.0.0.1:{port}/")]
+        );
+    }
 }
 
 /// A port another program holds is a refusal that names the port and the line

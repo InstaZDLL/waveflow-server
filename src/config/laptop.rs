@@ -95,6 +95,7 @@ impl Platform {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Resolved {
     pub laptop: bool,
+    pub open_browser: bool,
     pub data_dir: PathBuf,
     pub transcode_cache_max_bytes: u64,
 }
@@ -103,13 +104,23 @@ pub(super) struct Resolved {
 /// `lookup` — `std::env::var_os` at boot, a table in the tests.
 ///
 /// Without laptop mode this is exactly what `from_env` read before it existed:
-/// `WAVEFLOW_DATA_DIR` as given, else `data`; the cache at 10 GiB.
+/// `WAVEFLOW_DATA_DIR` as given, else `data`; the cache at 10 GiB; and no
+/// browser, whatever `WAVEFLOW_LAPTOP_OPEN_BROWSER` says.
 pub(super) fn resolve(
     lookup: impl Fn(&str) -> Option<OsString>,
     platform: Platform,
 ) -> anyhow::Result<Resolved> {
     let text = |name: &str| lookup(name).and_then(|value| value.into_string().ok());
     let laptop = parse_bool_value("WAVEFLOW_LAPTOP", text("WAVEFLOW_LAPTOP").as_deref(), false)?;
+    // Read, and so refused when misspelt, even outside laptop mode; but only
+    // laptop mode ever acts on it. A server in a container has no desktop to
+    // open a window on, and a variable copied into its environment from a
+    // laptop's file must not make it try.
+    let open_browser = parse_bool_value(
+        "WAVEFLOW_LAPTOP_OPEN_BROWSER",
+        text("WAVEFLOW_LAPTOP_OPEN_BROWSER").as_deref(),
+        true,
+    )? && laptop;
     let explicit_data_dir = lookup("WAVEFLOW_DATA_DIR")
         // A key uncommented in `laptop.env` with nothing after it is the
         // template's own setting left alone, not a request for the working
@@ -140,6 +151,7 @@ pub(super) fn resolve(
     )?;
     Ok(Resolved {
         laptop,
+        open_browser,
         data_dir,
         transcode_cache_max_bytes,
     })

@@ -22,6 +22,11 @@ out first, whether or not it breaks a compile.
   exits 0 on its readiness answer, or prints one line and exits 1. The Docker
   image's `HEALTHCHECK` now runs it, and curl, installed for that check alone,
   has left the image.
+- **Laptop mode opens the browser** on start, and a second copy opens it on
+  the one already running (#397). On a first start it lands on the sign-in
+  screen with the setup token filled in, handed over in the URL fragment so it
+  reaches no request and no log. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns it
+  off; an installed server never opens one.
 
 ### Changed
 

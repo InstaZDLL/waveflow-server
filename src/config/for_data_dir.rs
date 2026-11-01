@@ -16,6 +16,7 @@ impl Config {
         let podcast_dir_for_tests = data_dir.join("podcasts");
         Self {
             laptop: false,
+            laptop_open_browser: false,
             bind_addr: "127.0.0.1:0".parse().expect("literal socket address"),
             public_url: Some("http://waveflow.test".to_owned()),
             request_timeout: Duration::from_secs(30),

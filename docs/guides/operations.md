@@ -915,9 +915,22 @@ becomes the system's application-data folder (`%LOCALAPPDATA%\WaveFlow Server`,
 `$XDG_DATA_HOME/waveflow-server`, falling back to `~/.local/share`), and the
 transcode cache is capped at 2 GiB. Before the boot touches the database it
 checks the port: a WaveFlow already answering `/health` there makes the new
-process print its address and exit, anything else refuses to start. It also
-prints a one-line banner and, without `WAVEFLOW_PUBLIC_URL`, says which address
-the network can use instead of warning about the setting.
+process print its address, open the browser on it and exit; anything else
+refuses to start. It also prints a one-line banner and, without
+`WAVEFLOW_PUBLIC_URL`, says which address the network can use instead of
+warning about the setting.
+
+Once listening, it opens the default browser on its address (through
+`rundll32`'s URL handler on Windows, `open` on macOS, `xdg-open` elsewhere; a
+failure is a warning in the log, never a reason to stop). While setup is open
+it opens the sign-in screen with the setup token in the URL fragment,
+`/login#setup-token=…`: a browser never sends a fragment, so the token is in
+no request line and no trace, and the sign-in screen moves it into its field
+and out of the address bar. The token file stays where it was and still
+works. A second copy opens the running one's bare address, without the token:
+what answers `/health` on the port is not proof enough to hand it over.
+`WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off; outside laptop mode
+the variable is read and refused when misspelt, but no browser is ever opened.
 
 An installed server never needs it, and no default changes without it. To move
 a laptop install onto a server, copy its data folder whole — the database and

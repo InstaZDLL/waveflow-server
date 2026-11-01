@@ -11,6 +11,7 @@ import {
 } from "../../api";
 import { SourceOffer } from "../../components/layout/source-offer";
 import { keptSongs, offlineSupported } from "../../lib/offline";
+import { takeSetupTokenFromFragment } from "../../lib/setup-token-fragment";
 import { useI18n } from "../../state/i18n";
 
 /**
@@ -39,6 +40,11 @@ function OfflineLink() {
   );
 }
 
+/**
+ * Sign-in, and first-run setup while the server has no account (RFC-019):
+ * the setup token, filled from the URL fragment when a laptop server handed
+ * it over, then the administrator's name and password.
+ */
 export function LoginPage() {
   const navigate = useNavigate();
   const { t } = useI18n();
@@ -51,6 +57,15 @@ export function LoginPage() {
 
   useEffect(() => {
     void setupRequired().then(setSetup, () => setSetup(false));
+  }, []);
+
+  // The token a laptop server hands over in the fragment on its first start.
+  // Taken once, whether or not setup turns out to be open, so it never stays
+  // in the address bar; a second run of the effect finds nothing and leaves
+  // the field as the first one filled it.
+  useEffect(() => {
+    const handed = takeSetupTokenFromFragment();
+    if (handed) setSetupToken(handed);
   }, []);
 
   async function submit(event: FormEvent) {
