@@ -927,7 +927,8 @@ it opens the sign-in screen with the setup token in the URL fragment,
 `/login#setup-token=…`: a browser never sends a fragment, so the token is in
 no request line and no trace, and the sign-in screen moves it into its field
 and out of the address bar. The token file stays where it was and still
-works. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off; outside
+works. A second copy opens the running one's bare address, without the token:
+what answers `/health` on the port is not proof enough to hand it over. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off; outside
 laptop mode the variable is read and refused when misspelt, but no browser is
 ever opened.
 

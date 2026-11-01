@@ -8,19 +8,25 @@
 //! request line, no trace and no proxy log; the sign-in screen moves it into
 //! its token field and removes it from the address bar. The token file stays
 //! the source: the fragment is a hand-over, and a user who closes the tab can
-//! still read the file, or double-click again.
+//! still read the file.
+//!
+//! Only the copy that drew the token hands it over. A second copy that finds
+//! WaveFlow on the port opens the bare address: all it knows of what answered
+//! is a `/health` body any local program can imitate, and the `setup-token`
+//! file outlives a first copy that stopped before setup, so a copy that read
+//! the file and passed it on could be handing it to a stranger holding the
+//! port.
 //!
 //! Through the opener each platform ships rather than a crate: `rundll32`'s
 //! URL handler on Windows, `open` on macOS, `xdg-open` elsewhere. A failure to
 //! open — a Linux machine with no desktop, no opener installed — is a log
 //! line, never a reason to stop serving: the banner still says where to go.
 
-use std::path::Path;
 use std::time::Duration;
 
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
-use crate::auth::setup_token::{TokenSource, FILE_NAME};
+use crate::auth::setup_token::TokenSource;
 
 /// The name of the fragment parameter the sign-in screen reads
 /// (`webapp/src/lib/setup-token-fragment.ts`).
@@ -70,19 +76,6 @@ pub fn handover_token(source: Option<&TokenSource>, configured: Option<&str>) ->
     };
     let token = token.trim();
     (!token.is_empty()).then(|| token.to_owned())
-}
-
-/// The token a first copy, still waiting for its administrator, wrote in
-/// `data_dir`: what a second double-click hands over.
-///
-/// Read without opening the database, which the second copy must not touch.
-/// The file exists only while setup is open — the boot deletes it once an
-/// account exists, and so does setup when it succeeds — so its presence is
-/// the answer to whether there is anything to hand over. An operator's own
-/// token is not handed over here: nothing short of asking the first copy
-/// says whether its setup is still open.
-pub fn token_left_in(data_dir: &Path) -> Option<String> {
-    handover_token(Some(&TokenSource::File(data_dir.join(FILE_NAME))), None)
 }
 
 /// The command that asks this platform to open `url` in the default browser.

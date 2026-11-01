@@ -273,8 +273,10 @@ other. It changes **defaults** only; any variable set explicitly still wins.
   `/login` drops the fragment. The sign-in screen moves it into the token
   field and removes it from the address bar with `history.replaceState`. The
   token is still drawn and written to `<data>/setup-token` exactly as today;
-  the fragment is a hand-over, the file stays the source, and a second copy
-  hands over what it reads there. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns
+  the fragment is a hand-over and the file stays the source. A second copy
+  opens the bare address, never the token: it knows what holds the port only
+  by a `/health` body any local program can imitate, and the file outlives a
+  first copy that stopped before setup. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns
   the opening off. *Built (#397)*, through each platform's own opener —
   `rundll32`'s URL handler on Windows rather than `cmd /c start`, whose
   command line would split on `&` and expand `%` — so no crate was added.
@@ -395,7 +397,7 @@ Each line is one pull request.
    prints its address and exits; opening the browser on it is step 3.
 3. **The setup-token fragment** in the sign-in screen, and opening the
    browser on start. *Done (#397).* A second copy opens the browser on the
-   first, with the token the first copy is still waiting for.
+   first, without the token.
 4. **The minimal FFmpeg build** script and its CI job, tested against the
    three integration targets on all five platforms.
 5. **The standalone archives and `SHA256SUMS`** in `release.yml`, unsigned,

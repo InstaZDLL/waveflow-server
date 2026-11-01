@@ -40,11 +40,12 @@ async fn main() -> anyhow::Result<()> {
                     laptop::Startup::AlreadyRunning(url) => {
                         println!("WaveFlow Server is already running at {url}");
                         // Bring it forward: a second double-click is someone
-                        // who closed the tab, or never saw it open.
+                        // who closed the tab, or never saw it open. Without
+                        // the setup token: what answered is known only by a
+                        // `/health` body anything can imitate
+                        // (`laptop::browser`).
                         if config.laptop_open_browser {
-                            let token = laptop::browser::token_left_in(&config.data_dir);
-                            let target = laptop::browser::handover_url(&url, token.as_deref());
-                            laptop::browser::open(target, &url).await;
+                            laptop::browser::open(url.clone(), &url).await;
                         }
                         return Ok(());
                     }

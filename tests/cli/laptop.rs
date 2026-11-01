@@ -267,9 +267,13 @@ fn a_double_clicked_server_keeps_its_data_in_the_os_folder_and_a_second_copy_sto
     );
     assert!(data.join("setup-token").is_file());
     if cfg!(unix) {
-        // And brings the first copy forward, with the token that copy is
-        // still waiting for — read from its file, not its own operator's.
-        assert_eq!(opened(&home, 2), [handover.clone(), handover]);
+        // And brings the first copy forward on its bare address: neither
+        // the token in that copy's file nor this one's operator token goes
+        // to a server known only by its `/health` answer.
+        assert_eq!(
+            opened(&home, 2),
+            [handover, format!("http://127.0.0.1:{port}/")]
+        );
     }
 }
 

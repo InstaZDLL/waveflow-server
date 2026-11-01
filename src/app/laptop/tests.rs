@@ -316,10 +316,6 @@ fn the_token_handed_over_is_the_one_setup_accepts() {
         Some("wfsetup_drawn")
     );
     assert_eq!(
-        browser::token_left_in(temp.path()).as_deref(),
-        Some("wfsetup_drawn")
-    );
-    assert_eq!(
         browser::handover_token(
             Some(&TokenSource::Operator),
             Some(" chosen by the operator ")
@@ -333,5 +329,4 @@ fn the_token_handed_over_is_the_one_setup_accepts() {
         browser::handover_token(Some(&TokenSource::File(file)), None),
         None
     );
-    assert_eq!(browser::token_left_in(temp.path()), None);
 }
