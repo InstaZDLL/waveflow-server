@@ -1,8 +1,12 @@
 name: Release
 
-# Publishes a tag: the container image, then the GitHub release that
-# announces it. No binary is attached — it would need FFmpeg on the host
-# anyway, so the image is the artifact a self-hosted server is installed from.
+# Publishes a tag: the container image, the standalone archives
+# (standalone.yml), then the GitHub release that announces both. Each archive
+# carries the server and its own FFmpeg, so it needs nothing from the host, and
+# the image stays what a server room installs from.
+#
+# The image's tags and the release page wait for the archives, so a tag whose
+# archives failed announces nothing, and a retry finds nothing half done.
 #
 # A version carrying a pre-release suffix is marked as one in both places: the
 # image floats as `beta` rather than `latest`, and the release wears the
@@ -112,6 +116,15 @@ jobs:
         run: |
           echo "image=${REGISTRY}/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
+  # After `verify`, like the image's build, and beside it. Unsigned for now:
+  # signing is #401, and the README in each archive says what to click past.
+  standalone:
+    name: Standalone
+    needs: verify
+    uses: ./.github/workflows/standalone.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+
   # Built on native runners rather than under QEMU. A Rust release build
   # emulated for arm64 takes hours; GitHub's arm64 runners are free for public
   # repositories and take the same time as the amd64 ones. Each runner pushes
@@ -186,7 +199,7 @@ jobs:
 
   publish:
     name: Publish the manifest
-    needs: [verify, build]
+    needs: [verify, build, standalone]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # The run's own group is per tag, but `beta` and `latest` are shared by
@@ -270,13 +283,13 @@ jobs:
             exit 1
           fi
 
-  # The GitHub release comes last, once the image it announces exists. A
-  # release page whose pull command 404s is worse than no page.
+  # The GitHub release comes last, once the image and the archives it announces
+  # exist. A release page whose pull command 404s is worse than no page.
   github-release:
     name: Publish the GitHub release
-    needs: [verify, publish]
+    needs: [verify, publish, standalone]
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -286,6 +299,11 @@ jobs:
         with:
           ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-release
+          path: release-assets
 
       # A pre-release suffix marks the release as one on GitHub, the same rule
       # the desktop repository uses. The badge is what keeps
@@ -313,9 +331,10 @@ jobs:
           # printf with a single-quoted format rather than a heredoc: the body
           # is mostly backticks, and every one of them would be a command
           # substitution in an unquoted here-document.
-          # Written notes come first, when the tag carries them; the pull
-          # commands follow, so a reader who scrolls past the prose still finds
-          # them. Without notes, the generated list is all the page has.
+          # Written notes come first, when the tag carries them; the downloads
+          # and the pull commands follow, so a reader who scrolls past the prose
+          # still finds them. Without notes, the generated list is all the page
+          # has.
           notes_file="docs/releases/$TAG.md"
           if [ -s "$notes_file" ]; then
             cat "$notes_file" > notes.md
@@ -324,17 +343,38 @@ jobs:
             : > notes.md
             generate="--generate-notes"
           fi
+          sources="$(basename release-assets/ffmpeg-*-sources.tar.gz)"
+          {
+            printf '## Download\n\nThe server for one computer, without Docker: extract the archive and start `waveflow-server` inside it. Each archive holds the server, its own FFmpeg and a `README.txt` to read first.\n\n'
+            printf '| System | Archive |\n| --- | --- |\n'
+            while IFS='|' read -r system suffix; do
+              file="waveflow-server-$VERSION-$suffix"
+              printf '| %s | [%s](https://github.com/%s/releases/download/%s/%s) |\n' "$system" "$file" "$GH_REPO" "$TAG" "$file"
+            done <<'ARCHIVES'
+          Windows (x86_64)|windows-x86_64.zip
+          macOS (Apple silicon)|macos-arm64.zip
+          macOS (Intel)|macos-x86_64.zip
+          Linux (x86_64)|linux-x86_64.tar.gz
+          Linux (arm64)|linux-arm64.tar.gz
+          ARCHIVES
+            printf '\nThey are not signed yet, so Windows and macOS warn on the first launch: `README.txt` says what to click past. `SHA256SUMS` holds the checksums of them all, and `%s` the source of the FFmpeg they carry.\n\n' "$sources"
+          } >> notes.md
           printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system).\n' \
             "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" >> notes.md
 
           # A release that already exists keeps its body. It was written once,
           # with the changelog appended for a beta, and re-applying our half
           # alone would replace the whole thing — a retry would silently delete
-          # what it is not meant to touch. Only the flag is re-asserted.
+          # what it is not meant to touch. Only the flag is re-asserted, and the
+          # assets replaced, since a retry rebuilt them and SHA256SUMS with them.
+          #
+          # Given assets, `gh release create` uploads them to a draft and only
+          # then publishes it, so nobody sees the page without its downloads.
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" $release_flag
+            gh release upload "$TAG" release-assets/* --clobber
           else
-            gh release create "$TAG" \
+            gh release create "$TAG" release-assets/* \
               --title "$TAG" \
               --notes-file notes.md \
               $generate \

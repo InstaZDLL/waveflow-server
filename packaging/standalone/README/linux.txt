@@ -1,0 +1,20 @@
+WaveFlow Server for Linux
+=========================
+
+Your own music server, on this computer. Nothing to install: the three programs
+in this folder are static, so they run on any distribution of this architecture.
+
+To start it
+-----------
+
+Run it from a terminal, in this folder:
+
+    ./waveflow-server
+
+Your web browser opens on the server's page. (Your file manager may also start
+it on a double-click, depending on its settings, but then there is no window to
+close it from.)
+
+To stop it, press Ctrl+C in that terminal, or close it. To start it again, run
+the same line: your music and your account are still there.
+

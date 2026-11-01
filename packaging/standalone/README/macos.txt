@@ -1,0 +1,31 @@
+WaveFlow Server for macOS
+=========================
+
+Your own music server, on this computer. Nothing to install.
+
+To start it
+-----------
+
+1. Double-click waveflow-server.
+
+   The first time, macOS refuses to open it, because this download is not
+   signed yet. It refuses each of the three programs in this folder in turn:
+   waveflow-server, ffmpeg and ffprobe. There are two ways past that.
+
+   The short way, once for the whole folder: open Terminal, type the line
+   below followed by a space, drag this folder onto the Terminal window, and
+   press Return.
+
+       xattr -dr com.apple.quarantine
+
+   The long way, without Terminal: after each refusal, click "Done", open
+   System Settings, go to Privacy & Security, scroll down to Security and click
+   "Open Anyway" beside the program's name, then confirm with your password.
+   Then double-click waveflow-server again. The server stops with an error
+   naming ffmpeg or ffprobe while one of them is still refused.
+
+2. A Terminal window opens, and your web browser opens on the server's page.
+
+To stop it, close that Terminal window. To start it again, double-click
+waveflow-server again: your music and your account are still there.
+

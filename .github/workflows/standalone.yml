@@ -1,0 +1,225 @@
+name: Standalone
+
+# Builds the standalone archives (docs/plans/standalone-download-plan.md §2 and
+# §7): the server and the FFmpeg of `ffmpeg.yml` for five targets, one archive
+# each, plus the FFmpeg sources and a `SHA256SUMS` over all of them. Each target
+# builds on a runner of its own OS and architecture, and each archive is started
+# and made to play a file there, by `packaging/standalone/smoke.sh`, before it is
+# uploaded.
+#
+# Nothing here publishes. `release.yml` calls this file and attaches the
+# `standalone-release` artifact; a pull request that touches the packaging, or a
+# manual dispatch, runs the same jobs and stops at the artifact, which is how the
+# archives are looked at without a tag.
+#
+# - The Linux server is static against musl, built inside Alpine (pinned by
+#   digest) as its FFmpeg is. A binary built on ubuntu-24.04 would refuse every
+#   distribution with an older glibc, Ubuntu 22.04 and Debian 12 among them.
+# - The Windows server links the C runtime statically: a laptop that has never
+#   installed the Visual C++ redistributable has no VCRUNTIME140.dll to load.
+# - macOS deploys to the same oldest versions as its FFmpeg.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag being released"
+        required: true
+        type: string
+  pull_request:
+    paths:
+      - "packaging/standalone/**"
+      - ".github/workflows/standalone.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# As in `ffmpeg.yml`: a release is never cancelled.
+concurrency:
+  group: standalone-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ !inputs.tag }}
+
+jobs:
+  ffmpeg:
+    name: FFmpeg
+    uses: ./.github/workflows/ffmpeg.yml
+    with:
+      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+
+  # Once, so all five archives serve the same client. `build.rs` embeds a
+  # placeholder page rather than fail when this is missing, which the smoke test
+  # catches.
+  webapp:
+    name: Web client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Build
+        working-directory: webapp
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-webapp
+          path: webapp/dist/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+
+  archive:
+    name: Archive (${{ matrix.target }})
+    needs: [ffmpeg, webapp]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: macos-arm64
+            runner: macos-15
+            macos-deployment-target: "11.0"
+          - target: macos-x86_64
+            runner: macos-15-intel
+            macos-deployment-target: "10.15"
+          - target: windows-x86_64
+            runner: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-webapp
+          path: webapp/dist
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-${{ matrix.target }}
+          path: ffmpeg-out
+
+      # The toolchain is the image's, and its version the Dockerfile's. The three
+      # targets that exercise FFmpeg ran in `ffmpeg.yml` against a glibc build;
+      # these are what says the server works on musl too. An artifact keeps no
+      # file mode, hence the `chmod`.
+      - name: Build and test (Alpine)
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            --volume "$PWD:/src" --workdir /src \
+            rust:1.98-alpine3.24@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f \
+            sh -c '
+              set -eu
+              apk add --no-cache build-base git
+              chmod +x ffmpeg-out/ffmpeg ffmpeg-out/ffprobe
+              cargo build --locked --release
+              PATH="$PWD/ffmpeg-out:$PATH" cargo test --locked --all-features --no-fail-fast \
+                --test media --test quality --test canvas
+            '
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        if: runner.os != 'Linux'
+        with:
+          toolchain: "1.98"
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
+        run: cargo build --locked --release
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release
+
+      # The tag when there is one. Otherwise the commit, which for a pull request
+      # is its own head rather than the merge commit GitHub tests, which exists
+      # nowhere once the run is over. The version is `verify`'s in a release,
+      # since that job holds the tag to this same line.
+      - name: Pack
+        shell: bash
+        env:
+          TAG: ${{ inputs.tag }}
+          PULL_REQUEST_HEAD: ${{ github.event.pull_request.head.sha }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          version="$(sed -n '/^\[package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          source_ref="${TAG:-${PULL_REQUEST_HEAD:-$(git rev-parse HEAD)}}"
+          case "$TARGET" in
+            windows-*) server=target/release/waveflow-server.exe ;;
+            *) server=target/release/waveflow-server ;;
+          esac
+          sh packaging/standalone/pack.sh "$TARGET" "$version" "$source_ref" "$server" ffmpeg-out dist
+
+      - name: Start it and play a file
+        shell: bash
+        run: sh packaging/standalone/smoke.sh dist/waveflow-server-*
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-archive-${{ matrix.target }}
+          path: dist/waveflow-server-*
+          # Already compressed.
+          compression-level: 0
+          if-no-files-found: error
+
+  # Everything a release attaches, in one artifact, so what the checksums cover
+  # and what gets attached cannot differ.
+  assets:
+    name: Checksums
+    needs: [ffmpeg, archive]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: standalone-archive-*
+          merge-multiple: true
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-sources
+          path: assets
+
+      - name: Write SHA256SUMS
+        working-directory: assets
+        run: |
+          for suffix in windows-x86_64.zip macos-arm64.zip macos-x86_64.zip linux-x86_64.tar.gz linux-arm64.tar.gz; do
+            ls waveflow-server-*-"$suffix" >/dev/null
+          done
+          ls ffmpeg-*-sources.tar.gz >/dev/null
+          sha256sum -- * > ../SHA256SUMS
+          mv ../SHA256SUMS SHA256SUMS
+          if [ "$(wc -l < SHA256SUMS)" -ne 6 ]; then
+            echo "::error::expected five archives and the FFmpeg sources, found:"
+            cat SHA256SUMS
+            exit 1
+          fi
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-release
+          path: assets/
+          compression-level: 0
+          if-no-files-found: error

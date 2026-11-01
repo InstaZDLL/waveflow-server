@@ -1,0 +1,53 @@
+The first screen
+----------------
+
+The browser opens on http://127.0.0.1:4533/. The first time, it asks you to
+create the administrator: choose a username and a password of at least 12
+characters.
+
+It may also ask for a setup token, if it has not filled that in for you. The
+token is in a file named setup-token, in the data folder described below. Open
+that file and copy what it says.
+
+Your music
+----------
+
+In the web page, open Settings, then Administration. Under Libraries, give your
+library a name, type the full path of your music folder, and click "Register and
+scan". The server only reads your music files and never changes them.
+
+Your phone and other devices
+----------------------------
+
+Only this computer can reach the server until you say otherwise. To open it to
+your home network, follow the part of laptop.env about phones: laptop.env is the
+settings file beside the server, and it says what each setting does.
+
+Your data
+---------
+
+Your account, the database of your music and the covers are kept apart from this
+folder, so you can move this folder or replace it with a newer version:
+
+    Windows  %LOCALAPPDATA%\WaveFlow Server
+    macOS    ~/Library/Application Support/WaveFlow Server
+    Linux    ~/.local/share/waveflow-server
+
+To update, download the newer archive and use its folder instead of this one. To
+remove WaveFlow Server, delete this folder and that one.
+
+If something goes wrong
+-----------------------
+
+"The port is taken": another program uses port 4533. laptop.env has the line to
+change.
+
+The window says why when the server stops. For help, see
+https://github.com/InstaZDLL/waveflow-server/issues
+
+Licences and source code
+------------------------
+
+WaveFlow Server is free software, under the GNU Affero General Public License.
+The LICENSES folder holds its licence and those of FFmpeg and the libraries
+built into it. LICENSES/SOURCE.txt says where the source code of each is.
