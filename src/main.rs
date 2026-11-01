@@ -160,8 +160,17 @@ async fn serve(
     // waits in its queue until `axum::serve` reads it.
     if config.laptop_open_browser {
         let address = laptop::browser_url(local_addr);
+        // The token only where no other account reads it off the command
+        // line and the address opened is the listener's own.
         let token =
-            laptop::browser::handover_token(setup_source.as_ref(), config.setup_token.as_deref());
+            laptop::browser::may_hand_over(local_addr, laptop::browser::COMMAND_LINES_ARE_PRIVATE)
+                .then(|| {
+                    laptop::browser::handover_token(
+                        setup_source.as_ref(),
+                        config.setup_token.as_deref(),
+                    )
+                })
+                .flatten();
         let target = laptop::browser::handover_url(&address, token.as_deref());
         tokio::spawn(async move { laptop::browser::open(target, &address).await });
     }

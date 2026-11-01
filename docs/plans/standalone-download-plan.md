@@ -7,10 +7,11 @@
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
 > the data folder and the cache size, checks the port before the boot,
-> prints the banner, and opens the browser — on a first start on the sign-in
-> screen with the setup token in the URL fragment (§5, #397); the file the
-> archives carry is `packaging/standalone/laptop.env`. The source link §13 asks
-> for is built too (#384, §3). The minimal FFmpeg of §3 is built by
+> prints the banner, and opens the browser — on a first start on Windows and
+> macOS on the sign-in screen with the setup token in the URL fragment (§5,
+> #397); the file the archives carry is `packaging/standalone/laptop.env`. The
+> source link §13 asks for is built too (#384, §3). The minimal FFmpeg of §3 is
+> built by
 > `packaging/ffmpeg/build.sh` and `.github/workflows/ffmpeg.yml` for the five
 > targets, each tested against the server (#398), and the archives ship it
 > (#399, §7); the image keeps Debian's FFmpeg, now trixie's 7.1 (#395). No tag
@@ -296,8 +297,13 @@ other. It changes **defaults** only; any variable set explicitly still wins.
   the fragment is a hand-over and the file stays the source. A second copy
   opens the bare address, never the token: it knows what holds the port only
   by a `/health` body any local program can imitate, and the file outlives a
-  first copy that stopped before setup. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns
-  the opening off. *Built (#397)*, through each platform's own opener —
+  first copy that stopped before setup. The first copy hands it over only on
+  Windows and macOS, which keep a process's command line from other accounts
+  (Linux and the BSDs show it to anyone, while the file is its owner's alone),
+  and only when it listens on the address it opens: behind a wildcard such as
+  `0.0.0.0`, another program may bind the loopback address more specifically.
+  Elsewhere it opens the bare address. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false`
+  turns the opening off. *Built (#397)*, through each platform's own opener —
   `rundll32`'s URL handler on Windows rather than `cmd /c start`, whose
   command line would split on `&` and expand `%` — so no crate was added.
 - **The console window is the server.** On Windows and macOS (where a
@@ -424,7 +430,8 @@ Each line is one pull request.
    prints its address and exits; opening the browser on it is step 3.
 3. **The setup-token fragment** in the sign-in screen, and opening the
    browser on start. *Done (#397).* A second copy opens the browser on the
-   first, without the token.
+   first, without the token, and so does a first copy on Linux or behind a
+   wildcard address.
 4. **The minimal FFmpeg build** script and its CI job, tested against the
    three integration targets on all five platforms. *Done* (#398):
    `packaging/ffmpeg/build.sh` pins FFmpeg 8.1.3, LAME 3.100, Opus 1.6.1 and
