@@ -207,3 +207,109 @@ async fn the_library_feed_reports_what_a_scan_changed() {
         "the page advanced it"
     );
 }
+
+/// Where a client that has just read the catalogue starts following the feed.
+///
+/// The feed cannot say so itself. A client without a cursor would ask from
+/// zero, and on a trimmed feed zero is below the watermark: refused with 409,
+/// and the refusal does not name the cut. The library list carries the head
+/// instead, and a client standing on it is answered with an empty page — never
+/// sent back to the catalogue it has only just read.
+#[tokio::test]
+async fn the_library_list_names_where_the_feed_can_be_followed_from() {
+    let (_temp, config, state) = test_app().await;
+    let router = waveflow_server::app(&config, state.clone());
+    let (owner, token) = admin_with_api_token(&state, "head-owner").await;
+    let music = config.data_dir.join("head-music");
+    std::fs::create_dir_all(&music).unwrap();
+    write_test_wav(&music.join("One.wav"));
+    write_test_wav_of_len(&music.join("Two.wav"), 1_600);
+    let root = std::fs::canonicalize(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(owner, "Head", &root, LibraryVisibility::Private, now_ms())
+        .await
+        .unwrap();
+    let get = |uri: String| {
+        let router = router.clone();
+        let token = token.clone();
+        async move {
+            let response = router
+                .oneshot(
+                    Request::get(uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            (response.status(), json_body(response).await)
+        }
+    };
+    let head = || async {
+        let (status, libraries) = get("/api/v2/libraries".into()).await;
+        assert_eq!(status, StatusCode::OK);
+        libraries[0]["events_cursor"].as_i64().unwrap()
+    };
+
+    assert_eq!(
+        head().await,
+        0,
+        "a feed nothing has written to starts at zero"
+    );
+
+    run_scan(
+        &state,
+        owner,
+        LibraryRecord {
+            id: library_id,
+            name: "Head".into(),
+            root_path: root,
+        },
+    )
+    .await;
+    let (_, page) = get(format!(
+        "/api/v2/libraries/{library_id}/events?after=0&limit=500"
+    ))
+    .await;
+    let newest = page["next_cursor"].as_i64().unwrap();
+    assert!(newest > 0);
+    assert_eq!(head().await, newest, "the head is the newest event");
+    let (status, page) = get(format!(
+        "/api/v2/libraries/{library_id}/events?after={newest}&limit=500"
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page["events"].as_array().unwrap().is_empty());
+
+    // Trimmed to nothing: no row is left to name the head, and the watermark
+    // is the furthest a client can stand. Asking from zero is refused, which
+    // is the case this field exists for; asking from the head is not.
+    sqlx::query("DELETE FROM library_event WHERE library_id = ?")
+        .bind(library_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    sqlx::query("UPDATE library SET events_purged_through = ? WHERE id = ?")
+        .bind(newest + 5)
+        .bind(library_id.to_string())
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let (status, _) = get(format!(
+        "/api/v2/libraries/{library_id}/events?after=0&limit=500"
+    ))
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        head().await,
+        newest + 5,
+        "an emptied feed's head is its cut"
+    );
+    let (status, _) = get(format!(
+        "/api/v2/libraries/{library_id}/events?after={}&limit=500",
+        newest + 5
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK, "the head is never below the cut");
+}

@@ -691,7 +691,8 @@ list to fall out of step.
 
 A cursor below what has been purged answers `409`: the feed refuses to hand back
 a surviving tail that would look like a successful catch-up, and the client
-re-reads the catalogue instead. The line it compares against is a recorded
+re-reads the catalogue instead, then follows from the `events_cursor` that
+`GET /api/v2/libraries` now answers for the library. The line it compares against is a recorded
 watermark of what was removed, not the oldest row that survives — a feed whose
 first event sits at a high cursor has not lost anything, it started late, and the
 two are indistinguishable from the rows alone.
@@ -1372,6 +1373,13 @@ of hashing a whole file to be told `library_closed`.
 `accepts_canvas`, on the same list, is the same kind of decision for canvases,
 made with `waveflow library set-canvas`. It is a separate door: a library
 closed to files may take loops, and the reverse.
+
+`events_cursor`, on the same list, is the head of the library's
+[change feed](#learning-that-a-catalogue-changed): the newest event's cursor,
+or the watermark of what retention cut when nothing newer survives. A client
+that has just read the catalogue starts following the feed from there. It
+cannot learn that from the feed itself — asking from zero on a trimmed feed is
+refused with `409`, and the refusal does not say where the cut is.
 
 Setting a Subsonic credential is administrative, because it is what opens the
 Subsonic facade to an account at all. Changing or switching off one that
