@@ -12,6 +12,7 @@ import {
   LibraryScopeProvider,
   useLibraryScope,
 } from "../state/library-scope";
+import { LibraryFeed } from "./library-feed";
 import { Brand, Navigation } from "./navigation";
 
 /**
@@ -71,6 +72,7 @@ export function Shell() {
     <LibraryScopeProvider>
       <PlayerProvider>
         <CoverLight />
+        <LibraryFeed />
         <a className="skip-link" href="#main-content">
           {t("nav.skip")}
         </a>
