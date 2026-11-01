@@ -6,7 +6,9 @@ RUN bun install --frozen-lockfile
 COPY webapp/ ./
 RUN bun run build
 
-FROM rust:1.98-bookworm AS builder
+# The builder and the runtime are one Debian release: the binary links against
+# the builder's glibc and needs at least that version where it runs.
+FROM rust:1.98-trixie AS builder
 WORKDIR /build
 # No cmake: waveflow-core's libopus decoder sits behind its `opus` feature,
 # which `default-features = false` leaves off. The server decodes through
@@ -17,7 +19,7 @@ COPY . .
 COPY --from=web /web/dist ./webapp/dist
 RUN cargo build --locked --release
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 4533 --create-home waveflow \
     && mkdir -p /data /music && chown -R waveflow:waveflow /data /music
