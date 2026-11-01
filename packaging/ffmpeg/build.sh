@@ -7,18 +7,20 @@
 #   sh packaging/ffmpeg/build.sh sources <out>    pack the corresponding source
 #
 # `build` leaves in <out> the two executables and `LICENSES/`: the texts of
-# FFmpeg, LAME, Opus and libwebp, musl's on a musl target, and `SOURCE.txt` (the
-# versions, the tarballs and the configure line), where the standalone archives
-# carry them (§2 and §3 of docs/plans/standalone-download-plan.md). `sources`
-# leaves `ffmpeg-<version>-sources.tar.gz`: the four tarballs exactly as
+# FFmpeg, LAME, Opus and libwebp, musl's on a musl target, the MinGW-w64 runtime's
+# and winpthreads' on Windows, and `SOURCE.txt` (the versions, the tarballs and
+# the configure line), where the standalone archives carry them (§2 and §3 of
+# docs/plans/standalone-download-plan.md). `sources` leaves `ffmpeg-<version>-sources.tar.gz`: the four tarballs exactly as
 # downloaded, their checksums, this script and the musl notice it copies — the
 # corresponding source a release owes for the binaries.
 #
 # The work happens under $WORK_DIR (default: a folder in the system's temporary
-# directory); the tarballs are kept in $WORK_DIR/downloads and checked against
-# the SHA-256 below on every run, so a tarball that changed upstream stops the
-# build rather than entering a release. $BUILD_COMMIT, when set, names the
-# commit of this script in LICENSES/SOURCE.txt.
+# directory); the tarballs are kept in $FFMPEG_DOWNLOADS (default:
+# $WORK_DIR/downloads) and checked against the SHA-256 below on every run, so a
+# tarball that changed upstream stops the build rather than entering a release.
+# One already there is not downloaded again, which is how CI fetches them once
+# and hands them to every target. $BUILD_COMMIT, when set, names the commit of
+# this script in LICENSES/SOURCE.txt.
 #
 # Runs on Linux (built inside Alpine, so the binaries are static against
 # musl), on macOS, and on Windows in an MSYS2 UCRT64 shell. Needs a C compiler,
@@ -52,6 +54,11 @@ FFMPEG_URL=https://ffmpeg.org/releases/$FFMPEG_TARBALL
 LAME_URL=https://downloads.sourceforge.net/project/lame/lame/$LAME_VERSION/$LAME_TARBALL
 OPUS_URL=https://downloads.xiph.org/releases/opus/$OPUS_TARBALL
 WEBP_URL=https://storage.googleapis.com/downloads.webmproject.org/releases/webp/$WEBP_TARBALL
+# Asked when upstream refuses: ffmpeg.org once turned down all six attempts of a
+# runner. Alpine keeps the upstream tarballs of its release, under the same
+# names, and the SHA-256 above decides whether the bytes are acceptable, wherever
+# they came from. A newer pin that is not on it yet only loses the fallback.
+MIRROR=https://distfiles.alpinelinux.org/distfiles/v3.24
 
 # What the server asks of FFmpeg, read from its code (§3 of the plan has the
 # reasoning; the media, quality and canvas integration targets check it).
@@ -134,7 +141,7 @@ sha256() {
 SCRIPT=$(cd "$(dirname "$0")" && pwd)/$(basename "$0")
 MUSL_NOTICE=$(dirname "$SCRIPT")/musl-COPYRIGHT
 WORK_DIR=$(absolute "${WORK_DIR:-${TMPDIR:-/tmp}/waveflow-ffmpeg}")
-DOWNLOADS=$WORK_DIR/downloads
+DOWNLOADS=$(absolute "${FFMPEG_DOWNLOADS:-$WORK_DIR/downloads}")
 
 case "$(uname -s)" in
     Linux) PLATFORM=linux ;;
@@ -145,6 +152,15 @@ esac
 
 JOBS=$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)
 
+# Every error is retried, a reset connection included, which plain `--retry`
+# leaves alone: a mirror that hiccups is not a broken tarball, and the checksum
+# in fetch_one still catches one that is.
+download() {
+    curl --fail --silent --show-error --location --connect-timeout 30 \
+        --retry 5 --retry-all-errors --retry-delay 5 \
+        --output "$DOWNLOADS/$1.part" "$2"
+}
+
 # Downloads one tarball unless it is already there, then holds it to its
 # checksum either way: a copy left by an earlier run is checked like a new one.
 fetch_one() {
@@ -153,12 +169,10 @@ fetch_one() {
     expected=$3
     if [ ! -f "$DOWNLOADS/$tarball" ]; then
         log "downloading $tarball"
-        # Every error is retried, a reset connection included, which plain
-        # `--retry` leaves alone: a mirror that hiccups is not a broken
-        # tarball, and the checksum below still catches one that is.
-        curl --fail --silent --show-error --location \
-            --retry 5 --retry-all-errors --retry-delay 5 \
-            --output "$DOWNLOADS/$tarball.part" "$url"
+        if ! download "$tarball" "$url"; then
+            log "$url refused it; asking the mirror"
+            download "$tarball" "$MIRROR/$tarball"
+        fi
         mv "$DOWNLOADS/$tarball.part" "$DOWNLOADS/$tarball"
     fi
     actual=$(sha256 "$DOWNLOADS/$tarball")
@@ -363,6 +377,11 @@ write_source() {
         case "$TARGET" in
             *-musl*) echo "  musl    $MUSL_VERSION   (MIT), the C library, linked statically" ;;
         esac
+        if [ "$PLATFORM" = windows ]; then
+            echo "  The MinGW-w64 runtime and winpthreads, linked statically: their"
+            echo "  notices are MinGW-w64-runtime.txt and winpthreads.txt, beside"
+            echo "  this file. GCC's runtime is under its Runtime Library Exception."
+        fi
         echo
         echo "Source tarballs (SHA-256), as downloaded from upstream:"
         sed 's/^/  /' "$DOWNLOADS/SHA256SUMS"
@@ -395,6 +414,17 @@ write_licences() {
     case "$TARGET" in
         *-musl*) cp "$MUSL_NOTICE" "$OUT/LICENSES/musl.txt" ;;
     esac
+    # `-static` copies MinGW-w64's runtime into both executables, and that
+    # runtime's own note says what this owes: this file, in the package. The
+    # winpthreads library comes along, though FFmpeg's threads are w32threads,
+    # for `nanosleep` and `clock_gettime` and for GCC's runtime: its sources'
+    # paths can be read in the binary. Its notice is a file of its own. Both are
+    # copied from the packages this build just linked, so they are that
+    # runtime's, and a package that moved them stops the build here.
+    if [ "$PLATFORM" = windows ]; then
+        cp "$MINGW_PREFIX/share/licenses/crt/COPYING.MinGW-w64-runtime.txt" "$OUT/LICENSES/MinGW-w64-runtime.txt"
+        cp "$MINGW_PREFIX/share/licenses/winpthreads/COPYING" "$OUT/LICENSES/winpthreads.txt"
+    fi
 }
 
 build() {

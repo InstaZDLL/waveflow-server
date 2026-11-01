@@ -3,8 +3,14 @@ name: FFmpeg
 # Builds the minimal LGPL FFmpeg of the standalone download
 # (docs/plans/standalone-download-plan.md §3, §8 step 4) for its five targets,
 # with packaging/ffmpeg/build.sh, and tests each build against the server
-# before uploading it. Nothing here publishes: the release job that attaches
-# these binaries to an archive is a later step of the plan.
+# before uploading it. Nothing here publishes: `standalone.yml` calls this file
+# and packs what it uploads, and `release.yml` attaches the result.
+#
+# The tarballs are fetched once, by the job that packs the sources, and handed
+# to every target as an artifact, where the script finds them and checks them
+# like any others. A runner that a mirror refuses then costs nothing, and the
+# binaries are built from the very bytes the source bundle carries. They are not
+# built ahead of time or cached: what a release ships is compiled from its tag.
 #
 # Every target builds on a runner of its own OS and architecture, so the
 # integration targets run on the binaries they test, natively:
@@ -31,13 +37,30 @@ on:
       - "packaging/ffmpeg/**"
       - ".github/workflows/ffmpeg.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      tag:
+        description: "The tag being released"
+        required: true
+        type: string
+    outputs:
+      version:
+        description: "The FFmpeg version the artifacts are named after"
+        value: ${{ jobs.sources.outputs.version }}
 
 permissions:
   contents: read
 
+# `github.workflow` is the caller's name when this is called, so a pull request
+# that runs this file on its own and through `standalone.yml` keeps both. A
+# release is never cancelled: `github.ref` of a retried one is `main`, which it
+# shares with other retries.
 concurrency:
-  group: ffmpeg-${{ github.ref }}
-  cancel-in-progress: true
+  group: ffmpeg-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ !inputs.tag }}
+
+env:
+  FFMPEG_DOWNLOADS: ffmpeg-downloads
 
 jobs:
   # The corresponding source of every build below: the four upstream tarballs
@@ -51,6 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
           persist-credentials: false
 
       - id: version
@@ -63,6 +87,13 @@ jobs:
         with:
           name: ffmpeg-${{ steps.version.outputs.version }}-sources
           path: dist/ffmpeg-${{ steps.version.outputs.version }}-sources.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ffmpeg-${{ steps.version.outputs.version }}-tarballs
+          path: ${{ env.FFMPEG_DOWNLOADS }}/
+          retention-days: 7
           if-no-files-found: error
 
   build:
@@ -86,22 +117,33 @@ jobs:
             macos-deployment-target: "10.15"
           - target: windows-x86_64
             runner: windows-2025
-    env:
-      # The pull request's own head rather than the merge commit GitHub tests,
-      # which exists nowhere once the run is over: SOURCE.txt links the script
-      # at this commit.
-      BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
           persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-${{ needs.sources.outputs.version }}-tarballs
+          path: ${{ env.FFMPEG_DOWNLOADS }}
+
+      # SOURCE.txt links the script at this commit: the pull request's own head
+      # rather than the merge commit GitHub tests, which exists nowhere once the
+      # run is over, and what was checked out rather than `github.sha`, which a
+      # retried release would have pointing at `main`.
+      - name: Name the commit
+        shell: bash
+        env:
+          PULL_REQUEST_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: echo "BUILD_COMMIT=${PULL_REQUEST_HEAD:-$(git rev-parse HEAD)}" >> "$GITHUB_ENV"
 
       - name: Build (Alpine)
         if: runner.os == 'Linux'
         run: |
           docker run --rm \
             --volume "$PWD:/src" --workdir /src \
-            --env WORK_DIR=/work --env BUILD_COMMIT --env GITHUB_REPOSITORY \
+            --env WORK_DIR=/work --env FFMPEG_DOWNLOADS --env BUILD_COMMIT --env GITHUB_REPOSITORY \
             alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a \
             sh -c '
               set -eu
@@ -165,7 +207,11 @@ jobs:
         with:
           toolchain: stable
 
+      # Not for a release. A retried one runs on `main`, so what its tests left
+      # would be saved where every branch restores from, and it would itself
+      # restore what any earlier run on `main` had saved.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !inputs.tag }}
         with:
           key: ffmpeg-${{ matrix.target }}
 

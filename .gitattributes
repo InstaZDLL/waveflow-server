@@ -19,6 +19,10 @@
 # Run by sh on every platform, MSYS2 on Windows included, where a carriage
 # return at the end of each line breaks the script.
 *.sh        text eol=lf
+# Copied into the archives as they are checked out, and a Windows runner checks
+# text out with carriage returns: the same bytes in all five, read by a server
+# that has to take laptop.env's lines as they come.
+packaging/standalone/** text eol=lf
 
 # Lockfiles benefit from native diff/merge but stay LF so CI on Linux runners
 # doesn't see noisy diffs against Windows contributors.

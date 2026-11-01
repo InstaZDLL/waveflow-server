@@ -1,0 +1,22 @@
+WaveFlow Server for Windows
+===========================
+
+Your own music server, on this computer. Nothing to install.
+
+To start it
+-----------
+
+1. If you are looking at this file inside the zip, extract the zip first:
+   right-click it, "Extract All". The server cannot find its tools from inside
+   a zip.
+
+2. Double-click waveflow-server.exe.
+
+   The first time, Windows may say "Windows protected your PC", because this
+   download is not signed yet. Click "More info", then "Run anyway".
+
+   A window opens, and your web browser opens on the server's page.
+
+To stop it, close that window. To start it again, double-click
+waveflow-server.exe again: your music and your account are still there.
+

@@ -150,7 +150,23 @@
 
 ## Install
 
-**You need** FFmpeg and ffprobe, on `PATH` or beside the `waveflow-server` executable (already in the Docker image). Nothing else: no database server, no cache, no broker.
+**You need** FFmpeg and ffprobe, on `PATH` or beside the `waveflow-server` executable (already in the Docker image and in the archives below). Nothing else: no database server, no cache, no broker.
+
+### On one computer, without Docker
+
+From 2.1.0, each [release](https://github.com/InstaZDLL/waveflow-server/releases/latest) carries an archive to extract and start, for your own music on your own computer: no terminal on Windows and macOS, no install, and the web player opens on its own.
+
+| System | Archive |
+| --- | --- |
+| Windows (x86_64) | `waveflow-server-<version>-windows-x86_64.zip` |
+| macOS (Apple silicon) | `waveflow-server-<version>-macos-arm64.zip` |
+| macOS (Intel) | `waveflow-server-<version>-macos-x86_64.zip` |
+| Linux (x86_64) | `waveflow-server-<version>-linux-x86_64.tar.gz` |
+| Linux (arm64) | `waveflow-server-<version>-linux-arm64.tar.gz` |
+
+Each holds one folder: the server, its own FFmpeg, a `laptop.env` of settings, the licences, and a `README.txt` that walks through the first start. The archives are not signed yet, so Windows and macOS warn on the first launch; the `README.txt` says what to click past. `SHA256SUMS`, on the same release, holds their checksums, and `ffmpeg-<version>-sources.tar.gz` the source of the FFmpeg they carry. The Linux archives are static and run on any distribution.
+
+The rest of this section is for a server that stays on: the data lives in a folder of your choosing, and the commands assume a terminal.
 
 ### Docker
 

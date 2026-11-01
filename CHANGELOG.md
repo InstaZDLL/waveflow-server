@@ -31,8 +31,20 @@ out first, whether or not it breaks a compile.
   Windows, macOS (arm64 and x86_64) and Linux (x86_64 and arm64), from pinned
   and checksummed tarballs, with only the components the server uses and no
   protocol but `file` and `pipe`; each build passes the `media`, `quality` and
-  `canvas` tests before it is uploaded. Nothing ships it yet: the standalone
-  archives will, and the image keeps Debian's FFmpeg for now.
+  `canvas` tests before it is uploaded. The standalone archives ship it; the
+  image keeps Debian's FFmpeg for now.
+- **Standalone archives on every release** (#399), to run the server on one
+  computer without Docker: `waveflow-server-<version>-windows-x86_64.zip`,
+  `-macos-arm64.zip`, `-macos-x86_64.zip`, `-linux-x86_64.tar.gz` and
+  `-linux-arm64.tar.gz`, each one folder holding the server, its own FFmpeg,
+  `laptop.env`, the licences and a `README.txt`, with
+  `ffmpeg-<version>-sources.tar.gz` and a `SHA256SUMS` over all of them. They are
+  not signed yet, so Windows and macOS warn on the first launch, and the
+  `README.txt` says what to click past. The Linux server is static against musl
+  and runs on any distribution; the Windows one needs no Visual C++
+  redistributable. Each archive is started and made to play a file on its own
+  platform before the release attaches it, and the image's tags wait for them
+  too, so a tag whose archives fail publishes neither.
 - **The transcoding state in the web client's administration**: whether the
   server can transcode (without it, listeners get the original files only),
   the transcodes running against the global limit, the per-account limit and

@@ -3,20 +3,20 @@
 > Plan of 2026-10-29, written against `main` at `4c32b51`, while 2.0.0 is
 > prepared as a container image for `linux/amd64` and `linux/arm64`.
 >
-> **Status as of 2026-11-01:** steps 1 to 4 of §8 are built. FFmpeg is
+> **Status as of 2026-11-01:** steps 1 to 5 of §8 are built. FFmpeg is
 > found beside the executable (§4), and laptop mode exists in the server:
 > `WAVEFLOW_LAPTOP`, read from the `laptop.env` beside the executable, moves
 > the data folder and the cache size, checks the port before the boot,
 > prints the banner, and opens the browser — on a first start on the sign-in
 > screen with the setup token in the URL fragment (§5, #397); the file the
-> archives will carry is `packaging/standalone/laptop.env`. The source link
-> §13 asks for is built too (#384, §3). The minimal FFmpeg of §3 is built by
+> archives carry is `packaging/standalone/laptop.env`. The source link §13 asks
+> for is built too (#384, §3). The minimal FFmpeg of §3 is built by
 > `packaging/ffmpeg/build.sh` and `.github/workflows/ffmpeg.yml` for the five
-> targets, each tested against the server (#398); nothing ships it yet, and
-> the image keeps Debian's FFmpeg, now trixie's 7.1 (#395). Not built yet,
-> each its own pull request in the order of §8 and each an issue: the release
-> jobs (step 5, #399), in the v2.1.0 milestone; signing (step 6, #401) after
-> it.
+> targets, each tested against the server (#398), and the archives ship it
+> (#399, §7); the image keeps Debian's FFmpeg, now trixie's 7.1 (#395). No tag
+> has produced the archives yet: the check that each one, extracted on its
+> platform, starts in laptop mode and plays a file waits for the first release
+> candidate. Not built yet: signing (step 6, #401).
 
 The question this plan answers: can someone who has never opened a terminal
 download one archive, double-click what is inside, and end up in the web
@@ -161,6 +161,12 @@ cover macOS, and it carries the size and source-offer cost above.
   incorporates when the version-3 variant is used;
 - `LICENSES/LAME.txt`, `LICENSES/Opus.txt`, `LICENSES/libwebp.txt`;
 - `LICENSES/musl.txt` in the Linux archives, whose static binaries carry musl;
+- `LICENSES/MinGW-w64-runtime.txt` and `LICENSES/winpthreads.txt` in the Windows
+  archive, whose FFmpeg links both statically (the paths of winpthreads' sources
+  can be read in the binary, though its own threads are `w32threads`). The first
+  is the file the runtime's licence note says to copy into a package. They are
+  copied from the MSYS2 packages the build linked. GCC's own runtime is under its
+  Runtime Library Exception, which asks for nothing;
 - `LICENSES/SOURCE.txt` — the FFmpeg configure line, the version of each
   component, and the names of the source tarballs attached to the release;
 - on the release itself, `ffmpeg-<version>-sources.tar.gz`: the four upstream
@@ -180,11 +186,14 @@ file).
 §6(d) allows that source to sit on another server, provided clear directions
 next to the object code say where. So no separate archive is attached for it:
 `LICENSES/SOURCE.txt` names the tag, whose source archive carries
-`Cargo.lock`; the `waveflow-core` revision and its public repository; and
-crates.io for the crates, where a published version stays downloadable even
-once yanked. Those are durable public links, and they stay our responsibility:
-a dependency taken from anywhere less durable — a second git dependency, a
-private registry — has its source attached to the release instead.
+`Cargo.lock` and `webapp/bun.lock`; the `waveflow-core` revision and its public
+repository; crates.io for the crates, where a published version stays
+downloadable even once yanked; and npm for the packages of the web client, which
+is compiled into the binary too. Those are durable public links, and they stay
+our responsibility: a dependency taken from anywhere less durable — a second git
+dependency, a private registry — has its source attached to the release instead.
+`packaging/standalone/pack.sh` refuses a `Cargo.lock` that names any other
+source, so that happens at the release rather than by someone remembering.
 
 §13 asks more of a network service: the server must offer its source to the
 people who use it remotely. **It does, since #384.** `/health` reports `source`, the repository at the tag `v<version>` of
@@ -358,45 +367,51 @@ instead (below), which also covers the other platforms for anyone who checks.
 
 ## 7. What `release.yml` adds
 
-Its header says no binary is attached because one "would need FFmpeg on the
-host anyway". With §3 and §4 that is no longer true, and the header changes
-with the first job that attaches one. The jobs, all after `verify` and in
-parallel with the image:
+*Built (#399).* `release.yml` calls `.github/workflows/standalone.yml` after
+`verify`, beside the image's build; that file calls `ffmpeg.yml`. Nothing in
+either publishes, so a pull request that touches `packaging/standalone/` or a
+manual dispatch runs the same jobs and stops at a workflow artifact, which is
+how they are exercised without a tag. In order:
 
-1. **`ffmpeg`** — one matrix job per target builds the minimal FFmpeg from the
-   pinned tarballs, checks their checksums first, and uploads the two tools and
-   the source bundle as workflow artifacts. Cached by the hash of the script
-   and the tarballs, so a release that does not change FFmpeg does not rebuild
-   it.
-2. **`standalone`** — a matrix over the five targets: `windows-latest`,
-   `macos-latest` (arm64, which also cross-compiles `x86_64-apple-darwin`; the
-   Intel runners are being retired), `ubuntu-24.04` and `ubuntu-24.04-arm`.
-   Each builds the web client and the server, runs the `media`, `quality` and
-   `canvas` targets against the FFmpeg from job 1, signs (§6) where it can,
-   and packs the archive of §2.
+1. **`ffmpeg`** — `ffmpeg.yml` as it stands: one native runner per target
+   builds the minimal FFmpeg, runs the `media`, `quality` and `canvas` targets
+   with it first on `PATH`, and uploads the two tools and their `LICENSES/`.
+   One job fetches the four tarballs, packs the source bundle from them and
+   hands them to the others as an artifact, so a target never meets a mirror
+   and the binaries are built from the bytes the bundle carries. Should
+   upstream refuse that one job, it asks Alpine's copies of the same tarballs,
+   and the script's SHA-256 holds either to the pin. Nothing is cached, despite
+   what this page first proposed: what a release ships is compiled from its
+   tag, and its build costs minutes, on a day that is rare.
+2. **`webapp`** — the client, once, for all five.
+3. **`archive`** — one native runner per target builds the server, packs the
+   archive of §2 with `packaging/standalone/pack.sh`, and starts it with
+   `packaging/standalone/smoke.sh`: the files of §2, nothing loaded that the
+   system lacks, laptop mode from the `laptop.env` in the archive, and an empty
+   `PATH`, so the tools can only be the ones beside it, then a FLAC file turned
+   into an MP3 through the Subsonic façade. macOS builds on a runner of each
+   architecture rather than cross-compiling, as `ffmpeg.yml` does.
 
-   Placing the tools beside the test binary would test nothing: the suite's
-   `Config::for_data_dir` names bare `ffmpeg` and `ffprobe`, and the fixture
-   generators in `tests/support/` run `ffmpeg` from `PATH`, so both would find
-   whatever the runner has installed. The pull request that adds this job
-   therefore makes the test configuration and the fixture generators read
-   `WAVEFLOW_FFMPEG_PATH` and `WAVEFLOW_FFPROBE_PATH` when they are set, and
-   the job sets them to job 1's two files. The fixtures then also need what
-   they generate from — the `lavfi` sources and the FLAC and PCM encoders — and
-   the build of step 4 already carries them: a few components, against a
-   release tested with one FFmpeg rather than two. Its Linux builds are static
-   against musl, so they run on the distributions people actually have
-   whatever their glibc.
-3. **`checksums`** — one `SHA256SUMS` over every archive and the source
-   bundle, signed keylessly with Sigstore (`cosign sign-blob`), the bundle
-   attached beside it. The image already carries provenance; this gives the
-   archives the same footing.
-4. **The release job** attaches the archives, `SHA256SUMS`, its signature and
-   the FFmpeg source bundle, and the release notes gain a "Download" section
-   above the image's.
+   Two builds differ from the image's, because a laptop is not a container
+   whose libraries we choose. **On Linux the server is static against musl**,
+   built inside Alpine like its FFmpeg, and the same three targets run again on
+   it: a binary built on `ubuntu-24.04` would refuse Ubuntu 22.04, Debian 12 and
+   every other older glibc. **On Windows the C runtime is linked statically**
+   (`+crt-static`): `VCRUNTIME140.dll` is not part of Windows, and a laptop that
+   has never installed the redistributable would refuse the executable before
+   it printed a line.
+4. **`assets`** — one `SHA256SUMS` over the five archives and the source bundle,
+   and all seven files in one artifact.
+5. **The release job** attaches that artifact, and the release notes gain a
+   "Download" section above the image's. It runs last, and the image's tags now
+   wait for the archives too, so a tag whose archives failed announces nothing.
 
 A pre-release tag publishes the archives as well, marked by the release's own
 pre-release badge as the image is.
+
+Not built: the keyless Sigstore signature of `SHA256SUMS` (`cosign sign-blob`)
+this page proposed, which §6 still counts on for Linux. Neither #399 nor #401
+lists it.
 
 ## 8. The order of the work
 
@@ -420,10 +435,12 @@ Each line is one pull request.
    packs the four tarballs and the script. `.github/workflows/ffmpeg.yml`
    builds on a native runner per target — Linux inside Alpine, so the binaries
    are static against musl — and runs the `media`, `quality` and `canvas`
-   targets with the build first on `PATH`. Each tool weighs 5.5 to 8 MB. The release job of §7 reuses the
-   script; the workflow stays as the check of a change to it.
+   targets with the build first on `PATH`. Each tool weighs 5.5 to 8 MB. The release job of §7 calls this
+   workflow, which also stays as the check of a change to the script.
 5. **The standalone archives and `SHA256SUMS`** in `release.yml`, unsigned,
-   with `README.txt` saying what to click past; the header rewritten.
+   with `README.txt` saying what to click past; the header rewritten. *Done*
+   (#399), §7 says how; the first release candidate is what checks each archive
+   on a real desktop.
 6. **Signing**: SignPath for Windows once accepted, Developer ID and
    notarization for macOS once the membership exists.
 7. Later, as asked for: a macOS `.app` in a stapled `.dmg`, an AppImage, a tray
