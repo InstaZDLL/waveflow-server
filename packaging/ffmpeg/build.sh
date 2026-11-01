@@ -20,7 +20,8 @@
 #
 # Runs on Linux (built inside Alpine, so the binaries are static against
 # musl), on macOS, and on Windows in an MSYS2 UCRT64 shell. Needs a C compiler,
-# make, nasm on x86_64, pkg-config, curl and tar. `.github/workflows/ffmpeg.yml`
+# make, nasm on x86_64, pkg-config, tar, and curl 7.71 or later (for
+# `--retry-all-errors`; the three build environments all ship curl 8). `.github/workflows/ffmpeg.yml`
 # runs it for the five targets of the standalone download and tests the result
 # against the server; docs/plans/standalone-download-plan.md §3 says why the
 # build is ours and why it is LGPL.
