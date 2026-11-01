@@ -940,10 +940,11 @@ A machine that records the command line of every process it starts keeps the
 token too: Windows' process-creation event 4688 once command lines are
 included, Sysmon, or an endpoint agent on any platform, readable by whoever
 reads those logs. The token creates the first administrator until setup
-succeeds, on a server reachable from the machine itself. On such a machine,
-set `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` before the first start and paste the
-token yourself — the value of `WAVEFLOW_SETUP_TOKEN` when it is set, the
-content of `<data>/setup-token` otherwise — or finish setup at once, which
+succeeds, for anyone who can reach the server: the machine itself on the
+default `127.0.0.1`, its network too on an explicit LAN address. On such a
+machine, set `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` before the first start and
+paste the token yourself — the value of `WAVEFLOW_SETUP_TOKEN` when it is set,
+the content of `<data>/setup-token` otherwise — or finish setup at once, which
 closes it.
 
 An installed server never needs it, and no default changes without it. To move
