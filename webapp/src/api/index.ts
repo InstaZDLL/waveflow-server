@@ -152,10 +152,17 @@ export {
 } from "./libraries";
 export type { AuthorizeRequest } from "./oauth";
 export { authorize, isAllowedRedirect, safeInternalPath } from "./oauth";
-export type { Bookmark, NowPlaying, Play, Queue } from "./playback";
+export type {
+  Bookmark,
+  NowPlaying,
+  Play,
+  Queue,
+  TranscodeStatus,
+} from "./playback";
 export {
   deleteBookmark,
   getQueue,
+  getTranscodeStatus,
   listBookmarks,
   listHistory,
   listNowPlaying,

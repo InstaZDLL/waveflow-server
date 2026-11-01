@@ -117,7 +117,8 @@
 
 .admin-page .admin-grid > .admin-panel,
 .admin-page .user-row,
-.admin-page .now-playing-panel {
+.admin-page .now-playing-panel,
+.admin-page .transcoding-panel {
   background: var(--panel-soft);
 }
 

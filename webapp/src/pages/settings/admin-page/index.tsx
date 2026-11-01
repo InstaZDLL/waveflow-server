@@ -18,7 +18,7 @@ import {
   useReload,
 } from "../../../components/layout/page-shell";
 import { useI18n } from "../../../state/i18n";
-import { NowPlayingPanel, ScanProgress } from "./activity";
+import { NowPlayingPanel, ScanProgress, TranscodingPanel } from "./activity";
 import { ApiTokensPanel, CredentialForm } from "./credentials";
 import { LibraryMembersPanel, LibrarySettingsPanel } from "./libraries";
 
@@ -238,6 +238,7 @@ export function AdminPage() {
         ))}
       </div>
       <NowPlayingPanel />
+      <TranscodingPanel />
     </section>
   );
 }

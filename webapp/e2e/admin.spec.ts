@@ -252,3 +252,68 @@ test("switches a library's watch off from its settings", async ({ page }) => {
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => updates).toEqual([{ watch: false }]);
 });
+
+/**
+ * `GET /transcode/status` was the last route of the gap analysis's "the server
+ * knows, the screen ignores" table. The panel reads it, and reads it again
+ * while the screen stays open: the count moves as listeners start and stop,
+ * and a reading taken on arrival would go on saying there was room.
+ */
+test("shows the transcoding state and follows it while the screen is open", async ({
+  page,
+}) => {
+  await page.goto("/admin");
+  const panel = page.locator(".transcoding-panel");
+  await expect(
+    panel.getByRole("heading", { name: "Transcoding" }),
+  ).toBeVisible();
+  await expect(panel.getByText("Available", { exact: true })).toBeVisible();
+  await expect(panel.getByText("1 of 4")).toBeVisible();
+  await expect(
+    panel.getByRole("meter", { name: "Running now" }),
+  ).toHaveJSProperty("value", 1);
+  await expect(panel.getByText("1 at a time")).toBeVisible();
+  await expect(panel.getByText("mp3 · opus · aac")).toBeVisible();
+
+  // Every slot taken: the next listener who asks for a transcode is refused,
+  // which the panel has to say rather than leave to a count.
+  mock.transcodeStatus = { ...mock.transcodeStatus, active: 4 };
+  await expect(panel.getByText("4 of 4")).toBeVisible({ timeout: 15_000 });
+  await expect(panel.getByText("Every slot taken")).toBeVisible();
+  await expect(
+    panel.getByText("A new transcode is refused until a running one ends."),
+  ).toBeVisible();
+});
+
+/**
+ * Without FFmpeg there is nothing to count: the panel says what that means for
+ * the people listening, and draws no limits for a capability that is not
+ * there. A status that could not be read is said to be unread, not drawn as
+ * a server with room.
+ */
+test("says what a server that cannot transcode gives its listeners", async ({
+  page,
+}) => {
+  mock.transcodeStatus = {
+    ...mock.transcodeStatus,
+    available: false,
+    active: 0,
+  };
+  await page.goto("/admin");
+  const panel = page.locator(".transcoding-panel");
+  await expect(panel.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(
+    panel.getByText("Every listener receives the original file"),
+  ).toBeVisible();
+  await expect(panel.getByText("Running now")).toHaveCount(0);
+});
+
+test("says the transcoding state could not be read", async ({ page }) => {
+  mock.transcodeFails = true;
+  await page.goto("/admin");
+  const panel = page.locator(".transcoding-panel");
+  await expect(panel.getByRole("alert")).toHaveText(
+    "The transcoding state could not be read.",
+  );
+  await expect(panel.getByText("Available", { exact: true })).toHaveCount(0);
+});

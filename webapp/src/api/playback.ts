@@ -35,6 +35,25 @@ export type NowPlaying = {
 /** List the playback sessions currently reported by the server. */
 export const listNowPlaying = () => call<NowPlaying[]>("/api/v2/now-playing");
 
+/**
+ * Whether this server can transcode, and how much of its room for it is taken.
+ *
+ * `formats` lists what `format=` may ask for besides `raw`, which is always
+ * accepted and is not a transcode. Past `global_limit` transcodes running at
+ * once, or `per_user_limit` for one account, the stream routes refuse a new
+ * one with a `429`.
+ */
+export type TranscodeStatus = {
+  available: boolean;
+  active: number;
+  global_limit: number;
+  per_user_limit: number;
+  formats: string[];
+};
+
+export const getTranscodeStatus = () =>
+  call<TranscodeStatus>("/api/v2/transcode/status");
+
 export type Bookmark = {
   position_ms: number;
   comment: string | null;

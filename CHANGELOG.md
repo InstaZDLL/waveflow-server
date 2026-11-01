@@ -33,6 +33,11 @@ out first, whether or not it breaks a compile.
   protocol but `file` and `pipe`; each build passes the `media`, `quality` and
   `canvas` tests before it is uploaded. Nothing ships it yet: the standalone
   archives will, and the image keeps Debian's FFmpeg for now.
+- **The transcoding state in the web client's administration**: whether the
+  server can transcode (without it, listeners get the original files only),
+  the transcodes running against the global limit, the per-account limit and
+  the output formats, read from `GET /api/v2/transcode/status` and asked again
+  every ten seconds while the screen is open.
 
 ### Changed
 

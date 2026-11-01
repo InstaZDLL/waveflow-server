@@ -198,7 +198,12 @@
 
 :where(:root)
   .admin-page
-  :is(.admin-grid > .admin-panel, .user-row, .now-playing-panel) {
+  :is(
+    .admin-grid > .admin-panel,
+    .user-row,
+    .now-playing-panel,
+    .transcoding-panel
+  ) {
   background: var(--fe-surface);
 }
 

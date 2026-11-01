@@ -24,6 +24,23 @@ export const admin = {
   "admin.scanning": "Scan in progress",
   "admin.nowPlaying": "Playing now",
   "admin.nobodyListening": "Nobody is listening right now.",
+  "admin.transcoding": "Transcoding",
+  "admin.transcodingOpen": "Available",
+  "admin.transcodingFull": "Every slot taken",
+  "admin.transcodingUnavailable": "Unavailable",
+  "admin.transcodingOriginals":
+    "This server cannot transcode. Every listener receives the original file, whatever format their client asks for.",
+  "admin.transcodingRefused":
+    "A new transcode is refused until a running one ends. Originals, and what the transcode cache already holds, still play.",
+  "admin.transcodingActive": "Running now",
+  "admin.transcodingCount": "{active} of {limit}",
+  "admin.transcodingPerAccount": "Per account",
+  "admin.transcodingPerAccountLimit": {
+    one: "{count} at a time",
+    other: "{count} at a time",
+  },
+  "admin.transcodingFormats": "Output formats",
+  "admin.transcodingError": "The transcoding state could not be read.",
   "admin.tokens": "API tokens for {username}",
   "admin.tokenName": "What is it for?",
   "admin.tokenCreate": "Issue",

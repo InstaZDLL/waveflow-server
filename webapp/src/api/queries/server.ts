@@ -1,7 +1,7 @@
 // The running server itself, as distinct from anything it holds.
 
 import { queryOptions } from "@tanstack/react-query";
-import { ApiError, getServerIdentity } from "../index";
+import { ApiError, getServerIdentity, getTranscodeStatus } from "../index";
 
 /**
  * The server's version and the source it offers.
@@ -32,4 +32,20 @@ export const serverIdentityQuery = () =>
       ((error instanceof ApiError && error.status >= 500) ||
         error instanceof TypeError),
     refetchOnWindowFocus: true,
+  });
+
+/**
+ * How much transcoding the server is doing, against what it allows.
+ *
+ * Re-asked every ten seconds while the administration screen holds it: the
+ * count moves as fast as listeners start and stop, and the answer is a few
+ * integers read from memory. A hidden tab stops asking, which is TanStack
+ * Query's default and kept here, and so does the screen once it is left.
+ */
+export const transcodeStatusQuery = () =>
+  queryOptions({
+    queryKey: ["transcode-status"],
+    queryFn: getTranscodeStatus,
+    refetchInterval: 10_000,
+    staleTime: 0,
   });
