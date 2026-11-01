@@ -344,7 +344,10 @@ project wants that later.
   uses. An Actions secret belongs to one repository, so both are set on this one
   too. A tag without them stops before any build. A pull request or a manual run
   signs nothing on Windows, even when the secrets are readable, so the
-  certificate only ever signs what is released.
+  certificate only ever signs what is released. The signing is a job of its own,
+  which checks out nothing and builds nothing: `cargo build` runs the build
+  scripts and procedural macros of every dependency, and a process one of them
+  left on the runner could read the PFX.
 - **macOS.** `codesign --force --sign -` with a stable identifier
   (`app.waveflow.server`, and `.ffmpeg` and `.ffprobe` for the tools) on all
   three executables of both targets, on every run, since it needs no secret.
@@ -453,9 +456,12 @@ one that lacks the certificate of §6, before anything is built. Then, in order:
    what this page first proposed: what a release ships is compiled from its
    tag, and its build costs minutes, on a day that is rare.
 2. **`webapp`** — the client, once, for all five.
-3. **`archive`** — one native runner per target builds the server, signs the
-   three executables (§6), packs the archive of §2 with
-   `packaging/standalone/pack.sh`, and starts it with
+3. **`windows-server`** and **`windows-sign`** — the Windows server is built, then
+   its three executables are signed on another runner (§6). The other targets
+   build in `archive`, having no certificate to keep from their build.
+4. **`archive`** — one native runner per target builds the server and signs the
+   macOS executables, or takes the Windows ones from step 3, packs the archive of
+   §2 with `packaging/standalone/pack.sh`, and starts it with
    `packaging/standalone/smoke.sh`: the files of §2, nothing loaded that the
    system lacks, laptop mode from the `laptop.env` in the archive, and an empty
    `PATH`, so the tools can only be the ones beside it, then a FLAC file turned
@@ -471,9 +477,9 @@ one that lacks the certificate of §6, before anything is built. Then, in order:
    (`+crt-static`): `VCRUNTIME140.dll` is not part of Windows, and a laptop that
    has never installed the redistributable would refuse the executable before
    it printed a line.
-4. **`assets`** — one `SHA256SUMS` over the five archives and the source bundle,
+5. **`assets`** — one `SHA256SUMS` over the five archives and the source bundle,
    and all seven files in one artifact.
-5. **The release job** attaches that artifact, and the release notes gain a
+6. **The release job** attaches that artifact, and the release notes gain a
    "Download" section above the image's. It runs last, and the image's tags now
    wait for the archives too, so a tag whose archives failed announces nothing.
 

@@ -23,6 +23,8 @@ name: Standalone
 #   on Windows with the certificate in the secrets below, on a tag only, and on
 #   macOS ad hoc, on every run. Neither system trusts these signatures, so both
 #   still warn on the first launch. Linux has nothing to sign.
+# - The Windows server is built in a job of its own and signed in another, so the
+#   certificate never reaches a runner where a dependency's build script has run.
 
 on:
   workflow_call:
@@ -118,9 +120,99 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  windows-server:
+    name: Server (windows-x86_64)
+    needs: webapp
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-webapp
+          path: webapp/dist
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: "1.98"
+
+      - name: Build
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-windows-server
+          path: target/release/waveflow-server.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  # Holds the certificate, so it checks out nothing and runs nothing it was
+  # handed. In the job that builds, the secrets would be out of reach of the steps
+  # before this one only on paper: `cargo build` runs the build scripts and the
+  # procedural macros of every dependency, and a process one of them leaves behind
+  # outlives its step, there to read the PFX, or the password on signtool's command
+  # line. On a tag only, too: a branch of this repository can read the secrets, and
+  # the certificate is there to sign what is released, not what a branch built.
+  windows-sign:
+    name: Sign (windows-x86_64)
+    needs: [ffmpeg, windows-server]
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-windows-server
+          path: target/release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-windows-x86_64
+          path: ffmpeg-out
+
+      # The PFX lives in the runner's temporary folder, which nothing uploads, for
+      # as long as signtool runs.
+      - name: Sign
+        if: inputs.tag
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNTOOL_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNTOOL_PFX_PASSWORD }}
+        run: |
+          Write-Host "::add-mask::$env:PFX_PASSWORD"
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object -Property @{ Expression = { try { [Version]$_.Directory.Parent.Name } catch { [Version]"0.0.0.0" } } } -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found in the Windows Kits" }
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:PFX_PASSWORD `
+              target\release\waveflow-server.exe ffmpeg-out\ffmpeg.exe ffmpeg-out\ffprobe.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool exited with $LASTEXITCODE" }
+          } finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      # Two paths, so the artifact keeps them, and `archive` finds both where the
+      # other targets have theirs.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-windows-executables
+          path: |
+            target/release/waveflow-server.exe
+            ffmpeg-out/
+          retention-days: 7
+          if-no-files-found: error
+
   archive:
     name: Archive (${{ matrix.target }})
-    needs: [ffmpeg, webapp]
+    needs: [ffmpeg, webapp, windows-sign]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -146,14 +238,22 @@ jobs:
           persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os != 'Windows'
         with:
           name: standalone-webapp
           path: webapp/dist
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os != 'Windows'
         with:
           name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-${{ matrix.target }}
           path: ffmpeg-out
+
+      # Built and signed already, by the two jobs above.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: standalone-windows-executables
 
       # The toolchain is the image's, and its version the Dockerfile's. The three
       # targets that exercise FFmpeg ran in `ffmpeg.yml` against a glibc build;
@@ -175,7 +275,7 @@ jobs:
             '
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
-        if: runner.os != 'Linux'
+        if: runner.os == 'macOS'
         with:
           toolchain: "1.98"
 
@@ -184,38 +284,6 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
         run: cargo build --locked --release
-
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --locked --release
-
-      # On a tag only. A branch of this repository can read the secrets too, and
-      # the certificate is there to sign what is released, not what a branch
-      # built. The PFX lives in the runner's temporary folder, which nothing packs,
-      # for as long as signtool runs.
-      - name: Sign (Windows)
-        if: runner.os == 'Windows' && inputs.tag
-        shell: pwsh
-        env:
-          PFX_BASE64: ${{ secrets.SIGNTOOL_PFX_BASE64 }}
-          PFX_PASSWORD: ${{ secrets.SIGNTOOL_PFX_PASSWORD }}
-        run: |
-          Write-Host "::add-mask::$env:PFX_PASSWORD"
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
-            Sort-Object -Property @{ Expression = { try { [Version]$_.Directory.Parent.Name } catch { [Version]"0.0.0.0" } } } -Descending |
-            Select-Object -First 1
-          if (-not $signtool) { throw "signtool.exe not found in the Windows Kits" }
-          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
-          try {
-            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
-            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:PFX_PASSWORD `
-              target\release\waveflow-server.exe ffmpeg-out\ffmpeg.exe ffmpeg-out\ffprobe.exe
-            if ($LASTEXITCODE -ne 0) { throw "signtool exited with $LASTEXITCODE" }
-          } finally {
-            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
-          }
 
       # Needs no secret, so every run does it and a pull request proves it. `-` is
       # ad hoc; a Developer ID would be this identity, with its certificate
