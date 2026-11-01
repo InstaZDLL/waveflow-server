@@ -39,8 +39,8 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
-      ref:
-        description: "What to build: a tag ref for a release, empty for the caller's own commit"
+      tag:
+        description: "The tag being released"
         required: true
         type: string
     outputs:
@@ -56,8 +56,8 @@ permissions:
 # release is never cancelled: `github.ref` of a retried one is `main`, which it
 # shares with other retries.
 concurrency:
-  group: ffmpeg-${{ github.workflow }}-${{ inputs.ref || github.ref }}
-  cancel-in-progress: ${{ !inputs.ref }}
+  group: ffmpeg-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: ${{ !inputs.tag }}
 
 env:
   FFMPEG_DOWNLOADS: ffmpeg-downloads
@@ -74,7 +74,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
           persist-credentials: false
 
       - id: version
@@ -120,7 +120,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
           persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -207,7 +207,11 @@ jobs:
         with:
           toolchain: stable
 
+      # Not for a release. A retried one runs on `main`, so what its tests left
+      # would be saved where every branch restores from, and it would itself
+      # restore what any earlier run on `main` had saved.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: ${{ !inputs.tag }}
         with:
           key: ffmpeg-${{ matrix.target }}
 

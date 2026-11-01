@@ -45,7 +45,7 @@ jobs:
     name: FFmpeg
     uses: ./.github/workflows/ffmpeg.yml
     with:
-      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+      tag: ${{ inputs.tag }}
 
   # Once, so all five archives serve the same client. `build.rs` embeds a
   # placeholder page rather than fail when this is missing, which the smoke test
