@@ -13,6 +13,15 @@ import {
   type song,
 } from "./catalogue";
 
+/** A server that can transcode, one of its four slots taken. */
+export const freshTranscodeStatus = () => ({
+  available: true,
+  active: 1,
+  global_limit: 4,
+  per_user_limit: 1,
+  formats: ["mp3", "opus", "aac"],
+});
+
 /**
  * Everything the mock server keeps between requests, which the tests read,
  * replace and reset. Fields of one object rather than module-level `let`s,
@@ -38,6 +47,14 @@ class MockState {
   /** Flipped by the two tests that check a failure is shown as one. */
   membersFail = false;
   tokensFail = false;
+
+  /**
+   * What `GET /transcode/status` answers: room left by default. A test
+   * replaces it to fill the slots, or to take FFmpeg away.
+   */
+  transcodeStatus = freshTranscodeStatus();
+  /** Every answer to the transcoding status is a 500. */
+  transcodeFails = false;
 
   ownClients: Client[] = [];
   /**

@@ -27,6 +27,23 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.scanning": "스캔 진행 중",
   "admin.nowPlaying": "지금 재생 중",
   "admin.nobodyListening": "지금 듣고 있는 사람이 없어요.",
+  "admin.transcoding": "트랜스코딩",
+  "admin.transcodingOpen": "사용 가능",
+  "admin.transcodingFull": "모든 슬롯 사용 중",
+  "admin.transcodingUnavailable": "사용 불가",
+  "admin.transcodingOriginals":
+    "이 서버는 트랜스코딩할 수 없어요. 클라이언트가 어떤 형식을 요청하든 모든 청취자는 원본 파일을 받아요.",
+  "admin.transcodingRefused":
+    "진행 중인 트랜스코딩이 끝날 때까지 새 트랜스코딩은 거부돼요. 원본 파일과 트랜스코딩 캐시에 이미 있는 것은 계속 재생돼요.",
+  "admin.transcodingActive": "실행 중",
+  "admin.transcodingCount": "{limit}개 중 {active}개",
+  "admin.transcodingPerAccount": "계정당",
+  "admin.transcodingPerAccountLimit": {
+    one: "한 번에 {count}개",
+    other: "한 번에 {count}개",
+  },
+  "admin.transcodingFormats": "출력 형식",
+  "admin.transcodingError": "트랜스코딩 상태를 읽을 수 없어요.",
   "admin.tokens": "{username}의 API 토큰",
   "admin.tokenName": "어디에 쓰나요?",
   "admin.tokenCreate": "발급",

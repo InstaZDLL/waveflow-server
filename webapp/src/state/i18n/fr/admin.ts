@@ -27,6 +27,23 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.scanning": "Analyse en cours",
   "admin.nowPlaying": "Écoutes en cours",
   "admin.nobodyListening": "Personne n’écoute en ce moment.",
+  "admin.transcoding": "Transcodage",
+  "admin.transcodingOpen": "Disponible",
+  "admin.transcodingFull": "Toutes les places prises",
+  "admin.transcodingUnavailable": "Indisponible",
+  "admin.transcodingOriginals":
+    "Ce serveur ne peut pas transcoder. Chaque auditeur reçoit le fichier original, quel que soit le format que demande son client.",
+  "admin.transcodingRefused":
+    "Un nouveau transcodage est refusé jusqu’à ce qu’un transcodage en cours se termine. Les originaux, et ce que le cache de transcodage contient déjà, restent lisibles.",
+  "admin.transcodingActive": "En cours",
+  "admin.transcodingCount": "{active} sur {limit}",
+  "admin.transcodingPerAccount": "Par compte",
+  "admin.transcodingPerAccountLimit": {
+    one: "{count} à la fois",
+    other: "{count} à la fois",
+  },
+  "admin.transcodingFormats": "Formats de sortie",
+  "admin.transcodingError": "L’état du transcodage n’a pas pu être lu.",
   "admin.tokens": "Jetons d’API de {username}",
   "admin.tokenName": "À quoi sert-il ?",
   "admin.tokenCreate": "Émettre",

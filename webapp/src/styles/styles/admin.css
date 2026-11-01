@@ -54,6 +54,25 @@
   unicode-bidi: plaintext;
 }
 
+/* Transcoding sits under who is listening, the other reading of what the
+   server is doing now. A grid, so the badge keeps its own width rather than
+   stretching across the panel, and the gap spaces the heading too. */
+.transcoding-panel {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.transcoding-panel > h3,
+.transcoding-panel > p {
+  margin: 0;
+}
+
+.transcoding-panel meter {
+  width: min(100%, 14rem);
+  height: 0.5rem;
+}
+
 .admin-panel .resource-list li > div {
   display: grid;
   min-width: 0;

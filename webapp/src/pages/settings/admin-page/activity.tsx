@@ -1,10 +1,12 @@
-// What the server is doing now: a scan's progress, who is listening.
+// What the server is doing now: a scan's progress, who is listening, how
+// much it is transcoding.
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import { type ScanJob, watchScan } from "../../../api";
-import { nowPlayingQuery } from "../../../api/queries";
+import { nowPlayingQuery, transcodeStatusQuery } from "../../../api/queries";
+import { type TranscodeLoad, transcodeLoad } from "../../../lib/transcoding";
 import { type TranslationKey, useI18n } from "../../../state/i18n";
 
 /**
@@ -125,6 +127,94 @@ export function NowPlayingPanel() {
         </ul>
       ) : (
         <p className="muted">{t("admin.nobodyListening")}</p>
+      )}
+    </article>
+  );
+}
+
+/** The word for each load, and the colour the scrobbling rows give a health. */
+const LOAD_BADGE: Record<
+  TranscodeLoad,
+  { label: TranslationKey; tone: string }
+> = {
+  open: { label: "admin.transcodingOpen", tone: "health-healthy" },
+  full: { label: "admin.transcodingFull", tone: "health-degraded" },
+  unavailable: {
+    label: "admin.transcodingUnavailable",
+    tone: "health-broken",
+  },
+};
+
+/**
+ * Whether the server can transcode, and how much of its room for it is taken
+ * (`GET /transcode/status`).
+ *
+ * Polled on the interval the query carries, like the panel above it. Until a
+ * first reading arrives a failure says so, rather than leaving the panel on a
+ * wait that is not coming; after one, a failed poll keeps the last reading.
+ */
+export function TranscodingPanel() {
+  const { t } = useI18n();
+  const { data: status, error } = useQuery(transcodeStatusQuery());
+
+  if (!status) {
+    return (
+      <article className="admin-panel transcoding-panel">
+        <h3>{t("admin.transcoding")}</h3>
+        {error ? (
+          <p className="error" role="alert">
+            {t("admin.transcodingError")}
+          </p>
+        ) : (
+          <p className="muted">{t("common.loading")}</p>
+        )}
+      </article>
+    );
+  }
+
+  const load = transcodeLoad(status);
+  const badge = LOAD_BADGE[load];
+  return (
+    <article className="admin-panel transcoding-panel">
+      <h3>{t("admin.transcoding")}</h3>
+      <span className={`badge ${badge.tone}`}>{t(badge.label)}</span>
+      {load === "unavailable" ? (
+        <p className="muted">{t("admin.transcodingOriginals")}</p>
+      ) : (
+        <>
+          {load === "full" ? (
+            <p className="muted">{t("admin.transcodingRefused")}</p>
+          ) : null}
+          <dl className="property-list">
+            <div className="property-row">
+              <dt>{t("admin.transcodingActive")}</dt>
+              <dd>
+                {t("admin.transcodingCount", {
+                  active: status.active,
+                  limit: status.global_limit,
+                })}
+                <meter
+                  min={0}
+                  max={status.global_limit}
+                  value={status.active}
+                  aria-label={t("admin.transcodingActive")}
+                />
+              </dd>
+            </div>
+            <div className="property-row">
+              <dt>{t("admin.transcodingPerAccount")}</dt>
+              <dd>
+                {t("admin.transcodingPerAccountLimit", {
+                  count: status.per_user_limit,
+                })}
+              </dd>
+            </div>
+            <div className="property-row">
+              <dt>{t("admin.transcodingFormats")}</dt>
+              <dd>{status.formats.join(" · ")}</dd>
+            </div>
+          </dl>
+        </>
       )}
     </article>
   );

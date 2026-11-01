@@ -30,7 +30,7 @@ import {
   statsFor,
   track,
 } from "./catalogue";
-import { mock } from "./state";
+import { freshTranscodeStatus, mock } from "./state";
 
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
@@ -365,6 +365,14 @@ async function mockAuthenticatedApi(page: Page) {
     }
     if (url.pathname === "/api/v2/now-playing") {
       await route.fulfill({ json: [] });
+      return;
+    }
+    if (url.pathname === "/api/v2/transcode/status") {
+      if (mock.transcodeFails) {
+        await route.fulfill({ status: 500, json: { error: "boom" } });
+        return;
+      }
+      await route.fulfill({ json: mock.transcodeStatus });
       return;
     }
     if (url.pathname === "/api/v2/libraries") {
@@ -790,6 +798,8 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.restoreAsks = [];
   mock.membersFail = false;
   mock.tokensFail = false;
+  mock.transcodeStatus = freshTranscodeStatus();
+  mock.transcodeFails = false;
   mock.ownClients = freshClients();
   mock.bookmarks = [];
   mock.importAsks = [];

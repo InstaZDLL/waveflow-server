@@ -27,6 +27,23 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.scanning": "正在掃描",
   "admin.nowPlaying": "正在播放",
   "admin.nobodyListening": "目前沒有人在聽。",
+  "admin.transcoding": "轉碼",
+  "admin.transcodingOpen": "可用",
+  "admin.transcodingFull": "名額已滿",
+  "admin.transcodingUnavailable": "無法使用",
+  "admin.transcodingOriginals":
+    "此伺服器無法轉碼。無論用戶端要求哪種格式，每位聽眾收到的都是原始檔案。",
+  "admin.transcodingRefused":
+    "在進行中的轉碼結束之前，新的轉碼會被拒絕。原始檔案以及轉碼快取中已有的內容仍可播放。",
+  "admin.transcodingActive": "進行中",
+  "admin.transcodingCount": "{active} / {limit}",
+  "admin.transcodingPerAccount": "每個帳號",
+  "admin.transcodingPerAccountLimit": {
+    one: "同時 {count} 個",
+    other: "同時 {count} 個",
+  },
+  "admin.transcodingFormats": "輸出格式",
+  "admin.transcodingError": "無法讀取轉碼狀態。",
   "admin.tokens": "{username} 的 API 權杖",
   "admin.tokenName": "要用在哪裡？",
   "admin.tokenCreate": "核發",

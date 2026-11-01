@@ -9,13 +9,14 @@
 >
 > No code was modified during this survey.
 >
-> **Status as of 2026-10-31, `main` at `be51935`:** the four batches are
+> **Status as of 2026-11-01, `main` at `1ba23a1`:** the four batches are
 > delivered, batch C included, and of Navidrome's five server gaps four are
 > closed — smart playlists by #333 on 2026-10-25. The client speaks nine
-> languages since #391 and #392, all but English fetched on demand (#393). Still open, each
-> now an issue: jukebox (#402), per-account transcoding profiles (#403), a
-> screen for `GET /transcode/status` (#404), and any use of the library event
-> stream by the web client (#405).
+> languages since #391 and #392, all but English fetched on demand (#393).
+> Every route of the "server knows, screen ignores" table is wired, the
+> transcoding state last (#404). Still open, each now an issue: jukebox
+> (#402), per-account transcoding profiles (#403), and any use of the library
+> event stream by the web client (#405).
 
 ## What was found
 
@@ -117,11 +118,15 @@ This is the bulk of the gap, and it costs client work only.
 | API tokens | `GET`/`POST /admin/users/{u}/tokens`, `DELETE .../{id}` |
 | Transcoding state | `GET /transcode/status` |
 
-> **State on 2026-10-29.** Every row is wired except the last: **nothing under
-> `webapp/src/` calls `GET /transcode/status`**, so the transcoding state still
-> has no screen. Member management also gained the list route it lacked,
-> `GET /libraries/{id}/members` (`d4cbb27`, 2026-09-10), and API tokens are now
-> an account's own through `/api/v2/api-tokens` (#247, 2026-10-11).
+> **State on 2026-11-01.** Every row is wired. The last, the transcoding
+> state, had no caller under `webapp/src/` until #404: the administration now
+> shows whether the server can transcode (without it, every listener gets the
+> original file), the transcodes running against the global limit, the
+> per-account limit and the output formats, asked again every ten seconds
+> while the screen is open. Member management also gained the list route it
+> lacked, `GET /libraries/{id}/members` (`d4cbb27`, 2026-09-10), and API
+> tokens are now an account's own through `/api/v2/api-tokens` (#247,
+> 2026-10-11).
 
 ### What WaveFlow does and Navidrome does not
 

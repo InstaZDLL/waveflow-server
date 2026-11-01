@@ -27,6 +27,23 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.scanning": "スキャン中",
   "admin.nowPlaying": "いま再生中",
   "admin.nobodyListening": "いま聴いている人はいません。",
+  "admin.transcoding": "トランスコード",
+  "admin.transcodingOpen": "利用可能",
+  "admin.transcodingFull": "枠がすべて使用中",
+  "admin.transcodingUnavailable": "利用不可",
+  "admin.transcodingOriginals":
+    "このサーバーはトランスコードできません。クライアントがどの形式を求めても、リスナーには元のファイルが届きます。",
+  "admin.transcodingRefused":
+    "実行中のトランスコードが終わるまで、新しいトランスコードは拒否されます。元のファイルと、トランスコードキャッシュにすでにあるものは引き続き再生できます。",
+  "admin.transcodingActive": "実行中",
+  "admin.transcodingCount": "{active} / {limit}",
+  "admin.transcodingPerAccount": "アカウントごと",
+  "admin.transcodingPerAccountLimit": {
+    one: "同時に{count}件",
+    other: "同時に{count}件",
+  },
+  "admin.transcodingFormats": "出力形式",
+  "admin.transcodingError": "トランスコードの状態を読み取れませんでした。",
   "admin.tokens": "{username}の API トークン",
   "admin.tokenName": "用途",
   "admin.tokenCreate": "発行",
