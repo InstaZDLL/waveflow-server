@@ -9,15 +9,16 @@
 >
 > No code was modified during this survey.
 >
-> **Status as of 2026-11-01, `main` at `1ba23a1`:** the four batches are
+> **Status as of 2026-11-02, `main` at `e738ad3`:** the four batches are
 > delivered, batch C included, and of Navidrome's five server gaps four are
-> closed — smart playlists by #333 on 2026-10-25. The client speaks nine
-> languages since #391 and #392, all but English fetched on demand (#393).
+> closed — smart playlists by #333 on 2026-10-25 — and the fifth, jukebox, is
+> decided against ([RFC-026](../rfcs/RFC-026-no-jukebox.md)). The client speaks
+> nine languages since #391 and #392, all but English fetched on demand (#393).
 > Every route of the "server knows, screen ignores" table is wired, the
-> transcoding state last (#404). Still open, each now an issue: jukebox
-> (#402) and per-account transcoding profiles (#403). **Amended 2026-11-01:**
-> the web client follows the library event stream since #405; the user
-> journal (`/api/v2/sync/*`) is still unread by it.
+> transcoding state last (#404). Still open, as an issue: per-account
+> transcoding profiles (#403). **Amended 2026-11-01:** the web client follows
+> the library event stream since #405; the user journal (`/api/v2/sync/*`) is
+> still unread by it.
 
 ## What was found
 
@@ -84,7 +85,7 @@ the same day.
 | **Automatic `.m3u` import** | **done on 2026-10-12** (#216), import and export, server and screen — see `docs/plans/ui-and-missing-features-plan.md` |
 | **External scrobbling** — Last.fm, ListenBrainz, Maloja | done, RFC-010; server and screen, see point 15 |
 | **Internet radio** | **done on 2026-10-12** (#217), one list per account, the four Subsonic methods, `/api/v2/radio-stations` and a page |
-| **Jukebox mode** | `jukeboxRole` is declared `false` (`src/subsonic/nodes.rs:319`) |
+| **Jukebox mode** | **decided against on 2026-11-02** ([RFC-026](../rfcs/RFC-026-no-jukebox.md)); `jukeboxRole` stays declared `false` (`src/subsonic/nodes.rs`) |
 
 Two gaps of degree come on top. Navidrome's **transcoding** is configured per
 user and per player; WaveFlow has only concurrency ceilings,
@@ -99,6 +100,9 @@ format or bitrate profile. And **translation**: 34 languages against two.
 > **State on 2026-10-31.** Translation is no longer a gap of this size: the
 > client carries nine languages (#391, #392), the seven added ones still
 > awaiting a native read (#406). Jukebox is #402, transcoding profiles #403.
+>
+> **State on 2026-11-02.** Jukebox is decided against, so the gap stays and is
+> deliberate ([RFC-026](../rfcs/RFC-026-no-jukebox.md)).
 
 ### What Navidrome does, the server already knows how to do, and the screen ignores
 

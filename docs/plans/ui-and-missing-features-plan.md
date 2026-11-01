@@ -15,7 +15,8 @@
 > #252, #253, #258, #254). The artist page's biography and similar artists
 > came with RFC-011 (#270 to #276), smart playlists and podcasts with RFC-025
 > (#333). Still open: per-user transcoding profiles, animated artwork, and in
-> the Subsonic façade jukebox, chat, video, upload and the legacy `search`.
+> the Subsonic façade chat, video, upload and the legacy `search`. Jukebox is
+> decided against ([RFC-026](../rfcs/RFC-026-no-jukebox.md)).
 
 ## 1. Two real defects, found in the console
 
@@ -432,7 +433,7 @@ recensused. The absences, with what the server says about them:
 
 | Absent | Declared role | State |
 |---|---|---|
-| Jukebox (`jukeboxControl`) | `jukeboxRole: false` | nothing |
+| Jukebox (`jukeboxControl`) | `jukeboxRole: false` | decided against ([RFC-026](../rfcs/RFC-026-no-jukebox.md)) |
 | Podcasts (7 methods) | `podcastRole: false` | nothing |
 | Chat (`getChatMessages`, `addChatMessage`) | `commentRole: false` | nothing |
 | Video (`getVideos`, `hls`, `getCaptions`…) | `videoConversionRole: false` | nothing |
@@ -594,7 +595,8 @@ speed** — and a split by route must not be sold as an optimisation.
 9. **`.m3u` import**, then internet radio. *(Both done on 2026-10-12, #216
    and #217.)*
 10. Smart playlists, jukebox, podcasts: real projects. *(Smart playlists and
-    podcasts done on 2026-10-25, #333; jukebox still open.)*
+    podcasts done on 2026-10-25, #333; jukebox decided against on 2026-11-02,
+    RFC-026.)*
 
 ## 5. The split into pull requests
 

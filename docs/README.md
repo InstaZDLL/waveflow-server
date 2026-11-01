@@ -51,6 +51,7 @@ The design decisions, one per document. A `Status` line never changes; the
 | [RFC-023](rfcs/RFC-023-hardening.md) | Bounded reads, FFmpeg's protocols, the API reference, disabled accounts |
 | [RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md) | LRCLIB lyrics, listening statistics, mixes and local similar songs |
 | [RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md) | Smart playlists and podcasts |
+| [RFC-026](rfcs/RFC-026-no-jukebox.md) | No jukebox mode: why the server does not play on its own output |
 
 ## Plans and analyses
 
