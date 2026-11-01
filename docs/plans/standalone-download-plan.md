@@ -412,12 +412,13 @@ Each line is one pull request.
    three integration targets on all five platforms. *Done* (#398):
    `packaging/ffmpeg/build.sh` pins FFmpeg 8.1.3, LAME 3.100, Opus 1.6.1 and
    libwebp 1.6.0 by SHA-256, fails if configure leaves out any component it
-   lists or lets in any protocol but `file` and `pipe`, and writes `LICENSES/`
-   and `SOURCE.txt` beside the two tools; `sources` packs the four tarballs and
-   the script. `.github/workflows/ffmpeg.yml` builds on a native runner per
-   target — Linux inside Alpine, so the binaries are static against musl —
-   and runs the `media`, `quality` and `canvas` targets with the build first
-   on `PATH`. Each tool weighs 5.5 to 8 MB. The release job of §7 reuses the
+   lists or enables one it does not (those a listed component or the `ffmpeg`
+   tool selects are named), or lets in any protocol but `file` and `pipe`, and
+   writes `LICENSES/`, `SOURCE.txt` included, beside the two tools; `sources`
+   packs the four tarballs and the script. `.github/workflows/ffmpeg.yml`
+   builds on a native runner per target — Linux inside Alpine, so the binaries
+   are static against musl — and runs the `media`, `quality` and `canvas`
+   targets with the build first on `PATH`. Each tool weighs 5.5 to 8 MB. The release job of §7 reuses the
    script; the workflow stays as the check of a change to it.
 5. **The standalone archives and `SHA256SUMS`** in `release.yml`, unsigned,
    with `README.txt` saying what to click past; the header rewritten.

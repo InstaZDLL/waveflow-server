@@ -6,17 +6,19 @@
 #   sh packaging/ffmpeg/build.sh build   <out>    build into <out>
 #   sh packaging/ffmpeg/build.sh sources <out>    pack the corresponding source
 #
-# `build` leaves in <out> the two executables, `LICENSES/` (the texts of
-# FFmpeg, LAME, Opus and libwebp) and `SOURCE.txt` (the versions, the tarballs
-# and the configure line). `sources` leaves `ffmpeg-<version>-sources.tar.gz`:
-# the four tarballs exactly as downloaded, their checksums and this script —
-# the corresponding source a release owes for the binaries.
+# `build` leaves in <out> the two executables and `LICENSES/`: the texts of
+# FFmpeg, LAME, Opus and libwebp, and `SOURCE.txt` (the versions, the tarballs
+# and the configure line), where the standalone archives carry them (§2 and §3
+# of docs/plans/standalone-download-plan.md). `sources` leaves
+# `ffmpeg-<version>-sources.tar.gz`: the four tarballs exactly as downloaded,
+# their checksums and this script — the corresponding source a release owes
+# for the binaries.
 #
 # The work happens under $WORK_DIR (default: a folder in the system's temporary
 # directory); the tarballs are kept in $WORK_DIR/downloads and checked against
 # the SHA-256 below on every run, so a tarball that changed upstream stops the
 # build rather than entering a release. $BUILD_COMMIT, when set, names the
-# commit of this script in SOURCE.txt.
+# commit of this script in LICENSES/SOURCE.txt.
 #
 # Runs on Linux (built inside Alpine, so the binaries are static against
 # musl), on macOS, and on Windows in an MSYS2 UCRT64 shell. Needs a C compiler,
@@ -70,6 +72,8 @@ wrapped_avframe"
 # what the integration tests generate their fixtures with: they run `ffmpeg`
 # from PATH, so the release is tested with this one FFmpeg rather than two.
 ENCODERS="aac flac libmp3lame libopus libwebp mjpeg mpeg4 pcm_s16le pcm_s32le"
+# Not asked for, but enabled by configure because `mpeg4` selects it.
+ENCODERS_SELECTED="h263"
 DEMUXERS="aac aiff dsf flac iff matroska mov mp3 ogg wav"
 # The transcode writes `mp3`, `ogg` and `adts`; the analysis `-f s32le`, whose
 # component is `pcm_s32le`, then `image2pipe` and `webp`; a canvas is remuxed
@@ -77,6 +81,8 @@ DEMUXERS="aac aiff dsf flac iff matroska mov mp3 ogg wav"
 # again for fixtures.
 MUXERS="adts flac image2pipe matroska mov mp3 mp4 ogg pcm_s32le wav webm webp"
 PARSERS="aac flac mpegaudio opus vorbis"
+# Not asked for, but enabled by configure because the `mov` muxer selects it.
+PARSERS_SELECTED="ac3"
 # The ones the mp4 and Matroska muxers insert on their own.
 BSFS="aac_adtstoasc pgs_frame_merge vp9_superframe"
 # `volume` is ReplayGain, `showspectrumpic` the spectrogram, `aresample` and
@@ -84,6 +90,9 @@ BSFS="aac_adtstoasc pgs_frame_merge vp9_superframe"
 # `sine`, `anoisesrc`, `color` and `testsrc` are the fixtures' sources.
 FILTERS="anoisesrc aformat anull aresample color format null scale
 showspectrumpic sine testsrc volume"
+# Not asked for, but enabled by configure: the `ffmpeg` tool selects the ones
+# it inserts on its own for `-ss`/`-t`, cropping and autorotation.
+FILTERS_SELECTED="atrim crop hflip rotate transpose trim vflip"
 # Every input is opened under `-protocol_whitelist file` (RFC-023) and every
 # output is a file or `pipe:1`. Nothing else is compiled in, so no input can
 # reach the network whatever it names.
@@ -259,29 +268,49 @@ build_ffmpeg() {
     unpack "$FFMPEG_TARBALL" "ffmpeg-$FFMPEG_VERSION"
     cd "$SOURCES/ffmpeg-$FFMPEG_VERSION"
     configure_ffmpeg
-    check_enabled DECODER "$DECODERS"
-    check_enabled ENCODER "$ENCODERS"
-    check_enabled DEMUXER "$DEMUXERS"
-    check_enabled MUXER "$MUXERS"
-    check_enabled PARSER "$PARSERS"
-    check_enabled BSF "$BSFS"
-    check_enabled FILTER "$FILTERS"
-    check_enabled PROTOCOL "$PROTOCOLS"
-    check_enabled INDEV "$INDEVS"
+    components_wrong=
+    check_components DECODER "$DECODERS"
+    check_components ENCODER "$ENCODERS" "$ENCODERS_SELECTED"
+    check_components DEMUXER "$DEMUXERS"
+    check_components MUXER "$MUXERS"
+    check_components PARSER "$PARSERS" "$PARSERS_SELECTED"
+    check_components BSF "$BSFS"
+    check_components FILTER "$FILTERS" "$FILTERS_SELECTED"
+    check_components PROTOCOL "$PROTOCOLS"
+    check_components INDEV "$INDEVS"
+    check_components OUTDEV ""
+    [ -z "$components_wrong" ] || exit 1
     make -j "$JOBS"
     make install
 }
 
-# Configure takes a name it does not know with a warning lost in its output and
-# builds without it: `--enable-muxer=s32le` once left the analysis with no way
-# to write its samples. Every name listed above must come out enabled.
-check_enabled() {
+# What configure enabled must be exactly what is listed above. It takes a name
+# it does not know with a warning lost in its output and builds without it:
+# `--enable-muxer=s32le` once left the analysis with no way to write its
+# samples. And it enables on its own whatever a listed component or the
+# `ffmpeg` tool selects, so a new `--enable-lib...` could bring in a decoder or
+# an encoder of that library's nobody asked for; what is selected that way
+# today is named in the *_SELECTED lists. Every kind is checked before failing,
+# so one run reports everything that is off. `frame_thread_encoder` is
+# configure's switch for threaded encoding, not an encoder, and is skipped.
+check_components() {
+    label=$(echo "$1" | tr 'A-Z' 'a-z')
+    enabled=$(sed -n -e '/^CONFIG_FRAME_THREAD_ENCODER=/d' \
+        -e "s/^CONFIG_\\([A-Z0-9_]*\\)_$1=yes\$/\\1/p" ffbuild/config.mak | tr 'A-Z' 'a-z')
     for name in $2; do
-        variable=$(echo "CONFIG_${name}_$1" | tr 'abcdefghijklmnopqrstuvwxyz' 'ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-        if ! grep -q "^$variable=yes\$" ffbuild/config.mak; then
-            echo "configure did not enable the $name $(echo "$1" | tr 'A-Z' 'a-z')" >&2
-            exit 1
+        if ! echo "$enabled" | grep -qx "$name"; then
+            echo "configure did not enable the $name $label" >&2
+            components_wrong=1
         fi
+    done
+    for name in $enabled; do
+        case " $(echo $2 ${3:-}) " in
+            *" $name "*) ;;
+            *)
+                echo "configure enabled the $name $label, which is not listed" >&2
+                components_wrong=1
+                ;;
+        esac
     done
 }
 
@@ -321,11 +350,10 @@ write_source() {
         echo
         echo "FFmpeg configure line:"
         echo "  $CONFIGURE_LINE"
-    } > "$OUT/SOURCE.txt"
+    } > "$OUT/LICENSES/SOURCE.txt"
 }
 
 write_licences() {
-    mkdir -p "$OUT/LICENSES"
     {
         cat "$SOURCES/ffmpeg-$FFMPEG_VERSION/LICENSE.md"
         echo
@@ -377,6 +405,7 @@ build() {
         windows) objdump -p "$OUT/ffmpeg.exe" | grep 'DLL Name' ;;
         *) ;;
     esac
+    mkdir -p "$OUT/LICENSES"
     write_licences
     write_source
     log "built into $OUT"
