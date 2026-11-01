@@ -20,7 +20,9 @@ COPY --from=web /web/dist ./webapp/dist
 RUN cargo build --locked --release
 
 FROM debian:trixie-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg && rm -rf /var/lib/apt/lists/* \
+# No curl: the healthcheck below is the binary asking itself (#394), and curl
+# brought over a hundred scanner alerts into the image for that one line.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 4533 --create-home waveflow \
     && mkdir -p /data /music && chown -R waveflow:waveflow /data /music
 COPY --from=builder /build/target/release/waveflow-server /usr/local/bin/waveflow-server
@@ -33,6 +35,7 @@ ENV WAVEFLOW_DATA_DIR=/data \
     WAVEFLOW_LOG_FORMAT=json
 VOLUME ["/data", "/music"]
 EXPOSE 4533
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["curl", "--fail", "--silent", "http://127.0.0.1:4533/ready"]
+# Asks /ready on WAVEFLOW_BIND, so a changed bind needs no change here.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["waveflow-server", "health"]
 ENTRYPOINT ["waveflow-server"]
 CMD ["serve"]

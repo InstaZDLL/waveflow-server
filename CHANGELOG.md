@@ -18,6 +18,10 @@ out first, whether or not it breaks a compile.
   it. A Chinese browser gets the script its reader uses: Traditional for
   Taiwan, Hong Kong and Macao, Simplified elsewhere. None of the seven has had
   a native speaker's review yet.
+- **`waveflow-server health`**, which asks `/ready` at `WAVEFLOW_BIND` and
+  exits 0 on its readiness answer, or prints one line and exits 1. The Docker
+  image's `HEALTHCHECK` now runs it, and curl, installed for that check alone,
+  has left the image.
 
 ### Changed
 

@@ -209,6 +209,19 @@ fn only_a_waveflow_health_body_is_recognised() {
     assert!(!is_waveflow_health(&serde_json::json!("ok")));
 }
 
+/// What `waveflow-server health` asks too. Held here rather than through the
+/// binary: on Linux a connection to `0.0.0.0` reaches the loopback anyway, so
+/// a probe that forgot to translate the wildcard would still pass there.
+#[test]
+fn a_wildcard_bind_is_reached_on_the_loopback_of_its_family() {
+    let v4: SocketAddr = "0.0.0.0:4533".parse().unwrap();
+    let v6: SocketAddr = "[::]:4533".parse().unwrap();
+    let lan: SocketAddr = "192.168.1.20:4533".parse().unwrap();
+    assert_eq!(reachable(v4), "127.0.0.1:4533".parse().unwrap());
+    assert_eq!(reachable(v6), "[::1]:4533".parse().unwrap());
+    assert_eq!(reachable(lan), lan);
+}
+
 #[test]
 fn the_banner_says_where_to_go_where_the_data_is_and_how_to_stop() {
     let data = std::env::temp_dir().join("WaveFlow Server");

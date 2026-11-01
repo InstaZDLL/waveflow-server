@@ -105,6 +105,7 @@ async fn count(state: &waveflow_server::AppState, query: &'static str) -> i64 {
         .unwrap()
 }
 
+mod health;
 mod key;
 mod laptop;
 mod library;

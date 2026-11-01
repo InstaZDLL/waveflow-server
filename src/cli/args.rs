@@ -15,6 +15,13 @@ pub struct Cli {
 pub enum Command {
     /// Run the HTTP server (the default when no command is supplied).
     Serve,
+    /// Ask the server on WAVEFLOW_BIND whether it is ready: exit 0 when
+    /// `/ready` answers 200, non-zero with one line on standard error
+    /// otherwise.
+    ///
+    /// For a container's healthcheck. A bind on every interface is asked on
+    /// the loopback of the same family.
+    Health,
     /// Manage local accounts.
     Account {
         #[command(subcommand)]
