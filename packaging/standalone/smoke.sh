@@ -139,11 +139,11 @@ esac
 
 # --- Laptop mode --------------------------------------------------------------
 
-# In a subshell, so the empty PATH is the server's alone. Only WAVEFLOW_BIND,
+# For a subshell, so the empty PATH is the server's alone. Only WAVEFLOW_BIND,
 # for SMOKE_PORT, and the browser's switch come from outside; laptop mode itself
 # comes from the file in the archive.
 native_home=$(native "$work/home")
-run_server() (
+server_environment() {
     PATH=/nonexistent
     HOME=$work/home
     LOCALAPPDATA=$native_home
@@ -153,10 +153,18 @@ run_server() (
     export PATH HOME LOCALAPPDATA WAVEFLOW_BIND WAVEFLOW_LAPTOP_OPEN_BROWSER RUST_LOG
     unset XDG_DATA_HOME WAVEFLOW_LAPTOP
     cd "$work/cwd"
+}
+run_server() (
+    server_environment
     exec "$server" "$@"
 )
 
-run_server > "$work/server.log" 2>&1 &
+# Not `run_server &`: a function that is a subshell, in the background, is two
+# forks, and `$!` would name the outer one while the server went on serving.
+(
+    server_environment
+    exec "$server"
+) > "$work/server.log" 2>&1 &
 server_pid=$!
 
 attempts=0
@@ -212,5 +220,12 @@ curl --silent --fail --show-error --output "$work/tone.mp3" \
 format=$("$ffprobe" -hide_banner -loglevel error -show_entries format=format_name \
     -of default=noprint_wrappers=1:nokey=1 "$(native "$work/tone.mp3")" | tr -d '\r')
 [ "$format" = mp3 ] || fail "the stream is $format, not mp3"
+
+# This script may run on a machine that goes on being used.
+stop_server
+server_pid=
+if curl --silent --output /dev/null --max-time 5 "$base/ready"; then
+    fail "the server still answers after being stopped"
+fi
 
 echo "smoke: $name started in laptop mode and played a file"
