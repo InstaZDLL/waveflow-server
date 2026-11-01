@@ -27,6 +27,12 @@ out first, whether or not it breaks a compile.
   screen with the setup token filled in, handed over in the URL fragment so it
   reaches no request and no log. `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns it
   off; an installed server never opens one.
+- **A minimal LGPL FFmpeg, built in CI** by `packaging/ffmpeg/build.sh` for
+  Windows, macOS (arm64 and x86_64) and Linux (x86_64 and arm64), from pinned
+  and checksummed tarballs, with only the components the server uses and no
+  protocol but `file` and `pipe`; each build passes the `media`, `quality` and
+  `canvas` tests before it is uploaded. Nothing ships it yet: the standalone
+  archives will, and the image keeps Debian's FFmpeg for now.
 
 ### Changed
 
