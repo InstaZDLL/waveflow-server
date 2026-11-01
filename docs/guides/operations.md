@@ -922,17 +922,22 @@ warning about the setting.
 
 Once listening, it opens the default browser on its address (through
 `rundll32`'s URL handler on Windows, `open` on macOS, `xdg-open` elsewhere; a
-failure is a warning in the log, never a reason to stop). While setup is open
-it opens the sign-in screen with the setup token in the URL fragment,
-`/login#setup-token=…`: a browser never sends a fragment, so the token is in
-no request line and no trace, and the sign-in screen moves it into its field
-and out of the address bar. The token file stays where it was and still
-works. The token is handed over only on Windows and macOS, which keep a
-process's command line from other accounts, and only when the server listens
-on the address it opens: on Linux, or bound to `0.0.0.0` or `[::]`, the
-browser opens the bare address and the token is read from its file. A second
-copy opens the running one's bare address, without the token: what answers
-`/health` on the port is not proof enough to hand it over.
+failure is a warning in the log, never a reason to stop). What it opens while
+setup is open depends on whether the token can be handed over, which takes
+Windows or macOS, which keep a process's command line from other accounts, and
+a server listening on the address it opens:
+
+- Handed over: the sign-in screen with the setup token in the URL fragment,
+  `/login#setup-token=…`. A browser never sends a fragment, so the token is in
+  no request line and no trace, and the sign-in screen moves it into its field
+  and out of the address bar. The token file stays where it was and still
+  works.
+- Not handed over, on Linux or bound to `0.0.0.0` or `[::]`: the bare address.
+  Type the token in yourself, the content of `<data>/setup-token`, or the value
+  of `WAVEFLOW_SETUP_TOKEN` when it is set.
+
+A second copy opens the running one's bare address, without the token: what
+answers `/health` on the port is not proof enough to hand it over.
 `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` turns the opening off; outside laptop mode
 the variable is read and refused when misspelt, but no browser is ever opened.
 
