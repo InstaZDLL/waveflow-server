@@ -26,7 +26,10 @@
 //! which a server listening on every interface does not own: Windows and the
 //! BSDs let another program bind `127.0.0.1` on the same port, more specific,
 //! and take the browser's connection. Elsewhere the browser opens the bare
-//! address, and the token is in the file the log names.
+//! address, and the token is in the file the log names. What this does not
+//! cover is a machine that logs every command line it starts (Windows' event
+//! 4688, Sysmon, an endpoint agent): its log readers see the token. That is
+//! the operations guide's to say, with the variable that turns the opening off.
 //!
 //! Through the opener each platform ships rather than a crate: `rundll32`'s
 //! URL handler on Windows, `open` on macOS, `xdg-open` elsewhere. A failure to
