@@ -18,20 +18,24 @@ import type { LibraryEvent } from "../api";
 type QueryKey = readonly unknown[];
 
 /**
- * The catalogue's listings, each keyed with its scope last: one library's id,
- * or `null` for the whole catalogue, which a change in any library moves.
+ * The catalogue's listings, with where each key holds its scope: one library's
+ * id, or `null` for the whole catalogue, which a change in any library moves.
  *
- * Not `random-songs`: a fresh draw is what that screen promises, and a scan
+ * The daily mixes are here because they are drawn from a seed of the account
+ * and the day: asked again, they keep their order and gain what was added.
+ * `random-songs` is not: a fresh draw is what that screen promises, and a scan
  * redrawing it under the listener every few seconds would be the feed working
- * and the page failing. Not the daily mixes either, for the same reason.
+ * and the page failing.
  */
-const SCOPED_LISTINGS = new Set([
-  "albums",
-  "songs",
-  "artists",
-  "genres",
-  "genre-songs",
-  "search",
+const SCOPED_LISTINGS = new Map([
+  ["albums", 2],
+  ["songs", 2],
+  ["artists", 1],
+  ["genres", 1],
+  ["genre-songs", 2],
+  ["search", 2],
+  ["mixes", 1],
+  ["mix", 2],
 ]);
 
 /** The maintenance panels, each keyed with its library second. */
@@ -124,8 +128,8 @@ export function everythingIn(
   };
 }
 
-/** Whether a listing's scope — its last element — covers the library. */
+/** Whether a listing's scope covers the library. */
 function inScope(queryKey: QueryKey, libraryId: string): boolean {
-  const scope = queryKey[queryKey.length - 1];
+  const scope = queryKey[SCOPED_LISTINGS.get(queryKey[0] as string) ?? 0];
   return scope === null || scope === libraryId;
 }

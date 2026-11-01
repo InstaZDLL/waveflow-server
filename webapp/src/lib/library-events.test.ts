@@ -8,6 +8,8 @@ import {
   attentionSummaryQuery,
   favoriteTracksQuery,
   lyricsQuery,
+  mixesQuery,
+  mixQuery,
   playlistsQuery,
   randomSongsQuery,
   smartPlaylistQuery,
@@ -77,6 +79,14 @@ describe("staleAfter", () => {
     expect(stale(key(artistQuery("ar2")))).toBe(false);
     expect(stale(key(albumQuery("any-album")))).toBe(false);
     expect(stale(key(artistsQuery("lib-a")))).toBe(true);
+  });
+
+  it("marks the daily mixes by their scope, which is not their last element", () => {
+    const stale = staleAfter("lib-a", [track("t1")]);
+    expect(stale(key(mixesQuery("lib-a", "2026-11-01")))).toBe(true);
+    expect(stale(key(mixQuery("recent", "lib-a", "2026-11-01")))).toBe(true);
+    expect(stale(key(mixesQuery("lib-b", "2026-11-01")))).toBe(false);
+    expect(stale(key(mixQuery("recent", "lib-b", "2026-11-01")))).toBe(false);
   });
 
   it("leaves a fresh draw and user state alone", () => {
