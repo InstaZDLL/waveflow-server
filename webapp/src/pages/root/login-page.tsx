@@ -40,6 +40,11 @@ function OfflineLink() {
   );
 }
 
+/**
+ * Sign-in, and first-run setup while the server has no account (RFC-019):
+ * the setup token, filled from the URL fragment when a laptop server handed
+ * it over, then the administrator's name and password.
+ */
 export function LoginPage() {
   const navigate = useNavigate();
   const { t } = useI18n();

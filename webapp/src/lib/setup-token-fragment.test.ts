@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { takeSetupTokenFromFragment } from "./setup-token-fragment";
 
+/** A location at `pathname + search + hash`, and a history that records. */
 function at(hash: string, pathname = "/login", search = "") {
   const location = { hash, pathname, search };
   const state = { __TSR_key: "k" };

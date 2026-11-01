@@ -62,6 +62,9 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
+/// Start the background work, bind (unless laptop mode bound already, before
+/// the boot), say what an operator or a laptop's user needs to know, open the
+/// browser in laptop mode, and serve until the shutdown signal.
 async fn serve(
     config: Config,
     state: waveflow_server::AppState,
