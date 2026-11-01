@@ -942,7 +942,9 @@ included, Sysmon, or an endpoint agent on any platform, readable by whoever
 reads those logs. The token creates the first administrator until setup
 succeeds, on a server reachable from the machine itself. On such a machine,
 set `WAVEFLOW_LAPTOP_OPEN_BROWSER=false` before the first start and paste the
-token from its file, or finish setup at once, which spends it.
+token yourself — the value of `WAVEFLOW_SETUP_TOKEN` when it is set, the
+content of `<data>/setup-token` otherwise — or finish setup at once, which
+closes it.
 
 An installed server never needs it, and no default changes without it. To move
 a laptop install onto a server, copy its data folder whole — the database and
