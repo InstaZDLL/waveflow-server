@@ -74,10 +74,11 @@ On that foundation the gap is not functional. It is in the interface.
 
 ### What Navidrome does and WaveFlow does not do at all
 
-These five points ask for the server, not the screen. **Two are still not
-begun.** Three are closed, server and screen both: external scrobbling on
-2026-09-14 — see point 15 — the `.m3u` import on 2026-10-12 and internet radio
-the same day.
+These five points ask for the server, not the screen. Four are closed, server
+and screen both: external scrobbling on 2026-09-14 — see point 15 — the `.m3u`
+import and internet radio on 2026-10-12, and smart playlists on 2026-10-25. The
+fifth, jukebox, is decided against ([RFC-026](../rfcs/RFC-026-no-jukebox.md)).
+Until 2026-10-25, two were still not begun: smart playlists and jukebox.
 
 | | State in WaveFlow |
 | --- | --- |
