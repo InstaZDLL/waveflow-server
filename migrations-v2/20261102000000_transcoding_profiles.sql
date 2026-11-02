@@ -7,7 +7,9 @@
 --
 -- `raw` exists for an override that takes one client back to the original, and
 -- so carries no bit rate; every other format carries the ceiling it is encoded
--- at, within the bounds a stream request is held to.
+-- at, within the bounds a stream request is held to. `IS NOT NULL` is spelled out
+-- in the CHECK below because `NULL BETWEEN` is NULL, and a CHECK that evaluates to
+-- NULL passes.
 --
 -- Deliberately *not* in the sync journal, like radio stations and smart
 -- playlists: no client replicates this, and the server reads it on the stream.
@@ -20,6 +22,6 @@ CREATE TABLE transcoding_profile (
     PRIMARY KEY (user_id, client),
     CHECK (
         (format = 'raw' AND bitrate IS NULL)
-        OR (format <> 'raw' AND bitrate BETWEEN 32 AND 512)
+        OR (format <> 'raw' AND bitrate IS NOT NULL AND bitrate BETWEEN 32 AND 512)
     )
 ) STRICT, WITHOUT ROWID;

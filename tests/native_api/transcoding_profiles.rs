@@ -175,6 +175,32 @@ async fn what_a_row_could_not_mean_is_refused() {
     );
 }
 
+/// The table holds the shape on its own, for a write that does not come through
+/// the service: every format but `raw` has a bit rate within bounds, and `raw`
+/// has none. A `CHECK` that evaluates to NULL passes, and `NULL BETWEEN` is NULL.
+#[tokio::test]
+async fn the_table_refuses_a_row_of_the_wrong_shape() {
+    let accounts = Accounts::new().await;
+    for (format, bitrate) in [
+        ("opus", None),
+        ("opus", Some(31)),
+        ("opus", Some(513)),
+        ("raw", Some(128)),
+        ("flac", Some(128)),
+    ] {
+        let inserted = sqlx::query(
+            "INSERT INTO transcoding_profile (user_id, client, format, bitrate, updated_at) \
+             VALUES (?, 'shape', ?, ?, 0)",
+        )
+        .bind(accounts.owner.to_string())
+        .bind(format)
+        .bind(bitrate)
+        .execute(accounts.state.db.pool())
+        .await;
+        assert!(inserted.is_err(), "{format} at {bitrate:?} was stored");
+    }
+}
+
 /// A ceiling that refuses rather than grows, and that does not stop an account
 /// at it from changing what it already has.
 #[tokio::test]
