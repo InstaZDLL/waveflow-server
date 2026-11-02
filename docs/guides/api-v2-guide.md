@@ -699,6 +699,40 @@ two are indistinguishable from the rows alone.
 
 See [RFC-007](../rfcs/RFC-007-library-event-stream.md) for the reasoning.
 
+### Transcoding profiles
+
+An account can say once what a client that does not ask should get
+([RFC-027](../rfcs/RFC-027-transcoding-profiles.md)).
+**A profile applies to `GET /api/v2/tracks/{id}/stream` and to Subsonic
+`stream`, when the request names neither a format nor a bit rate**, and to nothing
+else. Stream tickets, downloads and public shares keep the original, and a request
+that names something gets what it named.
+
+```bash
+# The account's default
+curl -X PUT "https://music.example.com/api/v2/transcoding-profiles" \
+  -H "Authorization: Bearer ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"format": "opus", "bitrate": 128}'
+
+# One Subsonic client on the original, under the name it sends as `c`
+curl -X PUT "https://music.example.com/api/v2/transcoding-profiles" \
+  -H "Authorization: Bearer ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"client": "Feishin", "format": "raw"}'
+```
+
+`PUT` replaces a whole row. `bitrate`, from 32 to 512, is a ceiling: a source at or
+under it stays the original, and one of unknown bit rate is encoded. Left out, it
+takes the format's default. `raw` is for a client's row only and takes no bit rate.
+An account holds at most 32 rows, and a 33rd answers `409`. `GET` answers the
+`profiles` and the `seen_clients`, the names this account's Subsonic clients have
+streamed with without asking since the server started.
+`DELETE /api/v2/transcoding-profiles?client=Feishin` removes a row, and without
+`client` the default; it answers `204` whether or not the row was there.
+
+A native client that names nothing and seeks by byte range will meet the `416` a
+live transcode gives past the first byte, under an account with a default. Name a
+format, `raw` included, if that is not what you want.
+
 ### When a transcode is refused
 
 Transcoding is bounded twice: once for the whole server and once per account.

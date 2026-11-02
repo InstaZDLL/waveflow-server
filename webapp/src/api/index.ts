@@ -296,6 +296,16 @@ export {
   uploadLyrics,
 } from "./tracks";
 export type {
+  TranscodingProfile,
+  TranscodingProfileDraft,
+  TranscodingProfiles,
+} from "./transcoding-profiles";
+export {
+  deleteTranscodingProfile,
+  getTranscodingProfiles,
+  saveTranscodingProfile,
+} from "./transcoding-profiles";
+export type {
   CommittedUpload,
   UploadDecision,
   UploadOffer,

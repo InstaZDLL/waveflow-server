@@ -25,3 +25,4 @@ mod shares;
 mod stream_tickets;
 mod streaming;
 mod transcoding;
+mod transcoding_profiles;

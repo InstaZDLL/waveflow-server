@@ -19,6 +19,7 @@ import {
 import { ThemePicker } from "../../components/layout/theme-picker";
 import { LanguagePicker, type Locale, useI18n } from "../../state/i18n";
 import { ReplayGainPicker } from "../../state/preferences";
+import { TranscodingProfilesPanel } from "./transcoding-profiles";
 
 /**
  * The Account section of Settings, the clients allowed to read the library,
@@ -386,7 +387,10 @@ export function SettingsPage() {
   );
 }
 
-/** How this browser plays: ReplayGain, which is kept in this browser only. */
+/**
+ * How tracks play: ReplayGain, kept in this browser only, and the transcoding
+ * profile, kept on the account for the other apps reading it.
+ */
 export function PlaybackSettingsPage() {
   const { t } = useI18n();
   return (
@@ -400,6 +404,7 @@ export function PlaybackSettingsPage() {
         <h3>{t("settings.levelling")}</h3>
         <ReplayGainPicker />
       </article>
+      <TranscodingProfilesPanel />
     </section>
   );
 }

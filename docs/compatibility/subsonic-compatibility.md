@@ -351,6 +351,35 @@ no podcast screen over Subsonic, so neither exercised the methods. Not
 recorded: whether a channel's and an episode's `coverArt` show through
 `getCoverArt`.
 
+## Deviation for RFC-027: a silent request may be transcoded
+
+An account may now set a transcoding profile
+([RFC-027](../rfcs/RFC-027-transcoding-profiles.md)), through the native API and
+Settings › Playback. The wire does not change: no parameter, method or field was
+added. What changes is the answer to one request, for an account that set one.
+
+- **A request that names neither a format nor a positive `maxBitRate`** may now be
+  answered with a transcode where it used to be answered with the original.
+  `maxBitRate=0` and an empty `format=` count as naming nothing. The
+  `Content-Type` says what was sent, as it always has.
+- **Every other request is answered as before**: `format=raw`, any format named,
+  one this server cannot produce included (see RFC-022 above), any positive
+  `maxBitRate`, and `download`.
+- **An account with no profile sees no change at all.** Neither does a source at or
+  under the profile's bit rate, which stays the original.
+- **A profile's transcode takes the ceilings' slots**, and past them is answered
+  `429`. A client preloading the next track may meet that where it used to receive
+  the original.
+
+**The limit.** A live transcode refuses a range past the first byte with `416`
+until the encode is whole in the cache. So a client that does not ask and seeks by
+byte range may fail to seek under a profile, where it worked on the original. An
+override of `raw` for that client's name (`c`) puts it back on the original, and
+Settings › Playback says so.
+
+**No client has been run against this.** This section does not say which clients
+are concerned, and the next campaign should find out.
+
 ## Correction: an unsynced lyrics line is an object in JSON
 
 Found on 2026-10-27, while preparing the third client campaign, before any

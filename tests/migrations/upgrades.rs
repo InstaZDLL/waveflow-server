@@ -241,6 +241,33 @@ async fn every_released_schema_upgrades_with_the_rows_it_was_holding() {
             "{tag}"
         );
         assert_eq!((job.excluded, job.skipped_links), (0, 0), "{tag}");
+
+        // RFC-027's table: empty after an upgrade, so this account's streams
+        // are what they were, and writable by the services that read it.
+        let account: uuid::Uuid = ACCOUNT.parse().expect("account id");
+        assert_eq!(
+            state
+                .services
+                .stream_profile(account, None, None)
+                .await
+                .unwrap(),
+            None,
+            "{tag}: an upgrade gave an account a transcoding profile"
+        );
+        state
+            .services
+            .set_transcoding_profile(account, None, "opus", Some(96))
+            .await
+            .unwrap_or_else(|error| panic!("{tag}: {error}"));
+        assert_eq!(
+            state
+                .services
+                .stream_profile(account, None, None)
+                .await
+                .unwrap(),
+            Some((waveflow_server::media::OutputFormat::Opus, 96)),
+            "{tag}"
+        );
         let mut connection = state.db.pool().acquire().await.expect("connection");
         assert_eq!(
             count(

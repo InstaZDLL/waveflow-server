@@ -32,8 +32,31 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "Secciones de Ajustes",
   "settings.section.account": "Cuenta",
   "settings.playbackDetail":
-    "Cómo reproduce tus pistas este navegador. Se guarda en este navegador, no en tu cuenta.",
+    "Cómo se reproducen tus pistas. La nivelación del volumen se guarda en este navegador; la transcodificación, en tu cuenta.",
   "settings.levelling": "Nivelación del volumen",
+  "transcoding.title": "Transcodificación para tus aplicaciones",
+  "transcoding.detail":
+    "Se guarda en tu cuenta. Para las aplicaciones que no piden un formato ni una tasa de bits: una aplicación que pide algo siempre recibe lo que pidió. Una pista que ya está en esa tasa de bits o por debajo se reproduce tal cual. Este reproductor web sigue reproduciendo los originales.",
+  "transcoding.seeking":
+    "Mientras una pista aún se está convirtiendo, una aplicación que se desplaza por posición en el archivo puede no conseguir desplazarse en ella. Si te ocurre con alguna aplicación, añádela abajo con Original.",
+  "transcoding.allApps": "Todas las aplicaciones",
+  "transcoding.format": "Formato",
+  "transcoding.original": "Original",
+  "transcoding.bitrate": "Tasa de bits máxima (kbit/s)",
+  "transcoding.bitrateDefault": "La predeterminada del formato",
+  "transcoding.save": "Guardar",
+  "transcoding.saved": "Guardado.",
+  "transcoding.oneApp": "Para una aplicación",
+  "transcoding.oneAppDetail":
+    "Sustituye el ajuste anterior para esa aplicación, con el nombre que da al servidor. Se sugieren las aplicaciones que han reproducido aquí sin pedir nada.",
+  "transcoding.client": "Nombre de la aplicación",
+  "transcoding.add": "Añadir",
+  "transcoding.remove": "Quitar",
+  "transcoding.none": "Ninguna aplicación tiene un ajuste propio.",
+  "transcoding.rate": "{format} · {bitrate} kbit/s",
+  "transcoding.bitrateRange":
+    "La tasa de bits debe estar entre 32 y 512 kbit/s.",
+  "transcoding.error": "No se pudo guardar, así que no ha cambiado nada.",
   "appearance.themes.default": "Esmeralda claro",
   "appearance.themes.midnightLight": "Medianoche claro",
   "appearance.themes.sunsetLight": "Atardecer claro",

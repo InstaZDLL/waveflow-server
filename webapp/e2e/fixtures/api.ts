@@ -1,6 +1,6 @@
 // The mock `/api/v2`, and the hook that resets and installs it per test.
 
-import { type Page, test } from "@playwright/test";
+import { type Page, type Route, test } from "@playwright/test";
 
 import {
   albumDetail,
@@ -30,7 +30,63 @@ import {
   statsFor,
   track,
 } from "./catalogue";
-import { freshTranscodeStatus, mock } from "./state";
+import { freshTranscodeStatus, freshTranscodingProfiles, mock } from "./state";
+
+/** The bit rate the server stores for a format saved without one. */
+const FORMAT_DEFAULTS: Record<string, number> = {
+  mp3: 192,
+  opus: 128,
+  aac: 192,
+};
+
+/**
+ * `/transcoding-profiles`, which keeps its rows the way the server does: one per
+ * client without case, the default first, a bit rate always a number.
+ */
+async function transcodingProfiles(route: Route, url: URL) {
+  if (mock.transcodingProfilesFail) {
+    await route.fulfill({ status: 500, json: { error: "boom" } });
+    return;
+  }
+  const same = (a: string | null, b: string | null) =>
+    a?.toLowerCase() === b?.toLowerCase();
+  const order = () =>
+    mock.transcodingProfiles.profiles.sort((a, b) =>
+      (a.client ?? "").localeCompare(b.client ?? ""),
+    );
+  const stored = mock.transcodingProfiles;
+  const method = route.request().method();
+  if (method !== "GET") await mock.transcodingProfilesGate;
+  if (method === "PUT") {
+    const draft = route.request().postDataJSON();
+    const client = draft.client ?? null;
+    const row = {
+      client,
+      format: draft.format,
+      bitrate:
+        draft.format === "raw"
+          ? null
+          : (draft.bitrate ?? FORMAT_DEFAULTS[draft.format]),
+      updated_at: 1_700_000_000_000,
+    };
+    stored.profiles = [
+      ...stored.profiles.filter((other) => !same(other.client, client)),
+      row,
+    ];
+    order();
+    await route.fulfill({ json: row });
+    return;
+  }
+  if (method === "DELETE") {
+    const client = url.searchParams.get("client");
+    stored.profiles = stored.profiles.filter(
+      (other) => !same(other.client, client),
+    );
+    await route.fulfill({ status: 204, body: "" });
+    return;
+  }
+  await route.fulfill({ json: stored });
+}
 
 async function mockAuthenticatedApi(page: Page) {
   await page.context().addCookies([
@@ -373,6 +429,10 @@ async function mockAuthenticatedApi(page: Page) {
         return;
       }
       await route.fulfill({ json: mock.transcodeStatus });
+      return;
+    }
+    if (url.pathname === "/api/v2/transcoding-profiles") {
+      await transcodingProfiles(route, url);
       return;
     }
     if (url.pathname === "/api/v2/libraries") {
@@ -800,6 +860,9 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.tokensFail = false;
   mock.transcodeStatus = freshTranscodeStatus();
   mock.transcodeFails = false;
+  mock.transcodingProfiles = freshTranscodingProfiles();
+  mock.transcodingProfilesFail = false;
+  mock.transcodingProfilesGate = Promise.resolve();
   mock.ownClients = freshClients();
   mock.bookmarks = [];
   mock.importAsks = [];

@@ -1,7 +1,12 @@
 // The running server itself, as distinct from anything it holds.
 
 import { queryOptions } from "@tanstack/react-query";
-import { ApiError, getServerIdentity, getTranscodeStatus } from "../index";
+import {
+  ApiError,
+  getServerIdentity,
+  getTranscodeStatus,
+  getTranscodingProfiles,
+} from "../index";
 
 /**
  * The server's version and the source it offers.
@@ -48,4 +53,11 @@ export const transcodeStatusQuery = () =>
     queryFn: getTranscodeStatus,
     refetchInterval: 10_000,
     staleTime: 0,
+  });
+
+/** The account's transcoding profile, and the client names seen streaming. */
+export const transcodingProfilesQuery = () =>
+  queryOptions({
+    queryKey: ["transcoding-profiles"],
+    queryFn: getTranscodingProfiles,
   });

@@ -15,10 +15,11 @@
 > decided against ([RFC-026](../rfcs/RFC-026-no-jukebox.md)). The client speaks
 > nine languages since #391 and #392, all but English fetched on demand (#393).
 > Every route of the "server knows, screen ignores" table is wired, the
-> transcoding state last (#404). Still open, as an issue: per-account
-> transcoding profiles (#403). **Amended 2026-11-01:** the web client follows
-> the library event stream since #405; the user journal (`/api/v2/sync/*`) is
-> still unread by it.
+> transcoding state last (#404). Transcoding profiles, the gap of degree, are
+> settled per account and per Subsonic client name
+> ([RFC-027](../rfcs/RFC-027-transcoding-profiles.md), #403). **Amended
+> 2026-11-01:** the web client follows the library event stream since #405; the
+> user journal (`/api/v2/sync/*`) is still unread by it.
 
 ## What was found
 
@@ -103,7 +104,11 @@ format or bitrate profile. And **translation**: 34 languages against two.
 > awaiting a native read (#406). Jukebox is #402, transcoding profiles #403.
 >
 > **State on 2026-11-02.** Jukebox is decided against, so the gap stays and is
-> deliberate ([RFC-026](../rfcs/RFC-026-no-jukebox.md)).
+> deliberate ([RFC-026](../rfcs/RFC-026-no-jukebox.md)). **Transcoding profiles
+> are no longer a gap** ([RFC-027](../rfcs/RFC-027-transcoding-profiles.md),
+> #403): an account sets a default and one row per Subsonic client name in
+> Settings › Playback, for clients that do not ask. It stays narrower than
+> Navidrome's on one point, deliberately: the web player keeps playing originals.
 
 ### What Navidrome does, the server already knows how to do, and the screen ignores
 

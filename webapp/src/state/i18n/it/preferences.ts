@@ -32,8 +32,32 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "Sezioni delle impostazioni",
   "settings.section.account": "Account",
   "settings.playbackDetail":
-    "Come questo browser riproduce i tuoi brani. Salvato in questo browser, non nel tuo account.",
+    "Come vengono riprodotti i tuoi brani. La normalizzazione del volume è salvata in questo browser, la transcodifica nel tuo account.",
   "settings.levelling": "Normalizzazione del volume",
+  "transcoding.title": "Transcodifica per le tue app",
+  "transcoding.detail":
+    "Salvata nel tuo account. Per le app che non chiedono né un formato né un bitrate: un’app che chiede riceve sempre ciò che ha chiesto. Un brano già pari o inferiore al bitrate viene riprodotto così com’è. Questo lettore web continua a riprodurre gli originali.",
+  "transcoding.seeking":
+    "Mentre un brano è ancora in conversione, un’app che si sposta per posizione nel file potrebbe non riuscire a spostarsi al suo interno. Se succede con una delle tue app, aggiungila qui sotto con Originale.",
+  "transcoding.allApps": "Tutte le app",
+  "transcoding.format": "Formato",
+  "transcoding.original": "Originale",
+  "transcoding.bitrate": "Bitrate massimo (kbit/s)",
+  "transcoding.bitrateDefault": "Predefinito del formato",
+  "transcoding.save": "Salva",
+  "transcoding.saved": "Salvato.",
+  "transcoding.oneApp": "Per una app",
+  "transcoding.oneAppDetail":
+    "Sostituisce l’impostazione qui sopra per quell’app, con il nome che comunica al server. Vengono suggerite le app che hanno riprodotto qui senza chiedere nulla.",
+  "transcoding.client": "Nome dell’app",
+  "transcoding.add": "Aggiungi",
+  "transcoding.remove": "Rimuovi",
+  "transcoding.none": "Nessuna app ha un’impostazione propria.",
+  "transcoding.rate": "{format} · {bitrate} kbit/s",
+  "transcoding.bitrateRange":
+    "Il bitrate deve essere compreso tra 32 e 512 kbit/s.",
+  "transcoding.error":
+    "Non è stato possibile salvare, quindi non è cambiato nulla.",
   "appearance.themes.default": "Smeraldo chiaro",
   "appearance.themes.midnightLight": "Mezzanotte chiaro",
   "appearance.themes.sunsetLight": "Tramonto chiaro",

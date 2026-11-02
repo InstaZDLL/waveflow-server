@@ -38,4 +38,5 @@ mod playlists;
 mod radio;
 mod scrobbling;
 mod tokens;
+mod transcoding_profiles;
 mod user_data;

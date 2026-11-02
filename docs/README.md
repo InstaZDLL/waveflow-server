@@ -52,6 +52,7 @@ The design decisions, one per document. A `Status` line never changes; the
 | [RFC-024](rfcs/RFC-024-lyrics-stats-and-mixes.md) | LRCLIB lyrics, listening statistics, mixes and local similar songs |
 | [RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md) | Smart playlists and podcasts |
 | [RFC-026](rfcs/RFC-026-no-jukebox.md) | No jukebox mode: why the server does not play on its own output |
+| [RFC-027](rfcs/RFC-027-transcoding-profiles.md) | Transcoding profiles: per account and Subsonic client name |
 
 ## Plans and analyses
 

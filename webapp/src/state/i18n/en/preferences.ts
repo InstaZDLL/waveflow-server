@@ -29,8 +29,31 @@ export const preferences = {
   "settings.sections": "Settings sections",
   "settings.section.account": "Account",
   "settings.playbackDetail":
-    "How this browser plays your tracks. Kept in this browser, not on your account.",
+    "How your tracks play. Volume levelling is kept in this browser, transcoding on your account.",
   "settings.levelling": "Volume levelling",
+  "transcoding.title": "Transcoding for your apps",
+  "transcoding.detail":
+    "Kept on your account. For apps that do not ask for a format or a bit rate themselves: an app that asks always gets what it asked for. A track already at or under the bit rate plays as it is. This web player keeps playing originals.",
+  "transcoding.seeking":
+    "While a track is still being converted, an app that seeks by file position may fail to seek in it. If one of your apps does, add it below with Original.",
+  "transcoding.allApps": "All apps",
+  "transcoding.format": "Format",
+  "transcoding.original": "Original",
+  "transcoding.bitrate": "Highest bit rate (kbit/s)",
+  "transcoding.bitrateDefault": "Format's default",
+  "transcoding.save": "Save",
+  "transcoding.saved": "Saved.",
+  "transcoding.oneApp": "For one app",
+  "transcoding.oneAppDetail":
+    "Replaces the setting above for that app, under the name it gives the server. Apps that have played here without asking are suggested.",
+  "transcoding.client": "App name",
+  "transcoding.add": "Add",
+  "transcoding.remove": "Remove",
+  "transcoding.none": "No app has a setting of its own.",
+  "transcoding.rate": "{format} · {bitrate} kbit/s",
+  "transcoding.bitrateRange":
+    "The bit rate has to be between 32 and 512 kbit/s.",
+  "transcoding.error": "That could not be saved, so nothing changed.",
   "appearance.themes.default": "Emerald light",
   "appearance.themes.midnightLight": "Midnight light",
   "appearance.themes.sunsetLight": "Sunset light",

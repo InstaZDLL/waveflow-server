@@ -29,6 +29,7 @@ mod removed_albums;
 mod removed_tracks;
 mod shares;
 mod transcoding;
+mod transcoding_profiles;
 
 // An account with a Subsonic API key drawn at run time, so no credential is
 /// ever written into the source.

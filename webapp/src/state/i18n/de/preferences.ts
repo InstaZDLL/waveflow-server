@@ -32,8 +32,32 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "Bereiche der Einstellungen",
   "settings.section.account": "Konto",
   "settings.playbackDetail":
-    "Wie dieser Browser deine Titel abspielt. Wird in diesem Browser gespeichert, nicht in deinem Konto.",
+    "Wie deine Titel abgespielt werden. Der Lautstärkeausgleich wird in diesem Browser gespeichert, die Transkodierung in deinem Konto.",
   "settings.levelling": "Lautstärkeausgleich",
+  "transcoding.title": "Transkodierung für deine Apps",
+  "transcoding.detail":
+    "Wird in deinem Konto gespeichert. Für Apps, die selbst kein Format und keine Bitrate anfordern: Eine App, die etwas anfordert, bekommt immer genau das. Ein Titel, der die Bitrate nicht überschreitet, wird unverändert abgespielt. Dieser Webplayer spielt weiterhin die Originale.",
+  "transcoding.seeking":
+    "Solange ein Titel noch umgewandelt wird, kann eine App, die über die Dateiposition springt, darin möglicherweise nicht springen. Wenn das bei einer deiner Apps passiert, füge sie unten mit „Original“ hinzu.",
+  "transcoding.allApps": "Alle Apps",
+  "transcoding.format": "Format",
+  "transcoding.original": "Original",
+  "transcoding.bitrate": "Höchste Bitrate (kbit/s)",
+  "transcoding.bitrateDefault": "Standard des Formats",
+  "transcoding.save": "Speichern",
+  "transcoding.saved": "Gespeichert.",
+  "transcoding.oneApp": "Für eine App",
+  "transcoding.oneAppDetail":
+    "Ersetzt die Einstellung oben für diese App, unter dem Namen, den sie dem Server nennt. Apps, die hier ohne eigene Anforderung abgespielt haben, werden vorgeschlagen.",
+  "transcoding.client": "Name der App",
+  "transcoding.add": "Hinzufügen",
+  "transcoding.remove": "Entfernen",
+  "transcoding.none": "Keine App hat eine eigene Einstellung.",
+  "transcoding.rate": "{format} · {bitrate} kbit/s",
+  "transcoding.bitrateRange":
+    "Die Bitrate muss zwischen 32 und 512 kbit/s liegen.",
+  "transcoding.error":
+    "Das konnte nicht gespeichert werden, es wurde nichts geändert.",
   "appearance.themes.default": "Smaragd hell",
   "appearance.themes.midnightLight": "Mitternacht hell",
   "appearance.themes.sunsetLight": "Abendrot hell",

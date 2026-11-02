@@ -17,9 +17,10 @@ pub use canvas::{
 };
 pub use stream::{
     __path_create_stream_ticket, __path_stream_track, __path_stream_with_ticket,
-    create_stream_ticket, stream_track, stream_with_ticket, DownloadQuery, StreamTicketResponse,
+    create_stream_ticket, stream_track, stream_with_ticket, DownloadQuery, NamedFormat,
+    StreamTicketResponse,
 };
-pub(crate) use stream::{attachment, secure_track_path};
+pub(crate) use stream::{attachment, secure_track_path, validate_bitrate};
 
 use std::{
     path::{Path, PathBuf},
@@ -144,6 +145,23 @@ impl OutputFormat {
             Self::Aac => "aac",
         }
     }
+
+    /// The format [`Self::name`] spells this way, which is how a transcoding
+    /// profile stores it.
+    pub fn named(name: &str) -> Option<Self> {
+        [Self::Raw, Self::Mp3, Self::Opus, Self::Aac]
+            .into_iter()
+            .find(|format| format.name() == name)
+    }
+}
+
+/// Whether a source goes over a ceiling in kbit/s: the rule `maxBitRate` and a
+/// transcoding profile share (RFC-002, RFC-027). A source whose bit rate the
+/// scan did not learn is taken to, since nothing says it fits.
+pub(crate) fn source_exceeds(source_bitrate: Option<i64>, ceiling: u32) -> bool {
+    source_bitrate
+        .and_then(|bitrate| u32::try_from(bitrate).ok())
+        .is_none_or(|source| source > ceiling)
 }
 
 #[derive(Debug, Deserialize)]

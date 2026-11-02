@@ -163,6 +163,9 @@ pub const SCALAR_PATH: &str = "/reference";
         api::create_radio_station,
         api::replace_radio_station,
         api::delete_radio_station,
+        api::get_transcoding_profiles,
+        api::put_transcoding_profile,
+        api::delete_transcoding_profile,
         api::list_bookmarks,
         api::set_bookmark,
         api::delete_bookmark,
@@ -279,6 +282,8 @@ pub const SCALAR_PATH: &str = "/reference";
         api::RetriedScrobbleResponse,
         services::BookmarkItem,
         services::RadioStationItem,
+        services::TranscodingProfileItem,
+        services::TranscodingProfiles,
         services::UserItem,
         api::CreatePlaylistRequest,
         api::UpdatePlaylistRequest,
@@ -345,6 +350,7 @@ pub const SCALAR_PATH: &str = "/reference";
         crate::storage::database::SubsonicCredentialStatus,
         api::BookmarkRequest,
         api::RadioStationRequest,
+        api::TranscodingProfileRequest,
         api::CreateApiTokenRequest,
         api::CreateApiTokenResponse,
         database::ApiTokenRecord,
@@ -367,6 +373,7 @@ pub const SCALAR_PATH: &str = "/reference";
         ,(name = "administration", description = "Administrative user and credential management")
         ,(name = "scrobbling", description = "Per-account authorisations at external listening services, and the queue behind them")
         ,(name = "radio", description = "Internet radio stations, one list per account")
+        ,(name = "transcoding-profiles", description = "What an account wants for a client that does not ask for a format or a bit rate (RFC-027)")
         ,(name = "smart-playlists", description = "Playlists defined by rules, evaluated when read (RFC-025)")
         ,(name = "podcasts", description = "Podcast channels and episodes, one list per instance (RFC-025)")
     )
