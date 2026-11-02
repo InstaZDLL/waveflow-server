@@ -76,6 +76,37 @@ test("offers the server's formats and says when a bit rate is out of bounds", as
 });
 
 /**
+ * A row whose format the server no longer lists is shown as what it is, and can
+ * still be taken away: with no option for it, the select would show Original
+ * while the page held Opus, and choosing Original would change nothing.
+ */
+test("shows a stored format the server no longer lists, and removes it", async ({
+  page,
+}) => {
+  mock.transcodeStatus = { ...mock.transcodeStatus, formats: ["mp3"] };
+  mock.transcodingProfiles.profiles = [
+    {
+      client: null,
+      format: "opus",
+      bitrate: 128,
+      updated_at: 1_700_000_000_000,
+    },
+  ];
+  await page.goto("/settings/playback");
+  const form = allApps(page);
+  await expect(form.getByLabel("Format")).toHaveValue("opus");
+  await expect(form.getByLabel("Format").locator("option")).toHaveText([
+    "Original",
+    "MP3",
+    "Opus",
+  ]);
+
+  await form.getByLabel("Format").selectOption("raw");
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => mock.transcodingProfiles.profiles).toEqual([]);
+});
+
+/**
  * An app's own row, including the remedy the panel gives for an app that cannot
  * seek in a transcode: a row of Original. A name seen on a silent stream is
  * suggested until it has a row.

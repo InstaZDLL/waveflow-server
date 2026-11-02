@@ -11,7 +11,11 @@ import {
   transcodingProfilesQuery,
 } from "../../api/queries";
 import { Loading, useReload } from "../../components/layout/page-shell";
-import { formatLabel, readBitrate } from "../../lib/transcoding";
+import {
+  formatLabel,
+  offeredFormats,
+  readBitrate,
+} from "../../lib/transcoding";
 import { useI18n } from "../../state/i18n";
 
 /**
@@ -96,7 +100,7 @@ function ProfileFields({
           onChange={(event) => onFormat(event.target.value)}
         >
           <option value={ORIGINAL}>{t("transcoding.original")}</option>
-          {formats.map((name) => (
+          {offeredFormats(formats, format).map((name) => (
             <option key={name} value={name}>
               {formatLabel(name)}
             </option>

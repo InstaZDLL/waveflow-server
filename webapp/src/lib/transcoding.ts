@@ -29,6 +29,19 @@ export function formatLabel(format: string): string {
 }
 
 /**
+ * What a profile's select offers: what the server produces, and the format the
+ * row already holds if the server no longer lists it. A controlled select with
+ * no option for its value shows its first option while its state keeps the old
+ * format, so saving would send what the screen does not show, and choosing the
+ * option already on screen would fire no change.
+ */
+export function offeredFormats(formats: string[], current: string): string[] {
+  return current === "raw" || formats.includes(current)
+    ? formats
+    : [...formats, current];
+}
+
+/**
  * The bit rate a profile's field holds: `null` when it was left empty, which
  * asks for the format's default, and `"invalid"` outside what the server takes,
  * so the page can say so in its own language before anything is sent.

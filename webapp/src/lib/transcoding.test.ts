@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { TranscodeStatus } from "../api";
-import { formatLabel, readBitrate, transcodeLoad } from "./transcoding";
+import {
+  formatLabel,
+  offeredFormats,
+  readBitrate,
+  transcodeLoad,
+} from "./transcoding";
 
 const status = (overrides: Partial<TranscodeStatus> = {}): TranscodeStatus => ({
   available: true,
@@ -38,6 +43,17 @@ describe("formatLabel", () => {
     expect(formatLabel("opus")).toBe("Opus");
     expect(formatLabel("mp3")).toBe("MP3");
     expect(formatLabel("flac")).toBe("FLAC");
+  });
+});
+
+describe("offeredFormats", () => {
+  it("offers what the server produces", () => {
+    expect(offeredFormats(["mp3", "opus"], "opus")).toEqual(["mp3", "opus"]);
+    expect(offeredFormats(["mp3", "opus"], "raw")).toEqual(["mp3", "opus"]);
+  });
+
+  it("keeps a format the server no longer lists, so the select can show it", () => {
+    expect(offeredFormats(["mp3"], "opus")).toEqual(["mp3", "opus"]);
   });
 });
 
