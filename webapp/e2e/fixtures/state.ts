@@ -14,6 +14,16 @@ import {
 } from "./catalogue";
 
 /** A server that can transcode, one of its four slots taken. */
+export const freshTranscodingProfiles = () => ({
+  profiles: [] as Array<{
+    client: string | null;
+    format: string;
+    bitrate: number | null;
+    updated_at: number;
+  }>,
+  seen_clients: [] as string[],
+});
+
 export const freshTranscodeStatus = () => ({
   available: true,
   active: 1,
@@ -55,6 +65,11 @@ class MockState {
   transcodeStatus = freshTranscodeStatus();
   /** Every answer to the transcoding status is a 500. */
   transcodeFails = false;
+
+  /** The account's rows, kept so a save is read back from what was stored. */
+  transcodingProfiles = freshTranscodingProfiles();
+  /** Every answer on the transcoding profile routes is a 500. */
+  transcodingProfilesFail = false;
 
   ownClients: Client[] = [];
   /**

@@ -197,6 +197,13 @@
   max-width: 52rem;
 }
 
+.transcoding-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
 .settings-page .theme-picker,
 .settings-page .language-picker {
   max-width: 25rem;

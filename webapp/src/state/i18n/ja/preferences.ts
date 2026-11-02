@@ -31,8 +31,31 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "設定の項目",
   "settings.section.account": "アカウント",
   "settings.playbackDetail":
-    "このブラウザでの曲の再生方法です。アカウントではなく、このブラウザに保存されます。",
+    "曲の再生方法です。音量の均一化はこのブラウザに、トランスコードはアカウントに保存されます。",
   "settings.levelling": "音量の均一化",
+  "transcoding.title": "アプリ向けのトランスコード",
+  "transcoding.detail":
+    "アカウントに保存されます。形式やビットレートを自分で指定しないアプリに適用されます。指定するアプリには、常に指定どおりのものが届きます。すでにこのビットレート以下の曲はそのまま再生されます。このウェブプレーヤーは引き続き元のファイルを再生します。",
+  "transcoding.seeking":
+    "曲の変換中は、ファイル位置でシークするアプリではシークできないことがあります。お使いのアプリでそうなる場合は、下で「オリジナル」を指定して追加してください。",
+  "transcoding.allApps": "すべてのアプリ",
+  "transcoding.format": "形式",
+  "transcoding.original": "オリジナル",
+  "transcoding.bitrate": "最大ビットレート (kbit/s)",
+  "transcoding.bitrateDefault": "形式の既定値",
+  "transcoding.save": "保存",
+  "transcoding.saved": "保存しました。",
+  "transcoding.oneApp": "特定のアプリ向け",
+  "transcoding.oneAppDetail":
+    "そのアプリがサーバーに伝える名前で、上の設定を置き換えます。何も指定せずにここで再生したアプリが候補に表示されます。",
+  "transcoding.client": "アプリ名",
+  "transcoding.add": "追加",
+  "transcoding.remove": "削除",
+  "transcoding.none": "個別の設定があるアプリはありません。",
+  "transcoding.rate": "{format} · {bitrate} kbit/s",
+  "transcoding.bitrateRange":
+    "ビットレートは 32～512 kbit/s の範囲で指定してください。",
+  "transcoding.error": "保存できなかったため、何も変更されていません。",
   "appearance.themes.default": "エメラルド（ライト）",
   "appearance.themes.midnightLight": "ミッドナイト（ライト）",
   "appearance.themes.sunsetLight": "サンセット（ライト）",

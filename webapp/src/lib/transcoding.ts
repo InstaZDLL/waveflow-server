@@ -17,6 +17,31 @@ import type { TranscodeStatus } from "../api";
  */
 export type TranscodeLoad = "unavailable" | "full" | "open";
 
+const FORMAT_LABELS: Record<string, string> = {
+  mp3: "MP3",
+  opus: "Opus",
+  aac: "AAC",
+};
+
+/** How a format the wire spells `opus` is written for a reader. */
+export function formatLabel(format: string): string {
+  return FORMAT_LABELS[format] ?? format.toUpperCase();
+}
+
+/**
+ * The bit rate a profile's field holds: `null` when it was left empty, which
+ * asks for the format's default, and `"invalid"` outside what the server takes,
+ * so the page can say so in its own language before anything is sent.
+ */
+export function readBitrate(text: string): number | null | "invalid" {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const value = Number(trimmed);
+  return Number.isInteger(value) && value >= 32 && value <= 512
+    ? value
+    : "invalid";
+}
+
 export function transcodeLoad(status: TranscodeStatus): TranscodeLoad {
   if (!status.available) return "unavailable";
   // At the limit, not only past it: the server refuses the request that would

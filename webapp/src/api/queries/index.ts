@@ -69,7 +69,11 @@ export {
   trackQualityQuery,
   unavailableTracksQuery,
 } from "./maintenance";
-export { serverIdentityQuery, transcodeStatusQuery } from "./server";
+export {
+  serverIdentityQuery,
+  transcodeStatusQuery,
+  transcodingProfilesQuery,
+} from "./server";
 export {
   canvasQuery,
   lyricsQuery,
