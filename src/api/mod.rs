@@ -48,6 +48,7 @@ mod subsonic_credential;
 mod sync;
 mod tokens;
 mod tracks;
+mod transcoding_profiles;
 mod uploads;
 mod users;
 mod web_session;
@@ -78,6 +79,7 @@ pub use subsonic_credential::*;
 pub use sync::*;
 pub use tokens::*;
 pub use tracks::*;
+pub use transcoding_profiles::*;
 pub use uploads::*;
 pub use users::*;
 pub use web_session::*;
@@ -351,6 +353,12 @@ pub fn router(state: AppState) -> Router {
             get(get_radio_station)
                 .put(replace_radio_station)
                 .delete(delete_radio_station),
+        )
+        .route(
+            "/api/v2/transcoding-profiles",
+            get(get_transcoding_profiles)
+                .put(put_transcoding_profile)
+                .delete(delete_transcoding_profile),
         )
         .route("/api/v2/scrobbles", post(create_scrobble))
         .route("/api/v2/history", get(list_history))

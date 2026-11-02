@@ -121,6 +121,9 @@ pub struct DomainServices {
     /// Smart playlists (RFC-025): what each reader was last shown, the
     /// evaluation counter and the evaluation budget.
     smart: smart_playlists::SmartRuntime,
+    /// The client names silent Subsonic streams have come with (RFC-027), which
+    /// the Settings section offers for an override.
+    seen_stream_clients: transcoding_profiles::SeenClients,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -200,6 +203,7 @@ mod songs;
 mod statistics;
 mod sync;
 mod track_metadata;
+mod transcoding_profiles;
 pub(crate) mod uploads;
 
 mod access;
@@ -302,6 +306,7 @@ pub use statistics::{
     ListeningStats, PlayMoment, StatsBucket, StatsBucketSize, StatsQuery, StatsTotals, TopAlbum,
     TopArtist, TopGenre, TopTrack,
 };
+pub use transcoding_profiles::{TranscodingProfileItem, TranscodingProfiles};
 
 impl DomainServices {
     pub fn new(
@@ -326,6 +331,7 @@ impl DomainServices {
             link_roots: crate::library::link_roots::LinkRoots::new(config.link_roots.clone()),
             api_token_ttl: config.api_token_ttl,
             upload_locks: Arc::new(dashmap::DashMap::new()),
+            seen_stream_clients: transcoding_profiles::SeenClients::default(),
             canvas: config.canvas,
             canvas_dir: config.canvas_dir.clone(),
             artwork_dir: config.artwork_dir.clone(),

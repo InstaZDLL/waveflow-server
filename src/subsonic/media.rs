@@ -41,16 +41,31 @@ pub(super) async fn media_response(
                 "aac" | "m4a" | "adts" => Some(OutputFormat::Aac),
                 _ => None,
             });
+    // A profile fills a silence and nothing else (RFC-027 decision 2). A format
+    // this server cannot produce is not a silence: the client named something,
+    // and what it gets for it above is not ours to take away. `maxBitRate=0` is
+    // one, being what a client that does not ask sends.
+    let silent = !download
+        && params.first("format").is_none_or(str::is_empty)
+        && requested_bitrate.is_none();
+    let profile = if silent {
+        state
+            .services
+            .stream_profile(principal.id, params.first("c"), track.bitrate)
+            .await
+            .map_err(internal)?
+    } else {
+        None
+    };
     let format = if download {
         OutputFormat::Raw
     } else if let Some(format) = named {
         format
-    } else if requested_bitrate.is_some_and(|limit| {
-        track
-            .bitrate
-            .and_then(|bitrate| u32::try_from(bitrate).ok())
-            .is_none_or(|source| source > limit)
-    }) {
+    } else if let Some((format, _)) = profile {
+        format
+    } else if requested_bitrate
+        .is_some_and(|limit| crate::media::source_exceeds(track.bitrate, limit))
+    {
         // Legacy Subsonic clients such as DSub always send maxBitRate, even
         // when it matches the source. Downsample only when the cap is lower;
         // otherwise preserve direct playback just like Navidrome.
@@ -61,7 +76,7 @@ pub(super) async fn media_response(
     let query = StreamQuery {
         format,
         bitrate: (format != OutputFormat::Raw)
-            .then_some(requested_bitrate)
+            .then_some(requested_bitrate.or(profile.map(|(_, bitrate)| bitrate)))
             .flatten(),
         offset_ms: params
             .first("timeOffset")

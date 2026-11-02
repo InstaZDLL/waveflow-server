@@ -47,6 +47,14 @@ impl DownloadQuery {
     }
 }
 
+/// Whether the request spelled `format=` at all, which [`StreamQuery`] cannot
+/// say: its field defaults to `raw`, so `format=raw` and no format read alike
+/// there, and only the second leaves room for a transcoding profile (RFC-027).
+#[derive(Debug, Default, Deserialize)]
+pub struct NamedFormat {
+    format: Option<String>,
+}
+
 impl MediaService {
     pub async fn serve(
         &self,
@@ -465,7 +473,7 @@ const ATTR_CHAR: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMER
     tag = "media",
     params(
         ("track_id" = Uuid, Path),
-        ("format" = Option<String>, Query, description = "raw, mp3, opus or aac (ADTS)"),
+        ("format" = Option<String>, Query, description = "raw, mp3, opus or aac (ADTS). With neither this nor bitrate, the account's transcoding profile, if it has one, decides (RFC-027)"),
         ("bitrate" = Option<u32>, Query),
         ("offset_ms" = Option<u64>, Query)
     ),
@@ -481,7 +489,8 @@ const ATTR_CHAR: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMER
 pub async fn stream_track(
     State(state): State<AppState>,
     AxumPath(track_id): AxumPath<Uuid>,
-    Query(query): Query<StreamQuery>,
+    Query(mut query): Query<StreamQuery>,
+    Query(named): Query<NamedFormat>,
     headers: HeaderMap,
 ) -> Result<Response, MediaError> {
     let user = bearer_principal(&state, &headers).await?;
@@ -496,6 +505,23 @@ pub async fn stream_track(
             MediaError::Internal
         })?
         .ok_or(MediaError::NotFound)?;
+    // A request naming neither is silent, and a profile fills a silence and
+    // nothing else (RFC-027 decision 2). Not on the ticket route: a media
+    // element seeks by byte range, which a live transcode refuses.
+    if named.format.is_none() && query.bitrate.is_none() {
+        let profile = state
+            .services
+            .stream_profile(user.id, None, track.bitrate)
+            .await
+            .map_err(|error| {
+                tracing::error!(error = %error, "transcoding profile lookup failed");
+                MediaError::Internal
+            })?;
+        if let Some((format, bitrate)) = profile {
+            query.format = format;
+            query.bitrate = Some(bitrate);
+        }
+    }
     let range = headers
         .get(header::RANGE)
         .and_then(|value| value.to_str().ok());
@@ -728,7 +754,10 @@ pub(super) fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     Some((start, requested_end.min(start + MAX_RANGE_BYTES - 1)))
 }
 
-fn validate_bitrate(format: OutputFormat, bitrate: Option<u32>) -> Result<u32, MediaError> {
+pub(crate) fn validate_bitrate(
+    format: OutputFormat,
+    bitrate: Option<u32>,
+) -> Result<u32, MediaError> {
     let bitrate = bitrate.unwrap_or(match format {
         OutputFormat::Mp3 => 192,
         OutputFormat::Opus => 128,
