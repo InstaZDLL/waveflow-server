@@ -76,17 +76,24 @@ function WriteOutcome({ outcome }: { outcome: Outcome }) {
   );
 }
 
-/** A format and, unless it is the original, the ceiling it is encoded at. */
+/**
+ * A format and, unless it is the original, the ceiling it is encoded at.
+ *
+ * `disabled` while a write is out: what it answers is put back into these
+ * fields, over anything typed in the meantime.
+ */
 function ProfileFields({
   format,
   bitrate,
   formats,
+  disabled,
   onFormat,
   onBitrate,
 }: {
   format: string;
   bitrate: string;
   formats: string[];
+  disabled: boolean;
   onFormat: (format: string) => void;
   onBitrate: (bitrate: string) => void;
 }) {
@@ -97,6 +104,7 @@ function ProfileFields({
         <span>{t("transcoding.format")}</span>
         <select
           value={format}
+          disabled={disabled}
           onChange={(event) => onFormat(event.target.value)}
         >
           <option value={ORIGINAL}>{t("transcoding.original")}</option>
@@ -115,6 +123,7 @@ function ProfileFields({
             min={32}
             max={512}
             value={bitrate}
+            disabled={disabled}
             placeholder={t("transcoding.bitrateDefault")}
             onChange={(event) => onBitrate(event.target.value)}
           />
@@ -174,6 +183,7 @@ function DefaultProfile({
         format={format}
         bitrate={bitrate}
         formats={formats}
+        disabled={busy}
         onFormat={setFormat}
         onBitrate={setBitrate}
       />
@@ -269,6 +279,7 @@ function ClientProfiles({
           <span>{t("transcoding.client")}</span>
           <input
             value={client}
+            disabled={busy}
             list={suggestions}
             maxLength={120}
             required
@@ -286,6 +297,7 @@ function ClientProfiles({
           format={format}
           bitrate={bitrate}
           formats={formats}
+          disabled={busy}
           onFormat={setFormat}
           onBitrate={setBitrate}
         />

@@ -70,6 +70,8 @@ class MockState {
   transcodingProfiles = freshTranscodingProfiles();
   /** Every answer on the transcoding profile routes is a 500. */
   transcodingProfilesFail = false;
+  /** Holds a write on those routes until a test lets it through. */
+  transcodingProfilesGate: Promise<void> = Promise.resolve();
 
   ownClients: Client[] = [];
   /**

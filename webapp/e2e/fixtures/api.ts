@@ -56,6 +56,7 @@ async function transcodingProfiles(route: Route, url: URL) {
     );
   const stored = mock.transcodingProfiles;
   const method = route.request().method();
+  if (method !== "GET") await mock.transcodingProfilesGate;
   if (method === "PUT") {
     const draft = route.request().postDataJSON();
     const client = draft.client ?? null;
@@ -861,6 +862,7 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.transcodeFails = false;
   mock.transcodingProfiles = freshTranscodingProfiles();
   mock.transcodingProfilesFail = false;
+  mock.transcodingProfilesGate = Promise.resolve();
   mock.ownClients = freshClients();
   mock.bookmarks = [];
   mock.importAsks = [];

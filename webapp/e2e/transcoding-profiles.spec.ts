@@ -151,6 +151,50 @@ test("gives one app its own setting, Original included", async ({ page }) => {
 });
 
 /**
+ * What a write answers goes back into the fields, so nothing can be typed into
+ * them while it is out: it would be overwritten, and the next save would send
+ * what the screen had stopped showing.
+ */
+test("holds the fields while a write is out", async ({ page }) => {
+  mock.transcodingProfiles.profiles = [
+    {
+      client: null,
+      format: "opus",
+      bitrate: 96,
+      updated_at: 1_700_000_000_000,
+    },
+  ];
+  let release = () => {};
+  mock.transcodingProfilesGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page.goto("/settings/playback");
+  const form = allApps(page);
+  const rate = form.getByLabel(/bit rate/);
+  await expect(rate).toHaveValue("96");
+
+  await form.getByRole("button", { name: "Save" }).click();
+  await expect(rate).toBeDisabled();
+  await expect(form.getByLabel("Format")).toBeDisabled();
+  release();
+  await expect(rate).toBeEnabled();
+  await expect(form.getByText("Saved.")).toBeVisible();
+
+  let releaseApp = () => {};
+  mock.transcodingProfilesGate = new Promise((resolve) => {
+    releaseApp = resolve;
+  });
+  const app = oneApp(page);
+  await app.getByLabel("App name").fill("Feishin");
+  await app.getByRole("button", { name: "Add" }).click();
+  await expect(app.getByLabel("App name")).toBeDisabled();
+  await expect(app.getByLabel("Format")).toBeDisabled();
+  releaseApp();
+  await expect(app.getByLabel("App name")).toBeEnabled();
+  await expect(app.getByLabel("App name")).toHaveValue("");
+});
+
+/**
  * A refused write says so. The routes start failing only once the form is on
  * screen: `goto` returns before the page has read the profile, and a read that
  * fails is the next test, with no form to write through.
