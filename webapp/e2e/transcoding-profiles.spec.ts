@@ -146,20 +146,30 @@ test("gives one app its own setting, Original included", async ({ page }) => {
   ]);
 });
 
-/** A refused write says so, and what could not be loaded is not a blank form. */
-test("says when a profile cannot be saved or read", async ({ page }) => {
+/**
+ * A refused write says so. The routes start failing only once the form is on
+ * screen: `goto` returns before the page has read the profile, and a read that
+ * fails is the next test, with no form to write through.
+ */
+test("says when a profile cannot be saved", async ({ page }) => {
   await page.goto("/settings/playback");
+  await expect(allApps(page).getByLabel("Format")).toHaveValue("raw");
   mock.transcodingProfilesFail = true;
   await allApps(page).getByLabel("Format").selectOption("opus");
   await allApps(page).getByRole("button", { name: "Save" }).click();
   await expect(allApps(page).getByRole("alert")).toHaveText(
     "That could not be saved, so nothing changed.",
   );
+});
 
-  await page.reload();
+/** What could not be loaded is not a blank form, which could overwrite a row. */
+test("says when a profile cannot be read", async ({ page }) => {
+  mock.transcodingProfilesFail = true;
+  await page.goto("/settings/playback");
   await expect(
     page.locator(".settings-panel").getByRole("alert"),
   ).toContainText("We could not load this view");
+  await expect(allApps(page)).toHaveCount(0);
 });
 
 test("keeps the panel readable in light", async ({ page }) => {
