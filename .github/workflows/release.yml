@@ -22,9 +22,11 @@ name: Release
 #
 # The Windows executables in the archives are signed with the certificate in the
 # `SIGNTOOL_PFX_BASE64` (the PFX, in base64) and `SIGNTOOL_PFX_PASSWORD` repository
-# secrets; without them `standalone.yml` stops before it builds anything, and no
-# release ships unsigned. The certificate is self-signed, so Windows still warns:
-# §6 of docs/plans/standalone-download-plan.md says what it gives and what not.
+# secrets. Without them `standalone.yml` stops before it builds an archive, and the
+# image's tags and the release page, which wait for it, are never written; the
+# image's own build still runs. The certificate is self-signed, so Windows still
+# warns: §6 of docs/plans/standalone-download-plan.md says what it gives and what
+# not.
 #
 # The tag is the source of truth for the version. `Cargo.toml` is not read
 # here — a tag that disagrees with it would produce an image labelled one way

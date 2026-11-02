@@ -58,9 +58,9 @@ concurrency:
   cancel-in-progress: ${{ !inputs.tag }}
 
 jobs:
-  # First, so a tag without its certificate stops before any build minute is
-  # spent, and no release can ship unsigned by accident. A run without a tag
-  # signs nothing on Windows, so it has nothing to check.
+  # First, so the archives of a tag without its certificate stop before they cost
+  # a build minute, and no release can ship unsigned by accident. A run without a
+  # tag signs nothing on Windows, so it has nothing to check.
   signing-secrets:
     name: Signing secrets
     runs-on: ubuntu-24.04
@@ -322,29 +322,37 @@ jobs:
         shell: bash
         run: sh packaging/standalone/smoke.sh dist/waveflow-server-*
 
-      # Read back from the archive, which is what ships. The certificate is
-      # self-signed, so its chain ends at a root Windows does not trust and the
-      # status is `UnknownError`, never `Valid`: what this holds to is that each
-      # file's hash matches (`HashMismatch` otherwise), that it has a signer and a
-      # timestamp, and that the three share one signer. Its thumbprint is public,
-      # and goes in the log for anyone comparing a download against it.
+      # Read back from the archive, which is what ships. A self-signed certificate
+      # answers `UnknownError`, its root being untrusted, but so does any failure
+      # PowerShell has no name for, so accepting that status would accept those too.
+      # Trust is taken out of the question instead: the one signer all three share
+      # goes into this runner's trusted roots, for this job's short life, and each
+      # file must then answer `Valid`. The thumbprint is public, and goes in the log
+      # for anyone comparing a download against it.
       - name: Check the signatures (Windows)
         if: runner.os == 'Windows' && inputs.tag
         shell: pwsh
         run: |
           $extracted = Join-Path $env:RUNNER_TEMP "signatures"
           Expand-Archive -Path dist\waveflow-server-*.zip -DestinationPath $extracted
-          $signers = foreach ($tool in "waveflow-server.exe", "ffmpeg.exe", "ffprobe.exe") {
-            $file = Get-ChildItem -Path $extracted -Recurse -Filter $tool
-            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
-            $signer = $signature.SignerCertificate
-            Write-Host "${tool}: $($signature.Status), $($signer.Subject), $($signer.Thumbprint)"
-            if ($signature.Status.ToString() -notin "Valid", "UnknownError") { throw "${tool}: $($signature.StatusMessage)" }
-            if (-not $signer) { throw "${tool} has no signer" }
-            if (-not $signature.TimeStamperCertificate) { throw "${tool} has no timestamp" }
-            $signer.Thumbprint
+          $files = foreach ($tool in "waveflow-server.exe", "ffmpeg.exe", "ffprobe.exe") {
+            Get-ChildItem -Path $extracted -Recurse -Filter $tool
           }
-          if (@($signers | Select-Object -Unique).Count -ne 1) { throw "the executables have different signers: $signers" }
+          $signers = @($files | ForEach-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).SignerCertificate })
+          if ($signers.Count -ne 3) { throw "only $($signers.Count) of the three executables have a signer" }
+          $thumbprints = @($signers.Thumbprint | Select-Object -Unique)
+          if ($thumbprints.Count -ne 1) { throw "the executables have different signers: $thumbprints" }
+          Write-Host "signed by $($signers[0].Subject), thumbprint $thumbprints"
+          $roots = [Security.Cryptography.X509Certificates.X509Store]::new("Root", "LocalMachine")
+          $roots.Open("ReadWrite")
+          $roots.Add($signers[0])
+          $roots.Close()
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            Write-Host "$($file.Name): $($signature.Status)"
+            if ($signature.Status.ToString() -ne "Valid") { throw "$($file.Name): $($signature.StatusMessage)" }
+            if (-not $signature.TimeStamperCertificate) { throw "$($file.Name) has no timestamp" }
+          }
 
       # `--verify` alone would pass on the linker's signature of an arm64 binary,
       # had the signing above done nothing. The identifier is what only it wrote.

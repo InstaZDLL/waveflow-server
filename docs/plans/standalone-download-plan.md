@@ -342,9 +342,12 @@ project wants that later.
   `ffprobe.exe`, timestamped, from the `SIGNTOOL_PFX_BASE64` (the PFX, in
   base64) and `SIGNTOOL_PFX_PASSWORD` repository secrets, the names the desktop
   uses. An Actions secret belongs to one repository, so both are set on this one
-  too. A tag without them stops before any build. A pull request or a manual run
-  signs nothing on Windows, even when the secrets are readable, so the
-  certificate only ever signs what is released. The signing is a job of its own,
+  too. Without them a tag's archives stop before they build and nothing is
+  published, though the image's build still runs beside them. A run with no tag,
+  a pull request or `standalone.yml` dispatched by hand, signs nothing on Windows
+  even when the secrets are readable, while a manual retry of `release.yml` names
+  its tag and signs, so the certificate only ever signs what is released. The
+  signing is a job of its own,
   which checks out nothing and builds nothing: `cargo build` runs the build
   scripts and procedural macros of every dependency, and a process one of them
   left on the runner could read the PFX.
@@ -443,7 +446,7 @@ instead (below), which also covers the other platforms for anyone who checks.
 either publishes, so a pull request that touches `packaging/standalone/` or a
 manual dispatch runs the same jobs and stops at a workflow artifact, which is
 how they are exercised without a tag. First, on a tag, `signing-secrets` refuses
-one that lacks the certificate of §6, before anything is built. Then, in order:
+one that lacks the certificate of §6, before any archive is built. Then, in order:
 
 1. **`ffmpeg`** — `ffmpeg.yml` as it stands: one native runner per target
    builds the minimal FFmpeg, runs the `media`, `quality` and `canvas` targets

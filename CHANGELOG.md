@@ -51,8 +51,9 @@ out first, whether or not it breaks a compile.
   are: with a self-signed Authenticode certificate on Windows, ad hoc on macOS.
   A file changed after signing no longer matches its signature, but neither
   system trusts these signatures, so the warnings of the first launch stay. A
-  release needs the `SIGNTOOL_PFX_BASE64` and `SIGNTOOL_PFX_PASSWORD` secrets and
-  stops before building without them.
+  release needs the `SIGNTOOL_PFX_BASE64` and `SIGNTOOL_PFX_PASSWORD` secrets:
+  without them the archives stop before they build and nothing is published,
+  though the image's build still runs.
 - **The transcoding state in the web client's administration**: whether the
   server can transcode (without it, listeners get the original files only),
   the transcodes running against the global limit, the per-account limit and
