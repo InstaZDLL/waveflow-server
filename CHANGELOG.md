@@ -54,6 +54,16 @@ out first, whether or not it breaks a compile.
   release needs the `SIGNTOOL_PFX_BASE64` and `SIGNTOOL_PFX_PASSWORD` secrets:
   without them the archives stop before they build and nothing is published,
   though the image's build still runs.
+- **Transcoding profiles** (#403, [RFC-027](docs/rfcs/RFC-027-transcoding-profiles.md)):
+  an account can say once what an app that does not ask should get, as a default
+  and per Subsonic client name, in Settings › Playback or through
+  `/api/v2/transcoding-profiles`. A request naming a format or a bit rate is
+  answered as before, and so is every request of an account with no profile.
+  Under one, a Subsonic `stream` or a native stream that names neither may now be
+  transcoded, a source at or under the bit rate excepted. Stream tickets, and so
+  the web player, downloads and public shares keep the original. An app that seeks
+  by byte range may fail to seek in a transcode still being encoded; a row of
+  Original for it puts it right.
 - **The transcoding state in the web client's administration**: whether the
   server can transcode (without it, listeners get the original files only),
   the transcodes running against the global limit, the per-account limit and
