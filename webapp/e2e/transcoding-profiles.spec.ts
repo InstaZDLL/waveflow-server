@@ -47,6 +47,10 @@ test("sets the account's default and takes it away again", async ({ page }) => {
   await allApps(page).getByLabel("Format").selectOption("raw");
   await allApps(page).getByRole("button", { name: "Save" }).click();
   await expect.poll(() => mock.transcodingProfiles.profiles).toEqual([]);
+
+  // Choosing a format again starts from its default, not the removed ceiling.
+  await allApps(page).getByLabel("Format").selectOption("opus");
+  await expect(allApps(page).getByLabel(/bit rate/)).toHaveValue("");
 });
 
 /**

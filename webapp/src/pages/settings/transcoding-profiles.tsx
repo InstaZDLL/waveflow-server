@@ -143,7 +143,9 @@ function DefaultProfile({
   async function save(event: FormEvent) {
     event.preventDefault();
     if (format === ORIGINAL) {
-      await write(() => deleteTranscodingProfile(null));
+      // The field is hidden on Original and would come back holding the row's
+      // old ceiling, as if someone had typed it, when a format is chosen again.
+      if (await write(() => deleteTranscodingProfile(null))) setBitrate("");
       return;
     }
     const ceiling = readBitrate(bitrate);
