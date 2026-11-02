@@ -18,6 +18,13 @@ name: Standalone
 # - The Windows server links the C runtime statically: a laptop that has never
 #   installed the Visual C++ redistributable has no VCRUNTIME140.dll to load.
 # - macOS deploys to the same oldest versions as its FFmpeg.
+# - The executables are signed before they are packed (§6 of the plan), so the
+#   archive and `SHA256SUMS` hold the signed files and the smoke test runs them:
+#   on Windows with the certificate in the secrets below, on a tag only, and on
+#   macOS ad hoc, on every run. Neither system trusts these signatures, so both
+#   still warn on the first launch. Linux has nothing to sign.
+# - The Windows server is built in a job of its own and signed in another, so the
+#   certificate never reaches a runner where a dependency's build script has run.
 
 on:
   workflow_call:
@@ -26,6 +33,16 @@ on:
         description: "The tag being released"
         required: true
         type: string
+    # Not `required`, which holds a caller to naming a secret and says nothing of
+    # one that is empty. `signing-secrets` checks the values, and names what is
+    # missing.
+    secrets:
+      SIGNTOOL_PFX_BASE64:
+        description: "The Authenticode certificate, a PFX in base64"
+        required: false
+      SIGNTOOL_PFX_PASSWORD:
+        description: "The password of that PFX"
+        required: false
   pull_request:
     paths:
       - "packaging/standalone/**"
@@ -41,8 +58,32 @@ concurrency:
   cancel-in-progress: ${{ !inputs.tag }}
 
 jobs:
+  # First, so the archives of a tag without its certificate stop before they cost
+  # a build minute, and no release can ship unsigned by accident. A run without a
+  # tag signs nothing on Windows, so it has nothing to check.
+  signing-secrets:
+    name: Signing secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Refuse a tag without its certificate
+        if: inputs.tag
+        env:
+          PFX_BASE64: ${{ secrets.SIGNTOOL_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNTOOL_PFX_PASSWORD }}
+        run: |
+          if [ -z "$PFX_BASE64" ]; then
+            echo "::error::SIGNTOOL_PFX_BASE64 secret is required to publish a release"
+            exit 1
+          fi
+          if [ -z "$PFX_PASSWORD" ]; then
+            echo "::error::SIGNTOOL_PFX_PASSWORD secret is required alongside SIGNTOOL_PFX_BASE64"
+            exit 1
+          fi
+
   ffmpeg:
     name: FFmpeg
+    needs: signing-secrets
     uses: ./.github/workflows/ffmpeg.yml
     with:
       tag: ${{ inputs.tag }}
@@ -52,6 +93,7 @@ jobs:
   # catches.
   webapp:
     name: Web client
+    needs: signing-secrets
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -78,9 +120,99 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  windows-server:
+    name: Server (windows-x86_64)
+    needs: webapp
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || '' }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-webapp
+          path: webapp/dist
+
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: "1.98"
+
+      - name: Build
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-windows-server
+          path: target/release/waveflow-server.exe
+          retention-days: 7
+          if-no-files-found: error
+
+  # Holds the certificate, so it checks out nothing and runs nothing it was
+  # handed. In the job that builds, the secrets would be out of reach of the steps
+  # before this one only on paper: `cargo build` runs the build scripts and the
+  # procedural macros of every dependency, and a process one of them leaves behind
+  # outlives its step, there to read the PFX, or the password on signtool's command
+  # line. On a tag only, too: a branch of this repository can read the secrets, and
+  # the certificate is there to sign what is released, not what a branch built.
+  windows-sign:
+    name: Sign (windows-x86_64)
+    needs: [ffmpeg, windows-server]
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: standalone-windows-server
+          path: target/release
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-windows-x86_64
+          path: ffmpeg-out
+
+      # The PFX lives in the runner's temporary folder, which nothing uploads, for
+      # as long as signtool runs.
+      - name: Sign
+        if: inputs.tag
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.SIGNTOOL_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.SIGNTOOL_PFX_PASSWORD }}
+        run: |
+          Write-Host "::add-mask::$env:PFX_PASSWORD"
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object -Property @{ Expression = { try { [Version]$_.Directory.Parent.Name } catch { [Version]"0.0.0.0" } } } -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found in the Windows Kits" }
+          $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+          try {
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:PFX_PASSWORD `
+              target\release\waveflow-server.exe ffmpeg-out\ffmpeg.exe ffmpeg-out\ffprobe.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool exited with $LASTEXITCODE" }
+          } finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      # Two paths, so the artifact keeps them, and `archive` finds both where the
+      # other targets have theirs.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: standalone-windows-executables
+          path: |
+            target/release/waveflow-server.exe
+            ffmpeg-out/
+          retention-days: 7
+          if-no-files-found: error
+
   archive:
     name: Archive (${{ matrix.target }})
-    needs: [ffmpeg, webapp]
+    needs: [ffmpeg, webapp, windows-sign]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -106,14 +238,22 @@ jobs:
           persist-credentials: false
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os != 'Windows'
         with:
           name: standalone-webapp
           path: webapp/dist
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os != 'Windows'
         with:
           name: ffmpeg-${{ needs.ffmpeg.outputs.version }}-${{ matrix.target }}
           path: ffmpeg-out
+
+      # Built and signed already, by the two jobs above.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: standalone-windows-executables
 
       # The toolchain is the image's, and its version the Dockerfile's. The three
       # targets that exercise FFmpeg ran in `ffmpeg.yml` against a glibc build;
@@ -135,7 +275,7 @@ jobs:
             '
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
-        if: runner.os != 'Linux'
+        if: runner.os == 'macOS'
         with:
           toolchain: "1.98"
 
@@ -145,11 +285,19 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
         run: cargo build --locked --release
 
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
+      # Needs no secret, so every run does it and a pull request proves it. `-` is
+      # ad hoc; a Developer ID would be this identity, with its certificate
+      # imported first and the notarization of §6 after the archive. The linker
+      # signs an arm64 binary on its own, under a generated identifier, and an
+      # x86_64 one not at all: `--force` and `--identifier` make the two alike.
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
         env:
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --locked --release
+          SIGNING_IDENTITY: "-"
+        run: |
+          codesign --force --sign "$SIGNING_IDENTITY" --identifier app.waveflow.server target/release/waveflow-server
+          codesign --force --sign "$SIGNING_IDENTITY" --identifier app.waveflow.server.ffmpeg ffmpeg-out/ffmpeg
+          codesign --force --sign "$SIGNING_IDENTITY" --identifier app.waveflow.server.ffprobe ffmpeg-out/ffprobe
 
       # The tag when there is one. Otherwise the commit, which for a pull request
       # is its own head rather than the merge commit GitHub tests, which exists
@@ -173,6 +321,59 @@ jobs:
       - name: Start it and play a file
         shell: bash
         run: sh packaging/standalone/smoke.sh dist/waveflow-server-*
+
+      # Read back from the archive, which is what ships. A self-signed certificate
+      # answers `UnknownError`, its root being untrusted, but so does any failure
+      # PowerShell has no name for, so accepting that status would accept those too.
+      # Trust is taken out of the question instead: the one signer all three share
+      # goes into this runner's trusted roots, for this job's short life, and each
+      # file must then answer `Valid`. The thumbprint is public, and goes in the log
+      # for anyone comparing a download against it.
+      - name: Check the signatures (Windows)
+        if: runner.os == 'Windows' && inputs.tag
+        shell: pwsh
+        run: |
+          $extracted = Join-Path $env:RUNNER_TEMP "signatures"
+          Expand-Archive -Path dist\waveflow-server-*.zip -DestinationPath $extracted
+          $files = foreach ($tool in "waveflow-server.exe", "ffmpeg.exe", "ffprobe.exe") {
+            Get-ChildItem -Path $extracted -Recurse -Filter $tool
+          }
+          $signers = @($files | ForEach-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).SignerCertificate })
+          if ($signers.Count -ne 3) { throw "only $($signers.Count) of the three executables have a signer" }
+          $thumbprints = @($signers.Thumbprint | Select-Object -Unique)
+          if ($thumbprints.Count -ne 1) { throw "the executables have different signers: $thumbprints" }
+          Write-Host "signed by $($signers[0].Subject), thumbprint $thumbprints"
+          $roots = [Security.Cryptography.X509Certificates.X509Store]::new("Root", "LocalMachine")
+          $roots.Open("ReadWrite")
+          $roots.Add($signers[0])
+          $roots.Close()
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            Write-Host "$($file.Name): $($signature.Status)"
+            if ($signature.Status.ToString() -ne "Valid") { throw "$($file.Name): $($signature.StatusMessage)" }
+            if (-not $signature.TimeStamperCertificate) { throw "$($file.Name) has no timestamp" }
+          }
+
+      # `--verify` alone would pass on the linker's signature of an arm64 binary,
+      # had the signing above done nothing. The identifier is what only it wrote.
+      - name: Check the signatures (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          extracted="$RUNNER_TEMP/signatures"
+          unzip -q dist/waveflow-server-*.zip -d "$extracted"
+          for tool in waveflow-server ffmpeg ffprobe; do
+            case "$tool" in
+              waveflow-server) wanted=app.waveflow.server ;;
+              *) wanted="app.waveflow.server.$tool" ;;
+            esac
+            file=$(echo "$extracted"/*/"$tool")
+            codesign --verify --strict --verbose=2 "$file"
+            identifier=$(codesign --display --verbose=2 "$file" 2>&1 | sed -n 's/^Identifier=//p')
+            if [ "$identifier" != "$wanted" ]; then
+              echo "::error::$tool is signed as '$identifier', not $wanted"
+              exit 1
+            fi
+          done
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

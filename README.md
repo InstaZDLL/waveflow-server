@@ -164,7 +164,7 @@ From 2.1.0, each [release](https://github.com/InstaZDLL/waveflow-server/releases
 | Linux (x86_64) | `waveflow-server-<version>-linux-x86_64.tar.gz` |
 | Linux (arm64) | `waveflow-server-<version>-linux-arm64.tar.gz` |
 
-Each holds one folder: the server, its own FFmpeg, a `laptop.env` of settings, the licences, and a `README.txt` that walks through the first start. The archives are not signed yet, so Windows and macOS warn on the first launch; the `README.txt` says what to click past. `SHA256SUMS`, on the same release, holds their checksums, and `ffmpeg-<version>-sources.tar.gz` the source of the FFmpeg they carry. The Linux archives are static and run on any distribution.
+Each holds one folder: the server, its own FFmpeg, a `laptop.env` of settings, the licences, and a `README.txt` that walks through the first start. The Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch; the `README.txt` says what to click past. `SHA256SUMS`, on the same release, holds their checksums, and `ffmpeg-<version>-sources.tar.gz` the source of the FFmpeg they carry. The Linux archives are static and run on any distribution.
 
 The rest of this section is for a server that stays on: the data lives in a folder of your choosing, and the commands assume a terminal.
 

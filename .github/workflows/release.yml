@@ -20,6 +20,14 @@ name: Release
 # repository secrets; without them the build stops at its login rather than
 # publishing to one registry and announcing two.
 #
+# The Windows executables in the archives are signed with the certificate in the
+# `SIGNTOOL_PFX_BASE64` (the PFX, in base64) and `SIGNTOOL_PFX_PASSWORD` repository
+# secrets. Without them `standalone.yml` stops before it builds an archive, and the
+# image's tags and the release page, which wait for it, are never written; the
+# image's own build still runs. The certificate is self-signed, so Windows still
+# warns: §6 of docs/plans/standalone-download-plan.md says what it gives and what
+# not.
+#
 # The tag is the source of truth for the version. `Cargo.toml` is not read
 # here — a tag that disagrees with it would produce an image labelled one way
 # and reporting itself another, so the two are checked against each other
@@ -116,14 +124,18 @@ jobs:
         run: |
           echo "image=${REGISTRY}/${REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-  # After `verify`, like the image's build, and beside it. Unsigned for now:
-  # signing is #401, and the README in each archive says what to click past.
+  # After `verify`, like the image's build, and beside it. Named one by one rather
+  # than `secrets: inherit`, so that file holds these two and not the registry
+  # tokens. The README in each archive says what to click past.
   standalone:
     name: Standalone
     needs: verify
     uses: ./.github/workflows/standalone.yml
     with:
       tag: ${{ inputs.tag || github.ref_name }}
+    secrets:
+      SIGNTOOL_PFX_BASE64: ${{ secrets.SIGNTOOL_PFX_BASE64 }}
+      SIGNTOOL_PFX_PASSWORD: ${{ secrets.SIGNTOOL_PFX_PASSWORD }}
 
   # Built on native runners rather than under QEMU. A Rust release build
   # emulated for arm64 takes hours; GitHub's arm64 runners are free for public
@@ -357,7 +369,7 @@ jobs:
           Linux (x86_64)|linux-x86_64.tar.gz
           Linux (arm64)|linux-arm64.tar.gz
           ARCHIVES
-            printf '\nThey are not signed yet, so Windows and macOS warn on the first launch: `README.txt` says what to click past. `SHA256SUMS` holds the checksums of them all, and `%s` the source of the FFmpeg they carry.\n\n' "$sources"
+            printf '\nThe Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch: `README.txt` says what to click past. `SHA256SUMS` holds the checksums of them all, and `%s` the source of the FFmpeg they carry.\n\n' "$sources"
           } >> notes.md
           printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system).\n' \
             "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" >> notes.md

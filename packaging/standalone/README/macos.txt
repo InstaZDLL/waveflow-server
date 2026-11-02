@@ -9,8 +9,9 @@ To start it
 1. Double-click waveflow-server.
 
    The first time, macOS refuses to open it, because this download is not
-   signed yet. It refuses each of the three programs in this folder in turn:
-   waveflow-server, ffmpeg and ffprobe. There are two ways past that.
+   signed with a certificate from Apple. It refuses each of the three programs
+   in this folder in turn: waveflow-server, ffmpeg and ffprobe. There are two
+   ways past that.
 
    The short way, once for the whole folder: open Terminal, type the line
    below followed by a space, drag this folder onto the Terminal window, and

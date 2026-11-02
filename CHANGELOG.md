@@ -40,13 +40,20 @@ out first, whether or not it breaks a compile.
   `-macos-arm64.zip`, `-macos-x86_64.zip`, `-linux-x86_64.tar.gz` and
   `-linux-arm64.tar.gz`, each one folder holding the server, its own FFmpeg,
   `laptop.env`, the licences and a `README.txt`, with
-  `ffmpeg-<version>-sources.tar.gz` and a `SHA256SUMS` over all of them. They are
-  not signed yet, so Windows and macOS warn on the first launch, and the
-  `README.txt` says what to click past. The Linux server is static against musl
-  and runs on any distribution; the Windows one needs no Visual C++
-  redistributable. Each archive is started and made to play a file on its own
-  platform before the release attaches it, and the image's tags wait for them
-  too, so a tag whose archives fail publishes neither.
+  `ffmpeg-<version>-sources.tar.gz` and a `SHA256SUMS` over all of them. Windows
+  and macOS warn on the first launch, and the `README.txt` says what to click
+  past. The Linux server is static against musl and runs on any distribution;
+  the Windows one needs no Visual C++ redistributable. Each archive is started
+  and made to play a file on its own platform before the release attaches it,
+  and the image's tags wait for them too, so a tag whose archives fail publishes
+  neither.
+- **The standalone executables are signed** (#401), as the desktop app's builds
+  are: with a self-signed Authenticode certificate on Windows, ad hoc on macOS.
+  A file changed after signing no longer matches its signature, but neither
+  system trusts these signatures, so the warnings of the first launch stay. A
+  release needs the `SIGNTOOL_PFX_BASE64` and `SIGNTOOL_PFX_PASSWORD` secrets:
+  without them the archives stop before they build and nothing is published,
+  though the image's build still runs.
 - **The transcoding state in the web client's administration**: whether the
   server can transcode (without it, listeners get the original files only),
   the transcodes running against the global limit, the per-account limit and
