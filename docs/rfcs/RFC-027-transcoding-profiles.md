@@ -1,8 +1,9 @@
 # RFC-027 — Transcoding profiles
 
 - **Status**: Proposed
-- **Implemented by**: not yet. The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+- **Implemented by**: [#418](https://github.com/InstaZDLL/waveflow-server/pull/418)
+  (this RFC and all of it). The *Status* field above never flips in this project;
+  this line is the one that says what is running.
 - **Date**: 2026-11-02
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the frozen Subsonic
