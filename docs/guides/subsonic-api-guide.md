@@ -220,6 +220,14 @@ Without an explicit format, `maxBitRate` is a ceiling: WaveFlow keeps the
 original when its known bitrate fits and otherwise transcodes to MP3. Original
 and completed cached responses support Range; live transcodes are chunked.
 
+A request that names neither a format nor a positive `maxBitRate` is what the
+account's transcoding profile applies to, if it set one
+([RFC-027](../rfcs/RFC-027-transcoding-profiles.md)): a row for this client's `c`,
+compared without ASCII case, or else the account's default. A source at or under
+the profile's bit rate stays the original. The `Content-Type` names what was sent.
+A client that seeks by byte range may fail to seek in a live transcode; a row of
+`raw` for its name keeps it on the original.
+
 ## Implemented methods
 
 Only the following methods are dispatched. Unknown methods answer HTTP `200`
