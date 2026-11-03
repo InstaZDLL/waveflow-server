@@ -10,14 +10,16 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-11-03
+
 ### Added
 
 - **The web client in seven more languages**: German, Spanish, Italian,
   Japanese, Korean, and Simplified and Traditional Chinese, beside English and
   French. Settings › Language offers each, and a browser set to one opens in
   it. A Chinese browser gets the script its reader uses: Traditional for
-  Taiwan, Hong Kong and Macao, Simplified elsewhere. None of the seven has had
-  a native speaker's review yet.
+  Taiwan, Hong Kong and Macao, Simplified elsewhere. Native speakers reviewed
+  all seven.
 - **`waveflow-server health`**, which asks `/ready` at `WAVEFLOW_BIND` and
   exits 0 on its readiness answer, or prints one line and exits 1. The Docker
   image's `HEALTHCHECK` now runs it, and curl, installed for that check alone,
@@ -385,7 +387,8 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.0.1...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.0...main
+[2.1.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.0
 [2.0.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.1
 [2.0.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0
 [2.0.0-beta.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0-beta.1
