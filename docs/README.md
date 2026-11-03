@@ -71,10 +71,10 @@ revision of its survey, and a status line saying what has happened since.
 ## Releases
 
 The notes published with each stable release, one per tag, in
-[`releases/`](releases/): [2.0.0](releases/v2.0.0.md) and
-[2.0.1](releases/v2.0.1.md), and those of [2.1.0](releases/v2.1.0.md), written
-ahead of its tag. The release workflow refuses a stable tag that has none. Every
-change, release by release, is in the [CHANGELOG](../CHANGELOG.md).
+[`releases/`](releases/): [2.0.0](releases/v2.0.0.md),
+[2.0.1](releases/v2.0.1.md) and [2.1.0](releases/v2.1.0.md). The release workflow
+refuses a stable tag that has none. Every change, release by release, is in the
+[CHANGELOG](../CHANGELOG.md).
 The screenshots the README shows are in [`screenshots/`](screenshots/).
 
 ## History

@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.1-10b981?style=flat-square" alt="Version 2.0.1" />
+  <img src="https://img.shields.io/badge/version-2.1.0-10b981?style=flat-square" alt="Version 2.1.0" />
   <img src="https://img.shields.io/badge/API-OpenSubsonic-6a4bd6?style=flat-square" alt="OpenSubsonic" />
   <img src="https://img.shields.io/badge/database-SQLite%20only-003b57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite only" />
   <img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ed?style=flat-square&logo=docker&logoColor=white" alt="Docker image for amd64 and arm64" />
@@ -63,7 +63,7 @@
   </tr>
   <tr>
     <td>📱&nbsp;<b>Your apps already work</b></td>
-    <td>Subsonic players connect as they are, with no plugin. Each release is run against Symfonium, Feishin, DSub and Juliet, and the results are <a href="docs/compatibility/subsonic-compatibility.md">published</a>.</td>
+    <td>Subsonic players connect as they are, with no plugin. Symfonium, Feishin, DSub and Juliet have each been run against the server, and the <a href="docs/compatibility/subsonic-compatibility.md">dated results</a> are published, limits included.</td>
   </tr>
   <tr>
     <td>🌐&nbsp;<b>A player in the browser</b></td>
@@ -175,7 +175,7 @@ docker run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro \
-  ghcr.io/instazdll/waveflow-server:2.0.1
+  ghcr.io/instazdll/waveflow-server:2.1.0
 ```
 
 The image is built for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system) and published under the same tags on both registries:
@@ -251,7 +251,7 @@ cargo run
 
 ## Works with your apps
 
-Each release is checked against real clients, and every result is read back from the server rather than from what the app displayed. The last run was on 2026-10-27 and 2026-10-28:
+Real clients are run against the server by hand, not with every release, and every result is read back from the server rather than from what the app displayed. The last full run was on 2026-10-27 and 2026-10-28, before 2.0.0, so what later releases added has not all met these apps:
 
 | App | Tested on | What it was seen doing |
 | --- | --- | --- |
