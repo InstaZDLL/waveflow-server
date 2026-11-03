@@ -4,7 +4,7 @@ import type { stats as en } from "../en/stats";
 
 export const stats: Record<keyof typeof en, TranslationValue> = {
   // RFC-024: listening statistics and mixes.
-  "stats.detail": "这个账户听过的内容，根据它自己的播放记录统计。",
+  "stats.detail": "根据此账户的播放记录，统计收听过的内容。",
   "stats.period": "时间范围",
   "stats.period7d": "最近 7 天",
   "stats.period30d": "最近 30 天",
@@ -24,10 +24,10 @@ export const stats: Record<keyof typeof en, TranslationValue> = {
     one: "{label}：{count} 次播放",
     other: "{label}：{count} 次播放",
   },
-  "stats.topTracks": "热门曲目",
-  "stats.topArtists": "热门艺人",
-  "stats.topAlbums": "热门专辑",
-  "stats.topGenres": "热门流派",
+  "stats.topTracks": "最常播放的曲目",
+  "stats.topArtists": "最常播放的艺人",
+  "stats.topAlbums": "最常播放的专辑",
+  "stats.topGenres": "最常播放的流派",
   "stats.playCount": { one: "{count} 次播放", other: "{count} 次播放" },
   "stats.firstPlay": "这段时间的首次播放",
   "stats.lastPlay": "最近一次播放",

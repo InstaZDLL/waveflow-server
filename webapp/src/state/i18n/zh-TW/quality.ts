@@ -3,7 +3,7 @@ import type { TranslationValue } from "..";
 import type { quality as en } from "../en/quality";
 
 export const quality: Record<keyof typeof en, TranslationValue> = {
-  "quality.label": "檔案品質",
+  "quality.label": "檔案音質",
   "quality.unknown": "未知",
   "quality.low": "低",
   "quality.standard": "標準",
@@ -11,9 +11,9 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.lossless": "無損",
   "quality.hiRes": "高解析",
   "quality.help":
-    "品質是從音訊本身測量出來的，而不是讀取容器資訊：看高頻在哪裡截止，以及取樣實際用了多少位元。一個高頻在 16 kHz 左右截止的無損檔案，在變成 FLAC 之前其實是 128 kbps 的 MP3。「未發現有損來源」並不能證明什麼：保留全頻段的編碼器不會留下任何痕跡。",
+    "音質是從音訊本身測量出來的，而不是讀取容器資訊：看高頻在哪裡截止，以及取樣實際用了多少位元。一個高頻在 16 kHz 左右截止的無損檔案，在變成 FLAC 之前其實是 128 kbps 的 MP3。「未發現有損來源」並不能證明什麼：保留全頻段的編碼器不會留下任何痕跡。",
   "quality.progress": "已分析 {measured} / {lossless} 個無損檔案",
-  "quality.disabled": "這台伺服器已關閉品質分析。",
+  "quality.disabled": "這台伺服器已關閉音質分析。",
   "quality.noLossless": "這個音樂庫中沒有無損檔案。",
   "quality.status.running":
     "正在分析：已完成 {measured} / {lossless}，{inFlight} 個進行中。",
@@ -37,7 +37,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.confirmAnalyse": "確認：重新分析整個音樂庫",
   "quality.requested": "音樂庫將在背景重新分析。",
   "quality.requestFailed": "操作失敗，請再試一次。",
-  "quality.section": "實際品質",
+  "quality.section": "實際音質",
   "quality.verdictLabel": "判定結果",
   "quality.highsStop": "高頻截止於",
   "quality.wall": "截止處的衰減",
@@ -75,6 +75,6 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.explain.consistent":
     "音訊中沒有與容器資訊矛盾的地方。但這不能證明什麼：保留全頻段的編碼器不會留下任何痕跡。",
   "quality.explain.lossy":
-    "有損檔案會如實標示自己的格式，它的品質取決於編碼器和位元率，因此不做分析。",
+    "有損檔案會如實標示自己的格式，它的音質取決於編碼器和位元率，因此不做分析。",
   "quality.explain.not_measured": "這種格式不做分析。",
 };

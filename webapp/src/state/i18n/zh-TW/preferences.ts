@@ -7,7 +7,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "preferences.language": "語言",
   "preferences.themeLight": "淺色",
   "preferences.themeDark": "深色",
-  "preferences.followSystem": "跟隨系統",
+  "preferences.followSystem": "依照系統設定",
   "preferences.followSystemDetail":
     "裝置切換淺色或深色模式時，主題也會跟著切換到對應的版本。",
   "preferences.followingLight":
@@ -33,11 +33,11 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.playbackDetail":
     "曲目的播放方式。音量平衡儲存在這個瀏覽器中，轉碼設定儲存在你的帳號中。",
   "settings.levelling": "音量平衡",
-  "transcoding.title": "為你的應用程式轉碼",
+  "transcoding.title": "應用程式轉碼設定",
   "transcoding.detail":
-    "儲存在你的帳號中。適用於不自行指定格式或位元率的應用程式：有指定的應用程式一律得到它所指定的內容。位元率已不高於此值的曲目會按原樣播放。這個網頁播放器會繼續播放原始檔案。",
+    "設定儲存在你的帳號中，適用於未指定格式或位元率的應用程式。如果應用程式自行指定，就會依其要求提供音訊。位元率不高於所設上限的曲目會照原樣播放。這個網頁播放器一律播放原始檔案。",
   "transcoding.seeking":
-    "曲目還在轉換時，依檔案位置跳轉的應用程式可能無法在其中跳轉。如果你的某個應用程式發生這種情況，請在下方以「原始」新增它。",
+    "曲目還在轉碼時，依檔案位置定位的應用程式可能無法跳轉播放進度。如果某個應用程式發生這種情況，請在下方新增該應用程式，並將格式設為「原始」。",
   "transcoding.allApps": "所有應用程式",
   "transcoding.format": "格式",
   "transcoding.original": "原始",
@@ -47,11 +47,11 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.saved": "已儲存。",
   "transcoding.oneApp": "針對單一應用程式",
   "transcoding.oneAppDetail":
-    "依該應用程式告知伺服器的名稱，取代上面的設定。曾在此播放且未指定任何內容的應用程式會列為建議。",
+    "為指定應用程式覆寫上方的設定，名稱須與應用程式向伺服器回報的名稱一致。曾在此播放且未指定格式或位元率的應用程式會列在建議中。",
   "transcoding.client": "應用程式名稱",
   "transcoding.add": "新增",
   "transcoding.remove": "移除",
-  "transcoding.none": "沒有應用程式擁有自己的設定。",
+  "transcoding.none": "尚未為任何應用程式個別設定。",
   "transcoding.rate": "{format} · {bitrate} kbit/s",
   "transcoding.bitrateRange": "位元率必須介於 32 到 512 kbit/s 之間。",
   "transcoding.error": "無法儲存，因此沒有任何變更。",

@@ -88,7 +88,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.deleteButton": "永久删除",
   "admin.deleted": "已删除 {name}：{tracks} 首曲目已从曲库中移除。",
   "admin.deleteError": "无法删除音乐库。",
-  "scan.connecting": "等待首次读数…",
+  "scan.connecting": "等待首次进度更新…",
   "scan.queued": "排队中",
   "scan.running": "扫描中",
   "scan.completed": "已完成",
@@ -97,7 +97,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "scan.counted": "{processed} / {total} 个文件",
   "scan.tally":
     "新增 {added} · 更新 {updated} · 移动 {moved} · 未变 {skipped} · 出错 {errors}",
-  "scan.lost": "无法打开进度流。扫描本身不受影响。",
+  "scan.lost": "无法连接扫描进度更新。扫描本身不受影响。",
   "scan.leftOut": "排除 {excluded} 个 · 未跟随 {links} 个链接",
   "maintenance.sections": "维护分区",
   "maintenance.none": "此音乐库中没有需要你维护的内容。",

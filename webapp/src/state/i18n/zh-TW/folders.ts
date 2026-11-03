@@ -49,10 +49,10 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "filed.folderMoved": "已移動「{name}」。",
   "filed.nameTaken": "這裡已有同名的資料夾。",
   "filed.refused":
-    "這個資料夾無法放在這裡：請檢查名稱，或是資料夾層級太深、已滿。",
+    "無法將資料夾移到這裡：請檢查名稱，以及資料夾層級或數量是否已達上限。",
   "filed.failed": "操作失敗，請再試一次。",
   "filed.missing": "這個資料夾已不存在。",
-  "filed.empty": "這裡還沒有歸類任何內容。",
+  "filed.empty": "這個資料夾中還沒有曲目。",
   "filed.allFiled": "所有曲目都已歸類。",
   "filed.uploadHere": "上傳到這裡",
   "filed.unfiledNote":
@@ -73,7 +73,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.formats": "音樂庫可以建立索引的格式：{extensions}",
   "upload.noLibrary": "請先選擇一個音樂庫。",
   "upload.notAllowed": "只有這個音樂庫的擁有者或管理者可以新增檔案。",
-  "upload.closed": "這個音樂庫不接收檔案，這由伺服器的維運人員在伺服器上決定。",
+  "upload.closed": "這個音樂庫不接收檔案，是否允許上傳由伺服器維運人員設定。",
   "upload.waiting": "等待中",
   "upload.hashing": "正在計算指紋…",
   "upload.negotiating": "正在詢問伺服器…",
