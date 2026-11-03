@@ -77,7 +77,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "offline.empty": "まだ何も保存されていません。曲のメニューから保存できます。",
   "offline.player": "オフラインプレーヤー",
   "offline.gone":
-    "この曲のオフラインコピーは、このブラウザから削除されています。",
+    "この曲のオフラインコピーは、このブラウザにはもうありません。",
   "offline.forget": "{title}のオフラインコピーを削除",
   "offline.forgetShort": "削除",
   "offline.forgetDetail": "{size}が空きます",
