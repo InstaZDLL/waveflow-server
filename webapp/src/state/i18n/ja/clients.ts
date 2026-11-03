@@ -19,7 +19,7 @@ export const clients: Record<keyof typeof en, TranslationValue> = {
   "clients.unused": "未使用",
   "subsonic.title": "Subsonic パスワード",
   "subsonic.detail":
-    "Subsonic クライアントのサインインに使う専用のパスワードです。変更すると API キーも置き換わるため、漏れたキーは使えなくなります。",
+    "Subsonic クライアントのサインインに使う専用のパスワードです。変更すると API キーも更新されるため、流出したキーは使えなくなります。",
   "subsonic.set": "{when}に設定",
   "subsonic.changed": "最終変更：{when}",
   "subsonic.password": "新しいパスワード",
@@ -40,13 +40,13 @@ export const clients: Record<keyof typeof en, TranslationValue> = {
   "credential.error": "認証情報を更新できませんでした。",
   "authorize.title": "アクセスの許可",
   "authorize.invalid":
-    "この許可リンクは不完全か、信頼できない場所への転送を求めています。",
+    "この認可リンクには必要な情報が足りないか、信頼できない場所への転送が指定されています。",
   "authorize.client": "{client}を許可",
   "authorize.detail":
     "ライブラリの閲覧、音楽の再生、プレイリスト・お気に入り・評価の管理など、このアカウントでできることがすべて行えるようになります。",
   "authorize.redirect": "{url} に戻ります",
   "authorize.error":
-    "アプリケーションから、応じることのできない許可リクエストが送られました。",
+    "アプリから、受け付けられない認可リクエストが送られました。",
   "authorize.busy": "許可しています…",
   "authorize.approve": "許可",
 };

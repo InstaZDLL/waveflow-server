@@ -29,7 +29,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.failed": "실패했어요. 다시 시도하세요.",
   "attention.noCredits": "결정을 기다리는 크레딧이 없어요.",
   "attention.noDecisions": "아직 내린 결정이 없어요.",
-  "attention.fragments": "{name} 크레딧의 분리 결과",
+  "attention.fragments": "‘{name}’ 분리 시 예상 결과",
   "attention.knownFragment": "이미 이 보관함에 있는 아티스트",
   "attention.decidedSplit": "{parts}(으)로 분리됨",
   "attention.decidedKeep": "하나로 유지됨",

@@ -11,7 +11,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.lossless": "무손실",
   "quality.hiRes": "Hi-Res",
   "quality.help":
-    "컨테이너 정보를 읽지 않고 오디오 자체를 측정해요. 고음역이 어디서 끊기는지, 샘플이 몇 비트를 쓰는지 확인해요. 고음역이 16kHz 근처에서 끊기는 무손실 파일은 FLAC이 되기 전에 128kbps MP3였던 파일이에요. ‘손실 원본의 흔적 없음’은 증거가 아니에요. 전체 대역을 유지하는 인코더는 찾아낼 흔적을 남기지 않아요.",
+    "컨테이너 정보를 읽지 않고 오디오 자체를 측정해요. 고음역이 어디서 끊기는지, 샘플이 몇 비트를 쓰는지 확인해요. 고음역이 16kHz 근처에서 끊기는 무손실 파일은 FLAC이 되기 전에 128kbps MP3였던 파일이에요. ‘손실 압축 음원의 흔적 없음’이 무손실 원본이라는 증거는 아니에요. 전체 대역을 유지하는 인코더는 찾아낼 흔적을 남기지 않아요.",
   "quality.progress": "무손실 파일 {lossless}개 중 {measured}개 분석 완료",
   "quality.disabled": "이 서버에서는 분석이 꺼져 있어요.",
   "quality.noLossless": "이 보관함에는 무손실 파일이 없어요.",
@@ -26,7 +26,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.format": "형식",
   "quality.allFormats": "모든 형식",
   "quality.empty": "이 판정에 해당하는 파일이 없어요.",
-  "quality.column.track": "트랙",
+  "quality.column.track": "곡",
   "quality.column.container": "파일 정보",
   "quality.column.highs": "고음역 차단 지점",
   "quality.column.verdict": "오디오 측정 결과",
@@ -60,7 +60,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.verdict.unreadable": "읽을 수 없음",
   "quality.verdict.silent": "무음",
   "quality.verdict.pending": "분석 대기 중",
-  "quality.verdict.consistent": "손실 원본의 흔적 없음",
+  "quality.verdict.consistent": "손실 압축 음원의 흔적 없음",
   "quality.verdict.lossy": "손실",
   "quality.verdict.not_measured": "측정 안 함",
   "quality.explain.lossy_source":
@@ -75,8 +75,8 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.explain.pending":
     "이 파일은 아직 분석하지 않았어요. 분석은 백그라운드에서 진행돼요.",
   "quality.explain.consistent":
-    "오디오에서 컨테이너 정보와 어긋나는 점을 찾지 못했어요. 하지만 증거는 아니에요. 전체 대역을 유지하는 인코더는 찾아낼 흔적을 남기지 않아요.",
+    "오디오에서 컨테이너 정보와 어긋나는 점을 찾지 못했어요. 하지만 무손실 원본이라는 증거는 아니에요. 전체 대역을 유지하는 인코더는 찾아낼 흔적을 남기지 않아요.",
   "quality.explain.lossy":
-    "손실 파일은 스스로 손실 파일임을 밝혀요. 음질은 인코더와 비트레이트가 결정하므로 분석하지 않아요.",
+    "파일 형식으로 손실 압축 여부를 알 수 있어요. 음질은 인코더와 비트레이트가 결정하므로 분석하지 않아요.",
   "quality.explain.not_measured": "이 형식은 분석하지 않아요.",
 };

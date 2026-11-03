@@ -24,7 +24,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "replayGain.album": "앨범 게인",
   "replayGain.preamp": "프리앰프",
   "replayGain.detail":
-    "태그에 측정된 음량으로 모든 곡을 재생해서 음반마다 소리 크기가 달라지지 않게 해요. 앨범 게인은 앨범 안의 음량 차이를 유지해요. 태그가 없는 곡은 그대로 재생돼요. 재생이 Web Audio를 거치게 되는데, 일부 휴대폰에서는 화면이 꺼지면 재생이 멈출 수 있어요.",
+    "태그에 기록된 음량 측정값을 바탕으로 곡마다 음량을 조절해 음반 간 음량 차이를 줄여요. 앨범 게인은 앨범 안의 음량 차이를 유지해요. 태그가 없는 곡은 그대로 재생돼요. 재생이 Web Audio를 거치므로 일부 휴대폰에서는 화면이 꺼지면 재생이 멈출 수 있어요.",
   "settings.detail":
     "화면 표시, 언어, 내 보관함을 읽을 수 있는 클라이언트를 설정해요.",
   "settings.appearance": "화면 표시",
@@ -32,7 +32,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "설정 항목",
   "settings.section.account": "계정",
   "settings.playbackDetail":
-    "곡을 재생하는 방식이에요. 음량 평준화는 이 브라우저에, 트랜스코딩은 계정에 저장돼요.",
+    "곡 재생 방식을 설정해요. 음량 평준화 설정은 이 브라우저에, 트랜스코딩 설정은 계정에 저장돼요.",
   "settings.levelling": "음량 평준화",
   "transcoding.title": "앱을 위한 트랜스코딩",
   "transcoding.detail":
@@ -48,11 +48,11 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.saved": "저장했어요.",
   "transcoding.oneApp": "특정 앱",
   "transcoding.oneAppDetail":
-    "앱이 서버에 알리는 이름으로 위 설정을 대신해요. 아무것도 요청하지 않고 여기서 재생한 앱이 추천돼요.",
+    "이 앱에만 위 설정보다 우선 적용돼요. 앱이 서버에 알리는 이름을 입력하세요. 형식이나 비트레이트를 요청하지 않고 재생한 앱이 후보로 표시돼요.",
   "transcoding.client": "앱 이름",
   "transcoding.add": "추가",
   "transcoding.remove": "제거",
-  "transcoding.none": "자체 설정이 있는 앱이 없어요.",
+  "transcoding.none": "개별 설정이 있는 앱이 없어요.",
   "transcoding.rate": "{format} · {bitrate} kbit/s",
   "transcoding.bitrateRange": "비트레이트는 32에서 512 kbit/s 사이여야 해요.",
   "transcoding.error": "저장하지 못해서 아무것도 바뀌지 않았어요.",

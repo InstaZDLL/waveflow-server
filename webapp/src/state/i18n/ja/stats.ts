@@ -4,7 +4,7 @@ import type { stats as en } from "../en/stats";
 
 export const stats: Record<keyof typeof en, TranslationValue> = {
   "stats.detail":
-    "このアカウントで聴いたものを、このアカウント自身の再生記録から集計しています。",
+    "このアカウントの再生記録をもとに、聴いた音楽を集計しています。",
   "stats.period": "期間",
   "stats.period7d": "過去7日間",
   "stats.period30d": "過去30日間",
@@ -46,8 +46,8 @@ export const stats: Record<keyof typeof en, TranslationValue> = {
   "mixes.genre": "{genre} ミックス",
   "mixes.decade": "{decade}年代",
   "mixes.failed": "「{title}」を開けませんでした。もう一度お試しください。",
-  "mixes.shelfTitle": "あなたへのミックス",
+  "mixes.shelfTitle": "あなたのためのミックス",
   "mixes.shelfDetail":
-    "あなたのリスニングから作られ、毎日新しくなるプレイリストです。アルバムはこの下にあります。",
+    "あなたの再生履歴をもとに、毎日作成されるプレイリストです。アルバムはこの下にあります。",
   "mixes.badge": "ミックス",
 };
