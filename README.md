@@ -63,7 +63,7 @@
   </tr>
   <tr>
     <td>📱&nbsp;<b>Your apps already work</b></td>
-    <td>Subsonic players connect as they are, with no plugin. Each release is run against Symfonium, Feishin, DSub and Juliet, and the results are <a href="docs/compatibility/subsonic-compatibility.md">published</a>.</td>
+    <td>Subsonic players connect as they are, with no plugin. Symfonium, Feishin, DSub and Juliet have each been run against the server, and the <a href="docs/compatibility/subsonic-compatibility.md">dated results</a> are published, limits included.</td>
   </tr>
   <tr>
     <td>🌐&nbsp;<b>A player in the browser</b></td>
@@ -251,7 +251,7 @@ cargo run
 
 ## Works with your apps
 
-Each release is checked against real clients, and every result is read back from the server rather than from what the app displayed. The last run was on 2026-10-27 and 2026-10-28:
+Real clients are run against the server by hand, not with every release, and every result is read back from the server rather than from what the app displayed. The last full run was on 2026-10-27 and 2026-10-28, before 2.0.0, so what later releases added has not all met these apps:
 
 | App | Tested on | What it was seen doing |
 | --- | --- | --- |
