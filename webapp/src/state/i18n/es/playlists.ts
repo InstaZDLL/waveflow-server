@@ -15,7 +15,7 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "playlists.export": "Guardar como .m3u8",
   "playlists.exportError": "No se pudo guardar esa lista de reproducción.",
   "playlists.empty":
-    "Crea una lista de reproducción para mantener juntas un conjunto de pistas.",
+    "Crea una lista de reproducción para agrupar varias pistas.",
   "playlists.createError": "No se pudo crear la lista de reproducción.",
   "playlists.queueError":
     "No se pudo añadir la cola a esta lista de reproducción.",
@@ -86,5 +86,5 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.title": "Posiciones guardadas",
   "bookmarks.detail": "Una por pista. Si vuelves a guardar, se mueve.",
   "bookmarks.save": "Guardar esta posición",
-  "bookmarks.forget": "Olvidar",
+  "bookmarks.forget": "Eliminar",
 };

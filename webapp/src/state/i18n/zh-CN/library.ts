@@ -38,7 +38,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
     one: "音乐库中有 {count} 张专辑",
     other: "音乐库中有 {count} 张专辑",
   },
-  "artists.mostPlayed": "在这里最常播放",
+  "artists.mostPlayed": "在此最常播放的作品",
   "artists.section.album": "专辑",
   "artists.section.ep": "EP",
   "artists.section.single": "单曲",

@@ -55,11 +55,11 @@ export const player: Record<keyof typeof en, TranslationValue> = {
     "Eine Adresse muss mit http:// oder https:// beginnen.",
   "radio.mixedContent":
     "Diese Seite wird über HTTPS ausgeliefert, daher lehnt dein Browser einen unverschlüsselten Stream ab.",
-  "radio.full": "Dieses Konto hat bereits so viele Sender, wie es haben darf.",
+  "radio.full": "Die maximale Anzahl an Sendern für dieses Konto ist erreicht.",
   "radio.saveError": "Der Sender konnte nicht gespeichert werden.",
   "radio.deleteError": "Der Sender konnte nicht gelöscht werden.",
   "radio.playbackError":
-    "Dieser Sender konnte nicht abgespielt werden. Der Server verbindet sich nie mit ihm, das liegt also zwischen deinem Browser und dem Sender.",
+    "Dieser Sender konnte nicht abgespielt werden. Die Verbindung zum Sender läuft direkt über deinen Browser, ohne den Server.",
   "radio.stations": "Sender",
   "radio.newTitle": "Sender hinzufügen",
   "radio.editTitle": "„{name}“ bearbeiten",
@@ -67,7 +67,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.stopNamed": "{name} stoppen",
   "radio.actions": "Aktionen für {name}",
   "radio.confirmDelete":
-    "Den Sender „{name}“ löschen? Seine Adresse und sein Bild werden vergessen.",
+    "Den Sender „{name}“ löschen? Seine Adresse und sein Bild werden entfernt.",
   "offline.kicker": "In diesem Browser",
   "offline.title": "Offline verfügbar",
   "offline.detail":

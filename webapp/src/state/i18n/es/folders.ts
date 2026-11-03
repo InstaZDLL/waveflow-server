@@ -49,7 +49,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "filed.folderMoved": "Se movió “{name}”.",
   "filed.nameTaken": "Aquí ya hay una carpeta con ese nombre.",
   "filed.refused":
-    "Esa carpeta no puede ir ahí: revisa su nombre, o el árbol es demasiado profundo o está lleno.",
+    "No se puede colocar esa carpeta ahí. Revisa su nombre y comprueba si la estructura tiene demasiados niveles o entradas.",
   "filed.failed": "No funcionó. Vuelve a intentarlo.",
   "filed.missing": "Esta carpeta ya no existe.",
   "filed.empty": "Todavía no hay nada clasificado aquí.",

@@ -31,11 +31,11 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlinkError": "Non è stato possibile rimuovere il collegamento.",
   "scrobbling.connect": "Connetti a Last.fm",
   "scrobbling.connectDetail":
-    "Last.fm non fornisce una chiave da incollare, quindi te lo chiede sul suo sito e poi ti riporta qui.",
+    "Last.fm non fornisce una chiave da incollare. Autorizza l’accesso sul suo sito, poi tornerai qui.",
   "scrobbling.connectError":
     "Non è stato possibile aprire il collegamento con Last.fm.",
   "scrobbling.returned": "Last.fm è collegato: {name}.",
-  "scrobbling.health.healthy": "Gli ascolti partono",
+  "scrobbling.health.healthy": "Invio degli ascolti regolare",
   "scrobbling.health.degraded": "La coda è ferma",
   "scrobbling.health.broken": "Non funziona",
   "scrobbling.healthDetail.healthy": "Qui non c’è nulla di bloccato.",
@@ -48,8 +48,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
     other: "{count} in attesa",
   },
   "scrobbling.retrying": {
-    one: "{count} in nuovo tentativo",
-    other: "{count} in nuovo tentativo",
+    one: "{count} in fase di reinvio",
+    other: "{count} in fase di reinvio",
   },
   "scrobbling.uncertainCount": {
     one: "{count} attende una tua decisione",

@@ -5,7 +5,7 @@ import type { clients as en } from "../en/clients";
 export const clients: Record<keyof typeof en, TranslationValue> = {
   "clients.title": "Client registrati",
   "clients.detail":
-    "Dispositivi e script che hanno una credenziale per la tua libreria. Se ne revochi una, smette subito di funzionare.",
+    "Dispositivi e script con una credenziale di accesso alla tua libreria. Revocandola, blocchi subito l’accesso.",
   "clients.name": "A cosa serve",
   "clients.register": "Registra",
   "clients.once":

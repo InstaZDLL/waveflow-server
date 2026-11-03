@@ -5,7 +5,7 @@ import type { smart as en } from "../en/smart";
 export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.title": "스마트 플레이리스트",
   "smart.detail":
-    "규칙으로 정의되고 열 때마다 다시 계산되기 때문에 보관함의 변화를 그대로 반영해요.",
+    "플레이리스트를 열 때마다 설정한 규칙에 맞는 곡을 다시 골라 보관함의 변화를 반영해요.",
   "smart.new": "새 스마트 플레이리스트",
   "smart.edit": "규칙 편집",
   "smart.save": "스마트 플레이리스트 저장",

@@ -5,13 +5,14 @@ import type { clients as en } from "../en/clients";
 export const clients: Record<keyof typeof en, TranslationValue> = {
   "clients.title": "Clientes registrados",
   "clients.detail":
-    "Dispositivos y scripts que tienen una credencial sobre tu biblioteca. Si revocas una, deja de funcionar al instante.",
+    "Dispositivos y scripts con una credencial de acceso a tu biblioteca. Al revocarla, pierden el acceso de inmediato.",
   "clients.name": "Para qué es",
   "clients.register": "Registrar",
   "clients.once":
     "Cópiala ahora. Solo se guarda su hash, así que se muestra una vez y nunca más:",
   "clients.revoke": "Revocar",
-  "clients.none": "Ningún cliente tiene una credencial sobre tu biblioteca.",
+  "clients.none":
+    "Ningún cliente tiene credenciales de acceso a tu biblioteca.",
   "clients.error": "No funcionó. No se ha cambiado nada.",
   "clients.registered": "registrado el {when}",
   "clients.used": "usado por última vez el {when}",

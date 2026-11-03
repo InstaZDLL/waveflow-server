@@ -5,12 +5,12 @@ import type { attention as en } from "../en/attention";
 export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.lists": "Listen",
   "attention.total": {
-    one: "{count} Punkt zum Ansehen",
-    other: "{count} Punkte zum Ansehen",
+    one: "{count} Eintrag zu prüfen",
+    other: "{count} Einträge zu prüfen",
   },
-  "attention.nothing": "Nichts braucht deine Aufmerksamkeit.",
+  "attention.nothing": "Es gibt nichts zu prüfen.",
   "attention.notYours":
-    "Nur Eigentümer und Verwalter dieser Bibliothek sehen, was darin Aufmerksamkeit braucht.",
+    "Nur Eigentümer und Verwalter dieser Bibliothek sehen, was darin zu prüfen ist.",
   "attention.empty": "Nichts in dieser Liste.",
   "attention.tracksNote":
     "Korrigiere einen Titel über sein Menü: Sobald er korrigiert ist, verschwindet er aus der Liste.",
@@ -20,7 +20,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.decided": "Entschieden",
   "attention.split": "Aufteilen",
   "attention.confirmSplit": "Bestätigen: in {count} aufteilen",
-  "attention.keep": "Als eine behalten",
+  "attention.keep": "Nicht aufteilen",
   "attention.splitDone": "{name} ist aufgeteilt.",
   "attention.keepDone": "{name} bleibt eine Angabe.",
   "attention.undone": "Die Entscheidung zu {name} ist rückgängig gemacht.",
@@ -32,7 +32,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.fragments": "Worin {name} aufgeteilt würde",
   "attention.knownFragment": "Bereits ein Künstler in dieser Bibliothek",
   "attention.decidedSplit": "Aufgeteilt in {parts}",
-  "attention.decidedKeep": "Als eine behalten",
+  "attention.decidedKeep": "Nicht aufgeteilt",
   "attention.decidedBy": "Von {who}, {when}",
   "attention.undo": "Rückgängig",
   "attention.duplicateGroup": "Wahrscheinliches Duplikat {group}",
@@ -47,7 +47,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.duplicate_track_number": "Doppelte Titelnummern",
   "attention.track_number_gap": "Lücken in den Titelnummern",
   "attention.probable_duplicate": "Wahrscheinliche Duplikate",
-  "attention.probable_fake_lossless": "Wahrscheinlich unecht verlustfrei",
+  "attention.probable_fake_lossless": "Vermutlich nicht verlustfrei",
   "artistSplit.offer": "In {count} Künstler aufteilen",
   "artistSplit.confirm": "Bestätigen: in {count} aufteilen",
   "artistSplit.done": "Aufgeteilt in {parts}.",

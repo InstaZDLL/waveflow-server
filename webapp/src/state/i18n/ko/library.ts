@@ -86,7 +86,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
     other: "저장한 곡 {count}곡",
   },
   "favourites.empty":
-    "앨범이나 검색 결과에서 곡에 별표를 누르면 여기에 표시돼요.",
+    "앨범이나 검색 결과에서 곡의 별표를 누르면 여기에 표시돼요.",
   "favourites.add": "즐겨찾기에 추가",
   "favourites.remove": "즐겨찾기에서 삭제",
   "browse.sort": "정렬",
@@ -115,7 +115,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "search.thisLibrary": "{library}에서 검색하는 중이에요.",
   "genres.detail": { one: "장르 {count}개", other: "장르 {count}개" },
   "genres.empty": "이 보관함에는 아직 장르 태그가 없어요.",
-  "genres.emptyOne": "이제 이 장르로 태그된 항목이 없어요.",
+  "genres.emptyOne": "이 장르가 지정된 곡이 더 이상 없어요.",
   "history.detail": {
     one: "{count}곡, 최근 순",
     other: "{count}곡, 최근 순",

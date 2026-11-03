@@ -11,7 +11,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "player.next": "Brano successivo",
   "player.seek": "Posizione",
   "player.shuffle": "Riproduzione casuale",
-  "player.repeatOff": "Ripeti: no",
+  "player.repeatOff": "Ripeti: disattivato",
   "player.repeatAll": "Ripeti: tutta la coda",
   "player.repeatOne": "Ripeti: questo brano",
   "player.volume": "Volume",
@@ -44,7 +44,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.save": "Salva stazione",
   "radio.edit": "Modifica",
   "radio.replacing":
-    "Il salvataggio sostituisce tutti i campi, quindi un indirizzo di pagina vuoto cancella quello salvato.",
+    "Il salvataggio sostituisce tutti i campi. Se lasci vuoto l’indirizzo della pagina, quello salvato viene cancellato.",
   "radio.listen": "Ascolta",
   "radio.stop": "Ferma",
   "radio.visit": "Pagina della stazione",
@@ -57,7 +57,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.saveError": "Non è stato possibile salvare la stazione.",
   "radio.deleteError": "Non è stato possibile eliminare la stazione.",
   "radio.playbackError":
-    "Impossibile riprodurre questa stazione. Il server non vi si collega mai, quindi la questione riguarda solo il tuo browser e la stazione.",
+    "Impossibile riprodurre questa stazione. Il browser si collega direttamente alla stazione, senza passare dal server.",
   "radio.stations": "Stazioni",
   "radio.newTitle": "Aggiungi una stazione",
   "radio.editTitle": "Modifica «{name}»",
@@ -65,9 +65,9 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.stopNamed": "Ferma {name}",
   "radio.actions": "Azioni per {name}",
   "radio.confirmDelete":
-    "Eliminare la stazione «{name}»? Il suo indirizzo e la sua immagine verranno dimenticati.",
+    "Eliminare la stazione «{name}»? Il suo indirizzo e la sua immagine verranno rimossi.",
   "offline.kicker": "In questo browser",
-  "offline.title": "Salvati per l’ascolto offline",
+  "offline.title": "Disponibili offline",
   "offline.detail":
     "Questi brani sono stati salvati in questo browser per l’ultimo account che ha effettuato l’accesso, e si riproducono senza connessione. Uscendo, vengono eliminati da questo browser. Puoi salvarne altri dal menu di un brano.",
   "offline.unsupported":

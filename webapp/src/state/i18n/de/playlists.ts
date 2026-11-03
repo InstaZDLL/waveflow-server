@@ -88,5 +88,5 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.title": "Gespeicherte Positionen",
   "bookmarks.detail": "Eine pro Titel. Erneutes Speichern verschiebt sie.",
   "bookmarks.save": "Diese Position speichern",
-  "bookmarks.forget": "Vergessen",
+  "bookmarks.forget": "Entfernen",
 };

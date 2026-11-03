@@ -5,7 +5,7 @@ import type { login as en } from "../en/login";
 export const login: Record<keyof typeof en, TranslationValue> = {
   "login.heroEyebrow": "你的音樂，由你作主",
   "login.heroTitle": "夜幕降臨，音樂庫甦醒。",
-  "login.heroDetail": "私人串流，一個曲庫，所有螢幕。",
+  "login.heroDetail": "私人串流，一個音樂庫，所有裝置都能聽。",
   "login.server": "WaveFlow 伺服器",
   "login.createAdmin": "建立管理員",
   "login.welcome": "歡迎回來",

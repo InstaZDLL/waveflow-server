@@ -35,7 +35,7 @@ export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.quality": "Calidad",
   "nav.group.library": "Biblioteca",
   "nav.group.listen": "Escuchar",
-  "nav.missing": "Archivos que faltan",
+  "nav.missing": "Archivos ausentes",
   "nav.maintenance": "Mantenimiento",
   "nav.stats": "Estadísticas",
   "nav.podcasts": "Pódcasts",

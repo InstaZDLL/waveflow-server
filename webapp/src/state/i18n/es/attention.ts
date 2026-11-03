@@ -48,7 +48,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.duplicate_track_number": "Números de pista repetidos",
   "attention.track_number_gap": "Huecos en los números de pista",
   "attention.probable_duplicate": "Posibles duplicados",
-  "attention.probable_fake_lossless": "Posibles falsos sin pérdida",
+  "attention.probable_fake_lossless": "Audio sin pérdida posiblemente falso",
   "artistSplit.offer": "Dividir en {count} artistas",
   "artistSplit.confirm": "Confirmar: dividir en {count}",
   "artistSplit.done": "Dividido en {parts}.",

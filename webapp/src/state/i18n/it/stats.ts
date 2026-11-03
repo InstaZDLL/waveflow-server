@@ -9,7 +9,7 @@ export const stats: Record<keyof typeof en, TranslationValue> = {
   "stats.period7d": "Ultimi 7 giorni",
   "stats.period30d": "Ultimi 30 giorni",
   "stats.period365d": "Ultimi 12 mesi",
-  "stats.periodAll": "Sempre",
+  "stats.periodAll": "Dall’inizio",
   "stats.empty": "Nessun ascolto in questo periodo.",
   "stats.plays": "Ascolti",
   "stats.listeningTime": "Tempo di ascolto",

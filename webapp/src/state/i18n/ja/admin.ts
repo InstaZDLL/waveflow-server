@@ -90,7 +90,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.deleteButton": "完全に削除",
   "admin.deleted": "{name}を削除しました。{tracks}曲がカタログから外れました。",
   "admin.deleteError": "ライブラリを削除できませんでした。",
-  "scan.connecting": "最初の読み取りを待っています…",
+  "scan.connecting": "最初の進行状況を待っています…",
   "scan.queued": "待機中",
   "scan.running": "スキャン中",
   "scan.completed": "完了",
@@ -104,7 +104,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "scan.leftOut": "除外 {excluded} · たどらなかったリンク {links}",
   "maintenance.sections": "メンテナンスの項目",
   "maintenance.none":
-    "このライブラリには、あなたがメンテナンスできるものはありません。",
+    "このライブラリには、メンテナンス権限のある項目がありません。",
   "missing.total": {
     one: "スキャンで見つからなくなったファイル：{count}件",
     other: "スキャンで見つからなくなったファイル：{count}件",
@@ -114,7 +114,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "missing.notYours":
     "このライブラリの見つからないファイルを見られるのは、オーナーとマネージャー、管理者だけです。",
   "missing.note":
-    "これらの曲は、カタログから削除するまで、お気に入り、プレイリスト内の項目、再生記録とともにカタログに残ります。その前にファイルが戻れば、曲もそのまま残ります。カタログから削除しても、しばらくの間は元に戻せます。その後は、曲と、すべてのメンバーについてそれに紐づくものが、すべて完全に失われます。",
+    "これらの曲は、カタログから削除するまで、お気に入り、プレイリスト内の項目、再生記録とともに残ります。その前にファイルが戻れば、曲の情報もそのまま保たれます。カタログから削除しても、しばらくの間は元に戻せます。その後は、曲と、すべてのメンバーの関連データが完全に削除されます。",
   "missing.since": "{date}から見つかりません",
   "missing.cost":
     "プレイリスト {playlists} · お気に入り {favorites} · 再生 {plays}",
@@ -140,7 +140,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     other: "カタログから削除済み・まだ復元可能（{count}）",
   },
   "missing.purgedNote":
-    "まだ何も失われていません。復元した曲は、紐づいていたものすべてとともに見つからないファイルに戻ります。ファイルが戻ってきた場合は、その曲が自動的に復元されます。",
+    "データはまだ失われていません。復元した曲は、関連するすべてのデータとともに「見つからないファイル」の一覧に戻ります。ファイルが戻ってきた場合は、その曲が自動的に復元されます。",
   "missing.deletedAfter": "{date}を過ぎると完全に失われます",
   "missing.restore": "復元",
   "missing.restoreOne": "{title}を復元",

@@ -25,7 +25,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.keepDone": "{name}は1つのまま残ります。",
   "attention.undone": "{name}についての判断を取り消しました。",
   "attention.alreadyDecided":
-    "このクレジットはその間に決定されました。リストを再読み込みしました。",
+    "このクレジットはすでに処理されています。リストを再読み込みしました。",
   "attention.failed": "うまくいきませんでした。もう一度お試しください。",
   "attention.noCredits": "判断を待っているクレジットはありません。",
   "attention.noDecisions": "まだ何も決定されていません。",

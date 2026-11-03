@@ -49,7 +49,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "filed.folderMoved": "„{name}“ verschoben.",
   "filed.nameTaken": "Hier gibt es bereits einen Ordner mit diesem Namen.",
   "filed.refused":
-    "Dieser Ordner kann nicht dorthin: Prüf seinen Namen, oder die Struktur ist zu tief oder zu voll.",
+    "Der Ordner kann hier nicht abgelegt werden. Prüfe seinen Namen und ob die Ordnerstruktur zu viele Ebenen oder Einträge enthält.",
   "filed.failed": "Das hat nicht geklappt. Versuch es noch einmal.",
   "filed.missing": "Diesen Ordner gibt es nicht mehr.",
   "filed.empty": "Hier ist noch nichts einsortiert.",
@@ -68,7 +68,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.checkAgain": "Erneut prüfen",
   "upload.title": "In {library} hochladen",
   "upload.detail":
-    "Jede Datei bekommt zuerst in deinem Browser einen Fingerabdruck. So wird eine Datei, die schon in der Bibliothek liegt, nie erneut gesendet, und eine unterbrochene Übertragung setzt dort fort, wo sie aufgehört hat.",
+    "Für jede Datei wird zuerst in deinem Browser ein Fingerabdruck berechnet. So wird eine Datei, die schon in der Bibliothek liegt, nie erneut gesendet, und eine unterbrochene Übertragung wird an derselben Stelle fortgesetzt.",
   "upload.pick": "Audiodateien auswählen",
   "upload.formats": "Formate, die die Bibliothek indexieren kann: {extensions}",
   "upload.noLibrary": "Wähle zuerst eine Bibliothek.",

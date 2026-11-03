@@ -31,7 +31,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.sections": "設定の項目",
   "settings.section.account": "アカウント",
   "settings.playbackDetail":
-    "曲の再生方法です。音量の均一化はこのブラウザに、トランスコードはアカウントに保存されます。",
+    "曲の再生方法を設定します。音量の均一化の設定はこのブラウザに、トランスコードの設定はアカウントに保存されます。",
   "settings.levelling": "音量の均一化",
   "transcoding.title": "アプリ向けのトランスコード",
   "transcoding.detail":
@@ -47,7 +47,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.saved": "保存しました。",
   "transcoding.oneApp": "特定のアプリ向け",
   "transcoding.oneAppDetail":
-    "そのアプリがサーバーに伝える名前で、上の設定を置き換えます。何も指定せずにここで再生したアプリが候補に表示されます。",
+    "そのアプリに限り、上の設定より優先されます。アプリがサーバーに伝える名前で指定してください。形式やビットレートを指定せずに再生したアプリが候補に表示されます。",
   "transcoding.client": "アプリ名",
   "transcoding.add": "追加",
   "transcoding.remove": "削除",

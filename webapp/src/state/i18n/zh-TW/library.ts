@@ -7,7 +7,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "album.addQueue": "加入播放佇列",
   "album.title": "標題",
   "album.duration": "長度",
-  "album.trackActions": "曲目動作",
+  "album.trackActions": "曲目操作",
   "album.moreBy": "更多 {artist} 的作品",
   "songs.loadedSoFar": {
     one: "已載入 {count} 首歌曲",
@@ -38,7 +38,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
     one: "音樂庫中有 {count} 張專輯",
     other: "音樂庫中有 {count} 張專輯",
   },
-  "artists.mostPlayed": "在這裡最常播放",
+  "artists.mostPlayed": "在這裡最常播放的作品",
   "artists.section.album": "專輯",
   "artists.section.ep": "EP",
   "artists.section.single": "單曲",

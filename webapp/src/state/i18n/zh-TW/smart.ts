@@ -34,8 +34,8 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.no": "否",
   "smart.preview": "預覽",
   "smart.previewCount": {
-    one: "{count} 首歌曲符合",
-    other: "{count} 首歌曲符合",
+    one: "{count} 首歌曲符合條件",
+    other: "{count} 首歌曲符合條件",
   },
   "smart.unfinished": "請填完所有條件，再預覽或儲存。",
   "smart.refused": "伺服器拒絕了這些規則。",

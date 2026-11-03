@@ -32,7 +32,7 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "playlists.removeEntryError": "無法移除這個項目。",
   "import.title": "從其他播放器匯入播放清單",
   "import.detail":
-    "支援 .m3u 或 .m3u8 檔案。在你看過會遺漏哪些內容之前，不會建立任何東西。",
+    "支援 .m3u 或 .m3u8 檔案。你看過哪些曲目無法匯入後，才會建立播放清單。",
   "import.pick": "選擇播放清單檔案",
   "import.name": "播放清單名稱",
   "import.found": "{entries} 個項目中有 {resolved} 個在你的音樂庫中。",
@@ -79,8 +79,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "share.player": "播放器",
   "share.unavailableTitle": "這個連結已失效",
   "share.unavailableDetail": "它可能已過期、已被收回，或開啟次數已達上限。",
-  "bookmarks.title": "已儲存的位置",
+  "bookmarks.title": "已儲存的播放位置",
   "bookmarks.detail": "每首曲目一個。再次儲存會更新位置。",
-  "bookmarks.save": "儲存目前位置",
+  "bookmarks.save": "儲存目前播放位置",
   "bookmarks.forget": "刪除",
 };

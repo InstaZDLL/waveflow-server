@@ -111,7 +111,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   },
   "missing.nothing": "Todos los archivos están donde el catálogo los espera.",
   "missing.notYours":
-    "Solo los propietarios y gestores de esta biblioteca, y los administradores, ven sus archivos que faltan.",
+    "Solo los propietarios y gestores de esta biblioteca, y los administradores, ven sus archivos ausentes.",
   "missing.note":
     "Estas pistas se quedan en el catálogo, con sus favoritos, entradas en listas de reproducción y reproducciones, hasta que se quiten del catálogo; si el archivo vuelve antes, conserva su pista. Quitarlas del catálogo puede deshacerse durante un tiempo; después, la pista y todo lo que depende de ella, para todos los miembros, desaparece para siempre.",
   "missing.since": "falta desde el {date}",
@@ -139,7 +139,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     other: "Quitadas del catálogo, aún restaurables ({count})",
   },
   "missing.purgedNote":
-    "Todavía no se ha perdido nada de esto. Al restaurarla, una pista vuelve a los archivos que faltan con todo lo que dependía de ella; si su archivo vuelve, la pista se restaura sola.",
+    "Todavía no se ha perdido nada de esto. Al restaurarla, una pista vuelve a los archivos ausentes con todo lo que dependía de ella; si su archivo vuelve, la pista se restaura sola.",
   "missing.deletedAfter": "se borrará para siempre después del {date}",
   "missing.restore": "Restaurar",
   "missing.restoreOne": "Restaurar {title}",
