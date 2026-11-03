@@ -31,7 +31,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlinkError": "Diese Verknüpfung konnte nicht getrennt werden.",
   "scrobbling.connect": "Mit Last.fm verbinden",
   "scrobbling.connectDetail":
-    "Last.fm gibt keinen Schlüssel zum Einfügen heraus, daher fragt es dich dort und schickt dich zurück.",
+    "Last.fm stellt keinen Schlüssel zum Einfügen bereit. Du erteilst die Freigabe deshalb auf der Last.fm-Website und kehrst anschließend hierher zurück.",
   "scrobbling.connectError":
     "Die Verbindung zu Last.fm konnte nicht gestartet werden.",
   "scrobbling.returned": "Last.fm ist verknüpft: {name}.",
@@ -45,8 +45,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
     "Die Zugangsdaten wurden abgelehnt, oder dieser Server erreicht die Instanz nicht mehr unter dem Namen, für den die Verknüpfung erstellt wurde.",
   "scrobbling.pending": { one: "{count} wartet", other: "{count} warten" },
   "scrobbling.retrying": {
-    one: "{count} wird erneut versucht",
-    other: "{count} werden erneut versucht",
+    one: "{count} wird erneut gesendet",
+    other: "{count} werden erneut gesendet",
   },
   "scrobbling.uncertainCount": {
     one: "{count} wartet auf dich",
@@ -68,7 +68,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.discard": "Verwerfen",
   "scrobbling.answered": "Erledigt.",
   "scrobbling.answerError":
-    "Diese Wiedergabe konnte nicht beantwortet werden. Lade die Seite neu, bevor du es noch einmal versuchst.",
+    "Deine Entscheidung zu dieser Wiedergabe konnte nicht gespeichert werden. Lade die Seite neu, bevor du es noch einmal versuchst.",
   "scrobbling.unnamedTrack": "Nicht mehr im Verlauf, den dieses Konto noch hat",
   "scrobbling.reason.rate_limited": "das Ziel hat um eine Pause gebeten",
   "scrobbling.reason.retryable": "das Ziel hat sie nicht angenommen",
@@ -78,7 +78,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
     "dieser Server erreicht die Instanz unter diesem Namen nicht mehr",
   "scrobbling.reason.credential_unreadable":
     "dieser Server konnte die gespeicherten Zugangsdaten nicht lesen",
-  "scrobbling.reason.attempts_exhausted": "sie wurde zu oft versucht",
+  "scrobbling.reason.attempts_exhausted": "zu viele Sendeversuche",
   "scrobbling.reason.unlinked": "die Verknüpfung wurde getrennt",
   "scrobbling.reason.ambiguous": "die Antwort kam nie an",
   "scrobbling.reason.interrupted": "der Server wurde mitten im Senden gestoppt",

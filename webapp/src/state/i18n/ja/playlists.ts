@@ -40,8 +40,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "import.encoding":
     "このファイルは UTF-8 ではなかったため、{encoding} として読み込みました。取り込む前に、下の名前を確認してください。",
   "import.missing": {
-    one: "配置できない項目：{count}件",
-    other: "配置できない項目：{count}件",
+    one: "取り込めない項目：{count}件",
+    other: "取り込めない項目：{count}件",
   },
   "import.line": "{line}行目",
   "import.noMatch": "一致する曲がありません",
@@ -84,7 +84,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "share.unavailableDetail":
     "期限切れか、取り消されたか、許可された回数まで開かれた可能性があります。",
   "bookmarks.title": "保存した再生位置",
-  "bookmarks.detail": "1曲につき1つです。もう一度保存すると位置が移動します。",
+  "bookmarks.detail":
+    "1曲につき1か所保存できます。保存し直すと上書きされます。",
   "bookmarks.save": "この位置を保存",
   "bookmarks.forget": "削除",
 };

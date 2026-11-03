@@ -46,7 +46,7 @@ export const attention: Record<keyof typeof en, TranslationValue> = {
   "attention.compilation_no_album_artist":
     "Compilation senza artista dell’album",
   "attention.duplicate_track_number": "Numeri di traccia duplicati",
-  "attention.track_number_gap": "Buchi nei numeri di traccia",
+  "attention.track_number_gap": "Numerazione delle tracce incompleta",
   "attention.probable_duplicate": "Probabili duplicati",
   "attention.probable_fake_lossless": "Probabili falsi lossless",
   "artistSplit.offer": "Dividi in {count} artisti",

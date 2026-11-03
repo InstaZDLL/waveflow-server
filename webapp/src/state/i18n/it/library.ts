@@ -32,8 +32,8 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   },
   "albums.gridTitle": "Nella tua libreria",
   "artists.detail": {
-    one: "{count} voce o collaboratore",
-    other: "{count} voci e collaboratori",
+    one: "{count} artista o collaboratore",
+    other: "{count} artisti e collaboratori",
   },
   "artists.libraryCount": {
     one: "{count} album nella tua libreria",
@@ -60,12 +60,12 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "artistImage.resetBanner": "Nessun banner",
   "artistImage.portraitChanged": "Ritratto cambiato.",
   "artistImage.bannerChanged": "Banner cambiato.",
-  "artistImage.portraitReverted": "Tornato al ritratto automatico.",
+  "artistImage.portraitReverted": "Ripristinato il ritratto automatico.",
   "artistImage.bannerReverted": "Banner rimosso.",
   "artistImage.tooLarge": "Questa immagine supera i 10 MB.",
   "artistImage.notAnImage": "Scegli un’immagine JPEG, PNG o WebP.",
   "artistImage.failed": "Non ha funzionato. Riprova.",
-  "artistImage.chosen": "Ritratto scelto a mano",
+  "artistImage.chosen": "Ritratto scelto manualmente",
   "artistImage.searchDeezer": "Cerca su Deezer",
   "artistImage.menu": "Modifica immagini",
   "artistImage.menuShort": "Modifica",
@@ -75,8 +75,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "artistImage.deezerSearch": "Cerca",
   "artistImage.deezerSearching": "Ricerca su Deezer…",
   "artistImage.deezerResults": "Artisti su Deezer",
-  "artistImage.deezerNone":
-    "Deezer non conosce nessun artista con questo nome.",
+  "artistImage.deezerNone": "Nessun artista con questo nome su Deezer.",
   "artistImage.deezerFans": { one: "{count} fan", other: "{count} fan" },
   "artistImage.deezerUnavailable":
     "La ricerca su Deezer non è attiva su questo server.",
@@ -117,7 +116,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "search.thisLibrary": "Ricerca in {library}.",
   "genres.detail": { one: "{count} genere", other: "{count} generi" },
   "genres.empty": "In questa libreria non è ancora indicato nessun genere.",
-  "genres.emptyOne": "Nessun brano ha più questo genere.",
+  "genres.emptyOne": "Non ci sono più brani con questo genere.",
   "history.detail": {
     one: "{count} brano, dal più recente",
     other: "{count} brani, dal più recente",
@@ -129,6 +128,6 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   },
   "random.again": "Estrai di nuovo",
   "random.fromGenre": "Riproduci questo genere in ordine casuale",
-  "random.empty": "Non c’è ancora nulla da cui estrarre.",
+  "random.empty": "Non ci sono ancora brani da scegliere.",
   "library.active": "Libreria",
 };

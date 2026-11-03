@@ -48,10 +48,11 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   },
   "filed.folderMoved": "已移动“{name}”。",
   "filed.nameTaken": "这里已有同名文件夹。",
-  "filed.refused": "该文件夹不能放在这里：请检查名称，或者目录层级太深、已满。",
+  "filed.refused":
+    "无法将文件夹移到这里：请检查名称，以及文件夹层级或数量是否已达上限。",
   "filed.failed": "操作失败，请重试。",
   "filed.missing": "此文件夹已不存在。",
-  "filed.empty": "这里还没有归入任何内容。",
+  "filed.empty": "此文件夹中还没有曲目。",
   "filed.allFiled": "所有曲目都已归类。",
   "filed.uploadHere": "上传到这里",
   "filed.unfiledNote":
@@ -61,9 +62,9 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.into": "收到的文件会放入文件夹 {folder}。",
   "upload.doneUnfiled": "已添加到音乐库，位于“待整理”",
   "upload.folderMissing":
-    "找不到发起此次上传的文件夹：收到的文件将放入“待整理”。",
+    "找不到此次上传的目标文件夹：收到的文件将放入“待整理”。",
   "upload.folderUnchecked":
-    "无法确认发起此次上传的文件夹，因此暂不接收任何文件。",
+    "无法确认此次上传的目标文件夹，因此暂不接收任何文件。",
   "upload.checkAgain": "重新检查",
   "upload.title": "上传到 {library}",
   "upload.detail":
@@ -72,7 +73,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.formats": "音乐库可索引的格式：{extensions}",
   "upload.noLibrary": "请先选择一个音乐库。",
   "upload.notAllowed": "只有此音乐库的所有者或管理者才能向其中添加文件。",
-  "upload.closed": "此音乐库不接收文件，这由服务器上的运维者决定。",
+  "upload.closed": "此音乐库不接收文件，是否允许上传由服务器运维人员设置。",
   "upload.waiting": "等待中",
   "upload.hashing": "计算指纹…",
   "upload.negotiating": "正在询问服务器…",

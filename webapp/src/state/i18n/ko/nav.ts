@@ -5,7 +5,7 @@ import type { nav as en } from "../en/nav";
 export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.albums": "앨범",
   "nav.artists": "아티스트",
-  "nav.songs": "노래",
+  "nav.songs": "곡",
   "nav.search": "검색",
   "nav.favourites": "즐겨찾기",
   "nav.playlists": "플레이리스트",
@@ -17,10 +17,10 @@ export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.admin": "관리",
   "nav.signOut": "로그아웃",
   "nav.skip": "본문으로 건너뛰기",
-  "nav.home": "WaveFlow 서버, 홈",
+  "nav.home": "WaveFlow 서버 홈",
   "nav.server": "서버",
   "nav.more": "더 보기",
-  "nav.moreTitle": "나머지 메뉴",
+  "nav.moreTitle": "기타 메뉴",
   "nav.moreDetail":
     "아래 막대에는 음악을 들으면서 자주 쓰는 메뉴가 있어요. 나머지는 모두 여기에 있어요.",
   "nav.moreClose": "닫기",

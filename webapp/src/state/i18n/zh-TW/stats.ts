@@ -3,7 +3,7 @@ import type { TranslationValue } from "..";
 import type { stats as en } from "../en/stats";
 
 export const stats: Record<keyof typeof en, TranslationValue> = {
-  "stats.detail": "這個帳號聽過的內容，根據它自己的播放紀錄統計。",
+  "stats.detail": "根據這個帳號的播放紀錄，統計收聽過的內容。",
   "stats.period": "時間範圍",
   "stats.period7d": "最近 7 天",
   "stats.period30d": "最近 30 天",
@@ -23,10 +23,10 @@ export const stats: Record<keyof typeof en, TranslationValue> = {
     one: "{label}：播放 {count} 次",
     other: "{label}：播放 {count} 次",
   },
-  "stats.topTracks": "熱門曲目",
-  "stats.topArtists": "熱門演出者",
-  "stats.topAlbums": "熱門專輯",
-  "stats.topGenres": "熱門類型",
+  "stats.topTracks": "最常播放的曲目",
+  "stats.topArtists": "最常播放的演出者",
+  "stats.topAlbums": "最常播放的專輯",
+  "stats.topGenres": "最常播放的類型",
   "stats.playCount": { one: "播放 {count} 次", other: "播放 {count} 次" },
   "stats.firstPlay": "這段期間的第一次播放",
   "stats.lastPlay": "最近一次播放",

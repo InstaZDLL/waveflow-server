@@ -5,7 +5,7 @@ import type { smart as en } from "../en/smart";
 export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.title": "スマートプレイリスト",
   "smart.detail":
-    "ルールで定義され、開くたびに作り直されるため、ライブラリの変化に追従します。",
+    "プレイリストを開くたびに、設定したルールに合う曲を選び直すため、ライブラリの変更が自動で反映されます。",
   "smart.new": "新規スマートプレイリスト",
   "smart.edit": "ルールを編集",
   "smart.save": "スマートプレイリストを保存",
@@ -56,7 +56,7 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.field.play_count": "再生回数",
   "smart.field.last_played": "最終再生日",
   "smart.field.date_added": "追加日",
-  "smart.field.duration": "長さ（秒）",
+  "smart.field.duration": "再生時間（秒）",
   "smart.field.bitrate": "ビットレート（kbit/s）",
   "smart.field.format": "形式",
   "smart.field.library": "ライブラリ",
@@ -81,7 +81,7 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.sort.play_count": "再生回数",
   "smart.sort.last_played": "最終再生日",
   "smart.sort.date_added": "追加日",
-  "smart.sort.duration": "長さ",
+  "smart.sort.duration": "再生時間",
   "smart.sort.bitrate": "ビットレート",
   "smart.sort.random": "ランダム",
 };

@@ -89,7 +89,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.deleteButton": "永久刪除",
   "admin.deleted": "已刪除 {name}：{tracks} 首歌曲已從曲庫中移除。",
   "admin.deleteError": "無法刪除音樂庫。",
-  "scan.connecting": "正在等待第一筆讀數…",
+  "scan.connecting": "正在等待第一筆進度更新…",
   "scan.queued": "排隊中",
   "scan.running": "掃描中",
   "scan.completed": "已完成",
@@ -98,7 +98,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "scan.counted": "{processed} / {total} 個檔案",
   "scan.tally":
     "新增 {added} · 更新 {updated} · 移動 {moved} · 未變更 {skipped} · 錯誤 {errors}",
-  "scan.lost": "無法開啟進度串流。掃描本身不受影響。",
+  "scan.lost": "無法連線以取得掃描進度。掃描本身不受影響。",
   "scan.leftOut": "排除 {excluded} 個 · 未追蹤 {links} 個連結",
   "maintenance.sections": "維護項目",
   "maintenance.none": "這個音樂庫中沒有需要你維護的內容。",

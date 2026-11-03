@@ -21,7 +21,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.status.waitingForScan":
     "Die Analyse wartet, bis der Scan abgeschlossen ist.",
   "quality.status.queued":
-    "Eingereiht: Die Analyse erreicht diese Dateien in Kürze.",
+    "In der Warteschlange: Diese Dateien werden in Kürze analysiert.",
   "quality.status.idle": "Ruht. Letzte Datei analysiert {when}.",
   "quality.status.idleNever": "Ruht. Noch wurde keine Datei analysiert.",
   "quality.filters": "Ergebnisse",
@@ -33,7 +33,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.column.container": "Laut Datei",
   "quality.column.highs": "Höhen enden bei",
   "quality.column.verdict": "Laut Audio",
-  "quality.fullBand": "Volles Band",
+  "quality.fullBand": "Volles Frequenzband",
   "quality.khz": "{value} kHz",
   "quality.db": "{value} dB",
   "quality.analyseAgain": "Erneut analysieren",
@@ -76,7 +76,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.explain.padded":
     "Der Container gibt mehr Bits an, als die Samples nutzen: zum Beispiel eine 16-Bit-Aufnahme, gespeichert mit 24 Bit.",
   "quality.explain.unreadable":
-    "FFmpeg konnte diese Datei nicht dekodieren. Sie wird erneut versucht, wenn sich die Datei ändert.",
+    "FFmpeg konnte diese Datei nicht dekodieren. Nach einer Änderung der Datei wird es erneut versucht.",
   "quality.explain.silent":
     "Nichts in dieser Datei ist laut genug, um es zu messen.",
   "quality.explain.pending":

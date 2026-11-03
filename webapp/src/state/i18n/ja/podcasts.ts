@@ -3,8 +3,7 @@ import type { TranslationValue } from "..";
 import type { podcasts as en } from "../en/podcasts";
 
 export const podcasts: Record<keyof typeof en, TranslationValue> = {
-  "podcasts.detail":
-    "このサーバーがすべてのアカウントのためにフォローしている番組",
+  "podcasts.detail": "このサーバーで登録中の番組。すべてのアカウントで聴けます",
   "podcasts.off":
     "このサーバーではポッドキャストがオフになっています。これまでに保存したものは引き続き利用できますが、新しいものは取得されません。",
   "podcasts.url": "フィードのアドレス",
@@ -27,7 +26,7 @@ export const podcasts: Record<keyof typeof en, TranslationValue> = {
   },
   "podcasts.failed": "前回の取得に失敗しました：{reason}",
   "podcasts.open": "エピソード",
-  "podcasts.hide": "隠す",
+  "podcasts.hide": "非表示",
   "podcasts.unsubscribe": "登録解除",
   "podcasts.download": "ダウンロード",
   "podcasts.play": "{title}を再生",
@@ -38,7 +37,7 @@ export const podcasts: Record<keyof typeof en, TranslationValue> = {
   "podcasts.status.completed": "再生可能",
   "podcasts.status.error": "ダウンロード失敗",
   "podcasts.status.deleted": "削除済み",
-  "podcasts.conflict": "このサーバーはすでにそのフィードをフォローしています。",
+  "podcasts.conflict": "このフィードはすでにこのサーバーに登録されています。",
   "podcasts.refused":
     "フィードを取得または読み込めなかったか、このサーバーから接続できないアドレスです。",
   "podcasts.subscribeError": "フィードを追加できませんでした。",

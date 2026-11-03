@@ -28,7 +28,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.allFormats": "すべての形式",
   "quality.empty": "この判定のファイルはありません。",
   "quality.column.track": "曲",
-  "quality.column.container": "ファイルの表示",
+  "quality.column.container": "ファイル情報",
   "quality.column.highs": "高域の上限",
   "quality.column.verdict": "音声の実測",
   "quality.fullBand": "全帯域",
@@ -45,7 +45,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.bitsUsed": "実際に使われているビット数（実測）",
   "quality.bitsOf": "{declared}中{used}",
   "quality.bitsNote":
-    "サンプルの測定値であり、本物のハイレゾである証明ではありません。宣言したすべてのビットを使っているファイルは水増しされていないということで、そのビット深度で録音されたという意味ではありません。",
+    "サンプルの測定値であり、本物のハイレゾである証明ではありません。ファイルに記録されたビット数をすべて使っていても、水増しされていないというだけで、そのビット深度で録音されたとは限りません。",
   "quality.analysed": "分析日時",
   "quality.chart": "平均スペクトル：高域は{where}で途切れています。",
   "quality.chartFullBand":
@@ -80,6 +80,6 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.explain.consistent":
     "音声の中に、コンテナの情報と矛盾するものはありません。ただし証明ではありません。全帯域を残すエンコーダーでは、見つかる痕跡がないからです。",
   "quality.explain.lossy":
-    "非可逆ファイルは、その性質がそのまま表示されています。音質はエンコーダーとビットレートで決まるため、分析はしません。",
+    "非可逆圧縮のファイルは形式から判別できます。音質はエンコーダーとビットレートで決まるため、分析はしません。",
   "quality.explain.not_measured": "この形式は分析しません。",
 };

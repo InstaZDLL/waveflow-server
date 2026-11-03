@@ -21,7 +21,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
     "这台服务器已不再提供这个实例，之后不会再向它发送任何记录。你仍然可以撤销授权。",
   "scrobbling.notLinked": "未关联。",
   "scrobbling.secret": "API 密钥",
-  "scrobbling.secretHint": "在你于该服务的账户中获取。",
+  "scrobbling.secretHint": "从你在该服务的账户中获取。",
   "scrobbling.link": "关联",
   "scrobbling.working": "处理中…",
   "scrobbling.linkError": "授权被拒绝。请检查密钥后重试。",
@@ -54,7 +54,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.lastFailure": "上次被拒：{reason}。",
   "scrobbling.uncertain": "需要你决定的播放记录",
   "scrobbling.uncertainDetail":
-    "这些记录发出后连接中断了，所以无法确定对方是否已经收到。重新发送可能让它在别人也能看到的播放历史中出现两次；丢弃则会留下空缺。服务器不会替你决定，而且只会询问一次。",
+    "这些记录发出后连接中断了，所以无法确定对方是否已经保存。重新发送可能让它在别人也能看到的播放历史中出现两次；丢弃则会留下空缺。服务器不会替你决定，而且只会询问一次。",
   "scrobbling.uncertainNone": "没有需要你处理的记录。",
   "scrobbling.playedAt": "播放于 {when}",
   "scrobbling.attempts": {

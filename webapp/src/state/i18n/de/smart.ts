@@ -41,7 +41,7 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
     "Vervollständige alle Bedingungen, um eine Vorschau zu sehen oder zu speichern.",
   "smart.refused": "Der Server hat diese Regeln abgelehnt.",
   "smart.full":
-    "Dieses Konto hat bereits so viele intelligente Playlists, wie es haben darf.",
+    "Die maximale Anzahl an intelligenten Playlists für dieses Konto ist erreicht.",
   "smart.saveError":
     "Die intelligente Playlist konnte nicht gespeichert werden.",
   "smart.deleteError":
@@ -57,7 +57,7 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.field.rating": "Bewertung",
   "smart.field.starred": "Favorit",
   "smart.field.play_count": "Wiedergaben",
-  "smart.field.last_played": "Zuletzt gespielt",
+  "smart.field.last_played": "Zuletzt gehört",
   "smart.field.date_added": "Hinzugefügt am",
   "smart.field.duration": "Dauer (Sekunden)",
   "smart.field.bitrate": "Bitrate (kbit/s)",
@@ -82,7 +82,7 @@ export const smart: Record<keyof typeof en, TranslationValue> = {
   "smart.sort.year": "Jahr",
   "smart.sort.rating": "Bewertung",
   "smart.sort.play_count": "Wiedergaben",
-  "smart.sort.last_played": "Zuletzt gespielt",
+  "smart.sort.last_played": "Zuletzt gehört",
   "smart.sort.date_added": "Hinzugefügt am",
   "smart.sort.duration": "Dauer",
   "smart.sort.bitrate": "Bitrate",

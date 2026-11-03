@@ -5,7 +5,7 @@ import type { nav as en } from "../en/nav";
 export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.albums": "Alben",
   "nav.artists": "Künstler",
-  "nav.songs": "Songs",
+  "nav.songs": "Titel",
   "nav.search": "Suche",
   "nav.favourites": "Favoriten",
   "nav.playlists": "Playlists",
@@ -27,7 +27,7 @@ export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.settings": "Einstellungen",
   "nav.genres": "Genres",
   "nav.history": "Zuletzt gehört",
-  "nav.random": "Zufall",
+  "nav.random": "Zufallsauswahl",
   "nav.playing": "Läuft gerade",
   "nav.upload": "Hochladen",
   "nav.folders": "Ordner",

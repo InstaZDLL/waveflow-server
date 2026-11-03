@@ -19,12 +19,12 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "preferences.standInDark":
     "{theme} non ha una versione scura, quindi al suo posto viene usato {fallback} mentre il tuo dispositivo è in modalità scura.",
   "replayGain.label": "ReplayGain",
-  "replayGain.off": "No",
+  "replayGain.off": "Disattivato",
   "replayGain.track": "Guadagno del brano",
   "replayGain.album": "Guadagno dell’album",
   "replayGain.preamp": "Preamplificazione",
   "replayGain.detail":
-    "Riproduce ogni brano al volume misurato nei suoi tag, così un disco non suona più forte del successivo. Il guadagno dell’album conserva le differenze all’interno di un album. Un brano senza tag viene riprodotto così com’è. La riproduzione passa da Web Audio, che alcuni telefoni mettono in pausa quando lo schermo si spegne.",
+    "Regola il volume in base ai valori dei tag, così un disco non suona più forte del successivo. Il guadagno dell’album conserva le differenze all’interno di un album. Un brano senza tag ReplayGain viene riprodotto così com’è. La riproduzione passa da Web Audio, che alcuni telefoni mettono in pausa quando lo schermo si spegne.",
   "settings.detail":
     "Aspetto, lingua e i client autorizzati a leggere la tua libreria.",
   "settings.appearance": "Aspetto",
@@ -36,9 +36,9 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "settings.levelling": "Normalizzazione del volume",
   "transcoding.title": "Transcodifica per le tue app",
   "transcoding.detail":
-    "Salvata nel tuo account. Per le app che non chiedono né un formato né un bitrate: un’app che chiede riceve sempre ciò che ha chiesto. Un brano già pari o inferiore al bitrate viene riprodotto così com’è. Questo lettore web continua a riprodurre gli originali.",
+    "Salvata nel tuo account. Vale per le app che non richiedono un formato o un bitrate specifico: le richieste dell’app hanno sempre la precedenza. Un brano con un bitrate uguale o inferiore al limite viene riprodotto così com’è. Questo lettore web continua a riprodurre gli originali.",
   "transcoding.seeking":
-    "Mentre un brano è ancora in conversione, un’app che si sposta per posizione nel file potrebbe non riuscire a spostarsi al suo interno. Se succede con una delle tue app, aggiungila qui sotto con Originale.",
+    "Durante la conversione di un brano, le app che usano la posizione nel file per avanzare o tornare indietro potrebbero avere problemi. Se succede con una delle tue app, aggiungila qui sotto con Originale.",
   "transcoding.allApps": "Tutte le app",
   "transcoding.format": "Formato",
   "transcoding.original": "Originale",
@@ -46,9 +46,9 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.bitrateDefault": "Predefinito del formato",
   "transcoding.save": "Salva",
   "transcoding.saved": "Salvato.",
-  "transcoding.oneApp": "Per una app",
+  "transcoding.oneApp": "Per un’app",
   "transcoding.oneAppDetail":
-    "Sostituisce l’impostazione qui sopra per quell’app, con il nome che comunica al server. Vengono suggerite le app che hanno riprodotto qui senza chiedere nulla.",
+    "Sostituisce l’impostazione qui sopra per quell’app. Usa il nome con cui si identifica al server. Vengono suggerite le app che hanno già riprodotto musica qui senza richiedere un formato o un bitrate specifico.",
   "transcoding.client": "Nome dell’app",
   "transcoding.add": "Aggiungi",
   "transcoding.remove": "Rimuovi",

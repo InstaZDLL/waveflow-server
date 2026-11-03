@@ -32,15 +32,15 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "playlists.removeEntryError": "항목을 삭제할 수 없어요.",
   "import.title": "다른 플레이어에서 플레이리스트 가져오기",
   "import.detail":
-    ".m3u 또는 .m3u8 파일이에요. 무엇이 빠지는지 확인하기 전에는 아무것도 만들어지지 않아요.",
+    ".m3u 또는 .m3u8 파일을 가져와요. 가져올 수 없는 항목을 확인하기 전에는 플레이리스트가 만들어지지 않아요.",
   "import.pick": "플레이리스트 파일 선택",
   "import.name": "플레이리스트 이름",
   "import.found": "항목 {entries}개 중 {resolved}개가 내 보관함에 있어요.",
   "import.encoding":
     "파일이 UTF-8이 아니어서 {encoding}(으)로 읽었어요. 가져오기 전에 아래 이름을 확인하세요.",
   "import.missing": {
-    one: "찾을 수 없는 항목 {count}개:",
-    other: "찾을 수 없는 항목 {count}개:",
+    one: "가져올 수 없는 항목 {count}개:",
+    other: "가져올 수 없는 항목 {count}개:",
   },
   "import.line": "{line}번째 줄",
   "import.noMatch": "일치하는 곡 없음",
@@ -66,10 +66,10 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "이 링크는 한 번만 표시돼요:",
   "shares.defaultName": "음악 공유",
   "shares.empty": "만든 공개 링크가 없어요.",
-  "shares.createError": "공유를 만들 수 없어요.",
+  "shares.createError": "공유 링크를 만들 수 없어요.",
   "shares.tooLong":
     "공유에는 최대 {limit}곡을 담을 수 있는데 재생 대기열에는 {count}곡이 있어요. 공유하려면 재생 대기열을 줄이세요.",
-  "shares.deleteError": "공유를 삭제할 수 없어요.",
+  "shares.deleteError": "공유 링크를 삭제할 수 없어요.",
   "shares.maxVisits": "방문 횟수 제한 (선택 사항)",
   "shares.visits": { one: "방문 {count}회", other: "방문 {count}회" },
   "shares.visitsOf": "방문 {max}회 중 {count}회",
@@ -81,7 +81,7 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "share.unavailableTitle": "이 링크로는 아무것도 열 수 없어요",
   "share.unavailableDetail":
     "링크가 만료되었거나, 취소되었거나, 허용된 방문 횟수를 모두 채웠을 수 있어요.",
-  "bookmarks.title": "저장한 위치",
+  "bookmarks.title": "저장한 재생 위치",
   "bookmarks.detail": "곡마다 하나씩 저장돼요. 다시 저장하면 위치가 바뀌어요.",
   "bookmarks.save": "현재 위치 저장",
   "bookmarks.forget": "삭제",

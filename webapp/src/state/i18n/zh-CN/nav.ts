@@ -21,7 +21,7 @@ export const nav: Record<keyof typeof en, TranslationValue> = {
   "nav.server": "服务器",
   "nav.more": "更多",
   "nav.moreTitle": "其他功能",
-  "nav.moreDetail": "下方栏里是听歌时常用的功能，其余的都在这里。",
+  "nav.moreDetail": "底部栏提供听歌时常用的功能，其他功能都在这里。",
   "nav.moreClose": "关闭",
   "nav.settings": "设置",
   "nav.genres": "流派",

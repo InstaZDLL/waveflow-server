@@ -62,13 +62,13 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.into": "받은 파일은 {folder} 폴더에 들어가요.",
   "upload.doneUnfiled": "보관함의 미분류에 추가됨",
   "upload.folderMissing":
-    "이 업로드를 위해 열었던 폴더를 찾을 수 없어요. 받은 파일은 미분류로 들어가요.",
+    "업로드 대상 폴더를 찾을 수 없어요. 받은 파일은 미분류로 들어가요.",
   "upload.folderUnchecked":
-    "이 업로드를 위해 열었던 폴더를 확인할 수 없어서 아직 파일을 받지 않아요.",
+    "업로드 대상 폴더를 확인할 수 없어서 아직 파일을 받지 않아요.",
   "upload.checkAgain": "다시 확인",
   "upload.title": "{library}에 업로드",
   "upload.detail":
-    "각 파일은 먼저 브라우저에서 지문을 만들어요. 그래서 보관함에 이미 있는 파일은 다시 보내지 않고, 중단된 전송은 멈춘 지점부터 이어서 진행해요.",
+    "먼저 브라우저에서 각 파일의 식별값을 계산해요. 보관함에 이미 있는 파일은 다시 보내지 않고, 중단된 전송은 멈춘 지점부터 이어서 진행해요.",
   "upload.pick": "오디오 파일 선택",
   "upload.formats": "보관함에서 인식할 수 있는 형식: {extensions}",
   "upload.noLibrary": "먼저 보관함을 선택하세요.",
@@ -76,7 +76,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.closed":
     "이 보관함은 파일을 받지 않아요. 서버 운영자가 정하는 설정이에요.",
   "upload.waiting": "대기 중",
-  "upload.hashing": "지문 만드는 중…",
+  "upload.hashing": "파일 식별값 계산 중…",
   "upload.negotiating": "서버에 확인하는 중…",
   "upload.uploading": "보내는 중…",
   "upload.committing": "보관함에 추가하는 중…",
@@ -98,5 +98,5 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.network": "연결이 끊겼어요",
   "upload.reason.notAllowed": "이제 이 보관함에 파일을 추가할 수 없어요",
   "upload.reason.error": "문제가 발생했어요",
-  "upload.reason.hashing": "이 브라우저에서 파일의 지문을 만들 수 없어요",
+  "upload.reason.hashing": "이 브라우저에서 파일의 식별값을 계산할 수 없어요",
 };

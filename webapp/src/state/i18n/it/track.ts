@@ -57,7 +57,7 @@ export const track: Record<keyof typeof en, TranslationValue> = {
   "properties.file": "File",
   "properties.tags": "Tag",
   "properties.sound": "Volume e tempo",
-  "properties.lyrics": "Testi",
+  "properties.lyrics": "Testo",
   "properties.path": "Percorso nella libreria",
   "properties.format": "Formato",
   "properties.bitrate": "Bitrate",
@@ -113,7 +113,7 @@ export const track: Record<keyof typeof en, TranslationValue> = {
   "lyrics.label": "Testo",
   "lyrics.none": "Nessun testo accompagna questo file.",
   "lyrics.seekHint":
-    "Questo testo ha i tempi: premi una riga per saltare a quel punto.",
+    "Questo testo è sincronizzato: premi una riga per saltare a quel punto.",
   "lyrics.seekTo": "Vai a {when}",
   "lyrics.seekLine": "{line}, vai a {when}",
   "lyrics.source.lrclib": "Da LRCLIB",

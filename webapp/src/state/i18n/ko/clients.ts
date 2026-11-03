@@ -23,8 +23,8 @@ export const clients: Record<keyof typeof en, TranslationValue> = {
   "subsonic.changed": "마지막 변경 {when}",
   "subsonic.password": "새 비밀번호",
   "subsonic.rotate": "변경",
-  "subsonic.revoke": "끄기",
-  "subsonic.confirm": "네, 끌게요",
+  "subsonic.revoke": "사용 중지",
+  "subsonic.confirm": "네, 사용 중지할게요",
   "subsonic.once":
     "지금 이 API 키를 복사하세요. 해시만 저장되기 때문에 이번 한 번만 표시되고 다시는 볼 수 없어요:",
   "subsonic.gone":

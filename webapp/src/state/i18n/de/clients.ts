@@ -18,7 +18,7 @@ export const clients: Record<keyof typeof en, TranslationValue> = {
   "clients.unused": "nie verwendet",
   "subsonic.title": "Subsonic-Passwort",
   "subsonic.detail":
-    "Das separate Passwort, mit dem sich Subsonic-Clients anmelden. Wenn du es änderst, wird auch der API-Schlüssel ersetzt, sodass ein geleakter nicht mehr funktioniert.",
+    "Das separate Passwort, mit dem sich Subsonic-Clients anmelden. Wenn du es änderst, wird auch der API-Schlüssel ersetzt. Ein offengelegter Schlüssel funktioniert dann nicht mehr.",
   "subsonic.set": "festgelegt {when}",
   "subsonic.changed": "zuletzt geändert {when}",
   "subsonic.password": "Neues Passwort",

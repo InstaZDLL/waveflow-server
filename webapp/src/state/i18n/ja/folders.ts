@@ -49,7 +49,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "filed.folderMoved": "「{name}」を移動しました。",
   "filed.nameTaken": "同じ名前のフォルダがすでにあります。",
   "filed.refused":
-    "そのフォルダはそこに移動できません。名前を確認してください。または、フォルダの階層が深すぎるか、いっぱいです。",
+    "その場所にはフォルダを移動できません。名前が不適切か、フォルダの階層や数が上限に達している可能性があります。",
   "filed.failed": "うまくいきませんでした。もう一度お試しください。",
   "filed.missing": "このフォルダはもう存在しません。",
   "filed.empty": "ここにはまだ何も整理されていません。",

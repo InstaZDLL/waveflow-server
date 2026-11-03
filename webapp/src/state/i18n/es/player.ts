@@ -9,7 +9,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "player.play": "Reproducir",
   "player.pause": "Pausa",
   "player.next": "Pista siguiente",
-  "player.seek": "Buscar posición",
+  "player.seek": "Posición de reproducción",
   "player.shuffle": "Aleatorio",
   "player.repeatOff": "Repetir: desactivado",
   "player.repeatAll": "Repetir: toda la cola",
@@ -26,7 +26,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "playing.idle": "No se está reproduciendo nada.",
   "playing.empty": "Pon una pista y aparecerá aquí, con su letra.",
   "playing.viewLabel": "Cómo ver esta pista",
-  "playing.viewDetail": "Detalle",
+  "playing.viewDetail": "Detalles",
   "playing.viewLyrics": "Letra",
   "playing.viewImmersive": "Inmersiva",
   "playing.immersiveTitle": "Vista inmersiva",
@@ -44,7 +44,7 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.save": "Guardar emisora",
   "radio.edit": "Editar",
   "radio.replacing":
-    "Al guardar se reemplazan todos los campos, así que una dirección de página vacía borra la guardada.",
+    "Al guardar se reemplazan todos los campos. Si dejas vacía la dirección de la página, se borra la que estaba guardada.",
   "radio.listen": "Escuchar",
   "radio.stop": "Detener",
   "radio.visit": "Página de la emisora",
@@ -64,16 +64,16 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "radio.stopNamed": "Detener {name}",
   "radio.actions": "Acciones de {name}",
   "radio.confirmDelete":
-    "¿Eliminar la emisora “{name}”? Se olvidan su dirección y su imagen.",
+    "¿Eliminar la emisora “{name}”? Se borrarán su dirección y su imagen.",
   "offline.kicker": "En este navegador",
-  "offline.title": "Guardado sin conexión",
+  "offline.title": "Disponible sin conexión",
   "offline.detail":
     "Estas pistas se guardaron en este navegador para la última cuenta que inició sesión, y se reproducen sin conexión. Al cerrar sesión se eliminan de este navegador. Guarda más desde el menú de una pista.",
   "offline.unsupported":
     "Este navegador no puede guardar pistas para escucharlas sin conexión.",
   "offline.back": "Volver a la biblioteca",
   "offline.empty":
-    "Todavía no hay nada guardado. El menú de una pista te ofrece guardarla.",
+    "Todavía no hay nada guardado. Puedes guardar pistas desde su menú.",
   "offline.player": "Reproductor sin conexión",
   "offline.gone": "Esa copia ya no está en este navegador.",
   "offline.forget": "Quitar la copia sin conexión de {title}",
