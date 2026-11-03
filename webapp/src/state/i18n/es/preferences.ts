@@ -7,7 +7,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "preferences.language": "Idioma",
   "preferences.themeLight": "Claro",
   "preferences.themeDark": "Oscuro",
-  "preferences.followSystem": "Seguir al sistema",
+  "preferences.followSystem": "Usar ajuste del sistema",
   "preferences.followSystemDetail":
     "Cambia entre la versión clara y la oscura de un tema cuando lo hace tu dispositivo.",
   "preferences.followingLight":
@@ -24,7 +24,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "replayGain.album": "Ganancia por álbum",
   "replayGain.preamp": "Preamplificación",
   "replayGain.detail":
-    "Reproduce cada pista al volumen que midieron sus etiquetas, para que un disco no suene más fuerte que el siguiente. La ganancia por álbum conserva las diferencias dentro de un álbum. Una pista sin etiquetas suena tal cual. La reproducción pasa por Web Audio, que algunos teléfonos pausan al apagar la pantalla.",
+    "Ajusta el volumen según los valores de las etiquetas, para que un disco no suene más fuerte que el siguiente. La ganancia por álbum conserva las diferencias dentro de un álbum. Una pista sin etiquetas ReplayGain suena tal cual. La reproducción pasa por Web Audio, que algunos teléfonos pausan al apagar la pantalla.",
   "settings.detail":
     "Apariencia, idioma y los clientes autorizados a leer tu biblioteca.",
   "settings.appearance": "Apariencia",
@@ -38,7 +38,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.detail":
     "Se guarda en tu cuenta. Para las aplicaciones que no piden un formato ni una tasa de bits: una aplicación que pide algo siempre recibe lo que pidió. Una pista que ya está en esa tasa de bits o por debajo se reproduce tal cual. Este reproductor web sigue reproduciendo los originales.",
   "transcoding.seeking":
-    "Mientras una pista aún se está convirtiendo, una aplicación que se desplaza por posición en el archivo puede no conseguir desplazarse en ella. Si te ocurre con alguna aplicación, añádela abajo con Original.",
+    "Mientras se convierte una pista, las aplicaciones que usan la posición dentro del archivo para avanzar o retroceder pueden tener problemas. Si te ocurre con alguna aplicación, añádela abajo con Original.",
   "transcoding.allApps": "Todas las aplicaciones",
   "transcoding.format": "Formato",
   "transcoding.original": "Original",
@@ -48,7 +48,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.saved": "Guardado.",
   "transcoding.oneApp": "Para una aplicación",
   "transcoding.oneAppDetail":
-    "Sustituye el ajuste anterior para esa aplicación, con el nombre que da al servidor. Se sugieren las aplicaciones que han reproducido aquí sin pedir nada.",
+    "Sustituye el ajuste anterior para esa aplicación. Usa el nombre con el que se identifica ante el servidor. Se sugieren las aplicaciones que ya han reproducido música aquí sin solicitar un formato ni una tasa de bits.",
   "transcoding.client": "Nombre de la aplicación",
   "transcoding.add": "Añadir",
   "transcoding.remove": "Quitar",

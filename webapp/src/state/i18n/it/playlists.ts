@@ -37,8 +37,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "import.encoding":
     "Il file non era in UTF-8 ed è stato letto come {encoding}. Controlla i nomi qui sotto prima di importarlo.",
   "import.missing": {
-    one: "{count} voce non può essere collocata:",
-    other: "{count} voci non possono essere collocate:",
+    one: "{count} voce non può essere importata:",
+    other: "{count} voci non possono essere importate:",
   },
   "import.line": "Riga {line}",
   "import.noMatch": "nessun brano corrispondente",
@@ -83,5 +83,5 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.detail":
     "Una per brano. Salvando di nuovo, la posizione si sposta.",
   "bookmarks.save": "Salva questa posizione",
-  "bookmarks.forget": "Dimentica",
+  "bookmarks.forget": "Elimina",
 };

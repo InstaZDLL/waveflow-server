@@ -34,7 +34,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.transcodingOriginals":
     "Dieser Server kann nicht transkodieren. Alle Hörer erhalten die Originaldatei, egal welches Format ihr Client anfordert.",
   "admin.transcodingRefused":
-    "Eine neue Transkodierung wird abgelehnt, bis eine laufende endet. Originale und was der Transkodierungs-Cache schon enthält, spielen weiterhin.",
+    "Neue Transkodierungen werden abgelehnt, bis eine laufende abgeschlossen ist. Originale und bereits zwischengespeicherte Transkodierungen lassen sich weiterhin abspielen.",
   "admin.transcodingActive": "Laufend",
   "admin.transcodingCount": "{active} von {limit}",
   "admin.transcodingPerAccount": "Pro Konto",
@@ -92,7 +92,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.deleted":
     "{name} wurde gelöscht: {tracks} Titel sind aus dem Katalog verschwunden.",
   "admin.deleteError": "Die Bibliothek konnte nicht gelöscht werden.",
-  "scan.connecting": "Warte auf den ersten Messwert…",
+  "scan.connecting": "Warte auf die erste Statusmeldung…",
   "scan.queued": "Eingereiht",
   "scan.running": "Wird gescannt",
   "scan.completed": "Fertig",
@@ -103,7 +103,7 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     "{added} hinzugefügt · {updated} aktualisiert · {moved} verschoben · {skipped} unverändert · {errors} Fehler",
   "scan.lost":
     "Der Fortschritt konnte nicht abgerufen werden. Der Scan selbst läuft normal weiter.",
-  "scan.leftOut": "{excluded} ausgelassen · {links} Links nicht gefolgt",
+  "scan.leftOut": "{excluded} ausgelassen · {links} Links übersprungen",
   "maintenance.sections": "Wartungsbereiche",
   "maintenance.none": "In dieser Bibliothek gibt es für dich nichts zu warten.",
   "missing.total": {

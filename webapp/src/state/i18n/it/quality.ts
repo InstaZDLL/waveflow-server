@@ -19,7 +19,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
     "Analisi in corso: {measured} su {lossless} completati, {inFlight} in lavorazione.",
   "quality.status.waitingForScan":
     "In attesa che la scansione finisca prima di analizzare.",
-  "quality.status.queued": "In coda: l’analisi raggiungerà presto questi file.",
+  "quality.status.queued": "In coda: questi file verranno analizzati a breve.",
   "quality.status.idle": "Inattiva. Ultimo file analizzato il {when}.",
   "quality.status.idleNever":
     "Inattiva. Non è stato ancora analizzato nessun file.",
@@ -55,7 +55,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.drawing": "Disegno in corso…",
   "quality.spectrogramAlt": "Spettrogramma di {title}, frequenza nel tempo",
   "quality.spectrogramBusy":
-    "Uno spettrogramma è già in fase di disegno per te. Riprova tra un attimo.",
+    "La generazione di uno spettrogramma è già in corso. Riprova tra un attimo.",
   "quality.spectrogramFailed":
     "Non è stato possibile disegnare lo spettrogramma.",
   "quality.verdict.lossy_source": "Probabilmente da un file con perdita",
@@ -74,7 +74,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
   "quality.explain.padded":
     "Il contenitore dichiara più bit di quelli usati dai campioni: per esempio, una registrazione a 16 bit salvata a 24 bit.",
   "quality.explain.unreadable":
-    "FFmpeg non è riuscito a decodificare questo file. Verrà riprovato quando il file cambierà.",
+    "FFmpeg non è riuscito a decodificare questo file. Il tentativo verrà ripetuto quando il file cambierà.",
   "quality.explain.silent":
     "In questo file non c’è nulla di abbastanza forte da poter essere misurato.",
   "quality.explain.pending":

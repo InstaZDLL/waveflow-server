@@ -31,8 +31,8 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   },
   "albums.gridTitle": "En tu biblioteca",
   "artists.detail": {
-    one: "{count} voz o colaborador",
-    other: "{count} voces y colaboradores",
+    one: "{count} artista o colaborador",
+    other: "{count} artistas y colaboradores",
   },
   "artists.libraryCount": {
     one: "{count} álbum en tu biblioteca",
@@ -64,7 +64,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "artistImage.tooLarge": "Esta imagen ocupa más de 10 MB.",
   "artistImage.notAnImage": "Elige una imagen JPEG, PNG o WebP.",
   "artistImage.failed": "No funcionó. Vuelve a intentarlo.",
-  "artistImage.chosen": "Retrato elegido a mano",
+  "artistImage.chosen": "Retrato elegido manualmente",
   "artistImage.searchDeezer": "Buscar en Deezer",
   "artistImage.menu": "Editar imágenes",
   "artistImage.menuShort": "Editar",
@@ -74,7 +74,7 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "artistImage.deezerSearch": "Buscar",
   "artistImage.deezerSearching": "Buscando en Deezer…",
   "artistImage.deezerResults": "Artistas de Deezer",
-  "artistImage.deezerNone": "Deezer no conoce a ningún artista con ese nombre.",
+  "artistImage.deezerNone": "No hay artistas con ese nombre en Deezer.",
   "artistImage.deezerFans": { one: "{count} fan", other: "{count} fans" },
   "artistImage.deezerUnavailable":
     "La búsqueda en Deezer no está activada en este servidor.",

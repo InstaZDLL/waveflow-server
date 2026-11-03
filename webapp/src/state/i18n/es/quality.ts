@@ -20,8 +20,7 @@ export const quality: Record<keyof typeof en, TranslationValue> = {
     "Analizando: {measured} de {lossless} terminados, {inFlight} en curso.",
   "quality.status.waitingForScan":
     "Esperando a que termine el escaneo para analizar.",
-  "quality.status.queued":
-    "En cola: el análisis llegará pronto a estos archivos.",
+  "quality.status.queued": "En cola: estos archivos se analizarán en breve.",
   "quality.status.idle": "En reposo. Último archivo analizado el {when}.",
   "quality.status.idleNever":
     "En reposo. Todavía no se ha analizado ningún archivo.",

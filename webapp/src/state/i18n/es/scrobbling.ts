@@ -31,12 +31,12 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlinkError": "No se pudo retirar ese vínculo.",
   "scrobbling.connect": "Conectar con Last.fm",
   "scrobbling.connectDetail":
-    "Last.fm no da ninguna clave que puedas pegar, así que te lo pide en su sitio y te trae de vuelta.",
+    "Last.fm no proporciona una clave que puedas pegar. Autoriza el acceso en su sitio y después volverás aquí.",
   "scrobbling.connectError": "No se pudo abrir la conexión con Last.fm.",
   "scrobbling.returned": "Last.fm está vinculado: {name}.",
   "scrobbling.health.healthy": "Las escuchas se están enviando",
   "scrobbling.health.degraded": "La cola no avanza",
-  "scrobbling.health.broken": "Roto",
+  "scrobbling.health.broken": "No funciona",
   "scrobbling.healthDetail.healthy": "No hay nada atascado.",
   "scrobbling.healthDetail.degraded":
     "El vínculo responde, pero las escuchas no llegan: o hay una esperando tu decisión, o la más antigua lleva demasiado tiempo esperando.",
@@ -57,7 +57,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.oldest": "La más antigua espera desde el {when}.",
   "scrobbling.lastSuccess": "Última aceptada el {when}.",
   "scrobbling.lastFailure": "Último rechazo: {reason}.",
-  "scrobbling.uncertain": "Escuchas que solo tú puedes decidir",
+  "scrobbling.uncertain": "Escuchas sobre las que solo tú puedes decidir",
   "scrobbling.uncertainDetail":
     "La conexión se cortó después de que salieran, así que nadie sabe si el destino las registró. Volver a enviar una puede hacer que aparezca dos veces en un historial de escuchas que otras personas leen; descartarla deja un hueco. Este servidor no elegirá por ti, y solo te lo preguntará una vez.",
   "scrobbling.uncertainNone": "No hay nada esperando tu decisión.",
@@ -67,7 +67,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.discard": "Descartar",
   "scrobbling.answered": "Respondido.",
   "scrobbling.answerError":
-    "No se pudo responder sobre esa escucha. Recarga la página antes de volver a intentarlo.",
+    "No se pudo guardar tu decisión sobre esa escucha. Recarga la página antes de volver a intentarlo.",
   "scrobbling.unnamedTrack":
     "Ya no está en el historial que conserva esta cuenta",
   "scrobbling.reason.rate_limited": "el destino pidió que se esperara",

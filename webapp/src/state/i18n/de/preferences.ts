@@ -9,7 +9,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "preferences.themeDark": "Dunkel",
   "preferences.followSystem": "Systemeinstellung folgen",
   "preferences.followSystemDetail":
-    "Zwischen der hellen und dunklen Variante eines Designs wechseln, wenn dein Gerät es tut.",
+    "Je nach Systemeinstellung deines Geräts zwischen der hellen und dunklen Variante eines Designs wechseln.",
   "preferences.followingLight":
     "Dein Gerät ist im hellen Modus, daher wird die helle Variante angezeigt. Wenn du ein Design wählst, wählst du beide Varianten.",
   "preferences.followingDark":
@@ -24,7 +24,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "replayGain.album": "Albumpegel",
   "replayGain.preamp": "Vorverstärkung",
   "replayGain.detail":
-    "Spielt jeden Titel in der Lautheit ab, die seine Tags gemessen haben, damit ein Album nicht lauter ist als das nächste. Der Albumpegel erhält die Unterschiede innerhalb eines Albums. Ein Titel ohne Tags läuft unverändert. Die Wiedergabe läuft dann über Web Audio, das manche Smartphones bei ausgeschaltetem Bildschirm pausieren.",
+    "Gleicht die Lautstärke anhand der Werte in den Tags an, damit ein Album nicht lauter ist als das nächste. Der Albumpegel erhält die Unterschiede innerhalb eines Albums. Ein Titel ohne ReplayGain-Tags läuft unverändert. Die Wiedergabe läuft dann über Web Audio, das manche Smartphones bei ausgeschaltetem Bildschirm pausieren.",
   "settings.detail":
     "Darstellung, Sprache und die Clients, die deine Bibliothek lesen dürfen.",
   "settings.appearance": "Darstellung",
@@ -38,7 +38,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.detail":
     "Wird in deinem Konto gespeichert. Für Apps, die selbst kein Format und keine Bitrate anfordern: Eine App, die etwas anfordert, bekommt immer genau das. Ein Titel, der die Bitrate nicht überschreitet, wird unverändert abgespielt. Dieser Webplayer spielt weiterhin die Originale.",
   "transcoding.seeking":
-    "Solange ein Titel noch umgewandelt wird, kann eine App, die über die Dateiposition springt, darin möglicherweise nicht springen. Wenn das bei einer deiner Apps passiert, füge sie unten mit „Original“ hinzu.",
+    "Solange ein Titel noch umgewandelt wird, können Apps, die anhand der Dateiposition spulen, dabei Probleme haben. Wenn das bei einer deiner Apps passiert, füge sie unten mit „Original“ hinzu.",
   "transcoding.allApps": "Alle Apps",
   "transcoding.format": "Format",
   "transcoding.original": "Original",
@@ -48,7 +48,7 @@ export const preferences: Record<keyof typeof en, TranslationValue> = {
   "transcoding.saved": "Gespeichert.",
   "transcoding.oneApp": "Für eine App",
   "transcoding.oneAppDetail":
-    "Ersetzt die Einstellung oben für diese App, unter dem Namen, den sie dem Server nennt. Apps, die hier ohne eigene Anforderung abgespielt haben, werden vorgeschlagen.",
+    "Ersetzt die obige Einstellung für diese App. Verwende den Namen, mit dem sie sich beim Server meldet. Vorgeschlagen werden Apps, die hier bereits Musik abgespielt haben, ohne selbst ein Format oder eine Bitrate anzufordern.",
   "transcoding.client": "Name der App",
   "transcoding.add": "Hinzufügen",
   "transcoding.remove": "Entfernen",

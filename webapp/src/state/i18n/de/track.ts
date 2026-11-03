@@ -127,7 +127,7 @@ export const track: Record<keyof typeof en, TranslationValue> = {
   "canvas.loading": "Canvas wird gesucht…",
   "canvas.none": "Dieser Titel hat kein Canvas.",
   "canvas.unreadable":
-    "Ob dieser Titel ein Canvas hat, konnte nicht gelesen werden.",
+    "Es konnte nicht geprüft werden, ob dieser Titel ein Canvas hat.",
   "canvas.preview": "Canvas-Vorschau",
   "canvas.choose": "Schleife auswählen",
   "canvas.replace": "Schleife ersetzen",

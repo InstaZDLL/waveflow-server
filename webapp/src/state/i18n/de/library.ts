@@ -32,8 +32,8 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   },
   "albums.gridTitle": "In deiner Bibliothek",
   "artists.detail": {
-    one: "{count} Stimme oder Mitwirkender",
-    other: "{count} Stimmen und Mitwirkende",
+    one: "{count} Künstler oder Mitwirkender",
+    other: "{count} Künstler und Mitwirkende",
   },
   "artists.libraryCount": {
     one: "{count} Album in deiner Bibliothek",
@@ -124,11 +124,11 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   },
   "history.empty": "Mit diesem Konto wurde noch nichts abgespielt.",
   "random.detail": {
-    one: "{count} Titel gezogen",
-    other: "{count} Titel gezogen",
+    one: "{count} Titel zufällig ausgewählt",
+    other: "{count} Titel zufällig ausgewählt",
   },
-  "random.again": "Neu ziehen",
+  "random.again": "Neu auswählen",
   "random.fromGenre": "Dieses Genre zufällig abspielen",
-  "random.empty": "Es gibt noch nichts, woraus gezogen werden kann.",
+  "random.empty": "Es gibt noch keine Titel für die Zufallsauswahl.",
   "library.active": "Bibliothek",
 };
