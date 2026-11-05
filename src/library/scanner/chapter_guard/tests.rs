@@ -371,6 +371,68 @@ fn an_honest_dff_passes() {
     assert_eq!(check_dsd_bytes(&dff(&tag(&honest_chapters()))), Ok(()));
 }
 
+/// A table of contents naming four chapters, then the four flat `CHAP` frames,
+/// with innocuous element ids and no chapter text in any body.
+fn toc_and_four_flat_chapters() -> Vec<u8> {
+    let mut toc = b"toc\0".to_vec();
+    toc.extend_from_slice(&[0x03, 4]);
+    for id in ["ch01", "ch02", "ch03", "ch04"] {
+        toc.extend_from_slice(id.as_bytes());
+        toc.push(0);
+    }
+    let mut frames = frame(4, b"CTOC", 0, &toc);
+    for (n, id) in ["ch01", "ch02", "ch03", "ch04"].iter().enumerate() {
+        let mut body = id.as_bytes().to_vec();
+        body.push(0);
+        body.extend_from_slice(&((n as u32) * 1000).to_be_bytes());
+        body.extend_from_slice(&((n as u32) * 1000 + 999).to_be_bytes());
+        body.extend_from_slice(&[0xff; 8]);
+        frames.extend_from_slice(&frame(4, b"CHAP", 0, &body));
+    }
+    frames
+}
+
+/// A frame the walk stops trusting must not drag the honest chapter frames
+/// behind it into the count: its range would otherwise reach the next frame's
+/// id. `TIPL` is read only partway by lofty, so it ends the trust.
+#[test]
+fn a_tipl_before_flat_chapters_passes() {
+    let mut body = vec![3_u8];
+    body.extend_from_slice(b"producer\0Alice\0engineer\0Bob");
+    let mut frames = frame(4, b"TIPL", 0, &body);
+    frames.extend_from_slice(&toc_and_four_flat_chapters());
+    assert_eq!(check_tag(&tag(&frames)), Ok(()));
+}
+
+/// The same when the trust ends because a frame carries non-zero flags.
+#[test]
+fn a_flagged_frame_before_flat_chapters_passes() {
+    let mut body = vec![3_u8];
+    body.extend_from_slice(b"a plain comment");
+    let mut frames = frame(4, b"TXXX", 0x0040, &body);
+    frames.extend_from_slice(&toc_and_four_flat_chapters());
+    assert_eq!(check_tag(&tag(&frames)), Ok(()));
+}
+
+/// A container chunk whose body repeats `ID3 ` would queue one position per
+/// occurrence; the walk bounds that queue and refuses rather than exhausting
+/// memory, and it returns rather than running away.
+#[test]
+fn a_riff_body_stuffed_with_id3_markers_is_refused() {
+    let mut list_body = Vec::new();
+    for _ in 0..(MAX_PENDING_CHUNKS + 100) {
+        list_body.extend_from_slice(b"ID3 ");
+    }
+    let mut body = b"WAVE".to_vec();
+    body.extend_from_slice(b"LIST");
+    body.extend_from_slice(&(list_body.len() as u32).to_le_bytes());
+    body.extend_from_slice(&list_body);
+    let mut riff = b"RIFF".to_vec();
+    riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    riff.extend_from_slice(&body);
+    assert_eq!(check_file_bytes(&riff), Err(NestedChapters));
+}
+
 #[test]
 fn bytes_that_are_not_a_tag_pass() {
     assert_eq!(check_tag(b"not a tag at all"), Ok(()));
