@@ -459,7 +459,9 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     let mut raw = b"ID3\x04\0\0".to_vec();
     raw.extend_from_slice(&synchsafe_bytes(body.len()));
     raw.extend_from_slice(&body);
-    let tag = read_declared(&mut Cursor::new(raw), 0, 100).expect("reads the header and the cap");
+    let DeclaredTag::Tag(tag) = read_declared(&mut Cursor::new(raw), 0, 100) else {
+        panic!("the header and the capped body read as a tag");
+    };
     assert!(
         tag.len() <= TAG_HEADER_LEN + 100,
         "the body read is capped at the limit, not the declared size: {} bytes",
@@ -524,6 +526,121 @@ fn bytes_that_are_not_a_tag_pass() {
     assert_eq!(check_tag(b"not a tag at all"), Ok(()));
     assert_eq!(check_file_bytes(&audio()), Ok(()));
     assert_eq!(check_tag(&[]), Ok(()));
+}
+
+/// A reader that injects a one-off interrupted read, then a hard read error,
+/// at chosen byte offsets, to prove the walk retries the first and refuses on
+/// the second rather than taking either for the end of the file.
+struct FlakyReader {
+    inner: Cursor<Vec<u8>>,
+    interrupt_at: Option<u64>,
+    fail_at: Option<u64>,
+}
+
+impl FlakyReader {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            inner: Cursor::new(bytes),
+            interrupt_at: None,
+            fail_at: None,
+        }
+    }
+}
+
+impl Read for FlakyReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let pos = self.inner.position();
+        if let Some(at) = self.fail_at {
+            if pos >= at {
+                // One-off, like a transient I/O error: a later read of the same
+                // bytes succeeds, which is what tells a guard that gave up on
+                // the failure from one that keeps the byte budget's refusal.
+                self.fail_at = None;
+                return Err(io::Error::other("a read that fails partway"));
+            }
+        }
+        if let Some(at) = self.interrupt_at {
+            if pos >= at {
+                self.interrupt_at = None;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+        }
+        // Stop a read just before the fail point so the error lands midway.
+        let limit = self
+            .fail_at
+            .map_or(buf.len(), |at| (at.saturating_sub(pos)) as usize)
+            .clamp(1, buf.len());
+        self.inner.read(&mut buf[..limit])
+    }
+}
+
+impl Seek for FlakyReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+/// An interrupted read is retried, not taken for the end of the file, so a
+/// benign file read through one such hiccup still passes rather than being
+/// refused.
+#[test]
+fn an_interrupted_read_is_retried() {
+    let bytes = mp3(&tag(&[title(4, "a plain title, no chapters")].concat()));
+    let mut reader = FlakyReader::new(bytes);
+    reader.interrupt_at = Some(0);
+    assert_eq!(check_reader(&mut reader), Ok(()));
+}
+
+/// A read that fails partway is refused, not taken for the end of a clean file:
+/// the parser that runs next may read past the failure.
+#[test]
+fn a_read_that_fails_partway_is_refused() {
+    let mut bytes = vec![b'J'; 2000];
+    bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(1000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
+/// An interruption does not stop the walk short: a nested tag that follows is
+/// still reached and refused, proving the read continued past the interruption
+/// rather than taking it for the end of the file.
+#[test]
+fn an_interrupted_read_still_reaches_a_later_tag() {
+    let mut bytes = vec![b'J'; 64];
+    bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
+    let mut reader = FlakyReader::new(bytes);
+    reader.interrupt_at = Some(0);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
+/// An I/O error while reading a tag's declared body is refused, not swallowed
+/// as "no tag here". The tag sits past the head window so the failure lands in
+/// the tag read rather than the head scan, and it is a one-off, so a guard that
+/// gave up on it (rather than refusing) would pass the file on the retry.
+#[test]
+fn a_tag_whose_body_read_fails_is_refused() {
+    let mut bytes = b"ID3\x04\0\0".to_vec();
+    bytes.extend_from_slice(&synchsafe_bytes(200_000));
+    bytes.resize(10 + 200_000, 0);
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(100_000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
+/// The same for the read that walks a run of empty chunks: a `RIFF` whose first
+/// chunk header is zeros sends the walk into `past_zero_chunks`, and a read that
+/// fails there, past the head window, is refused rather than taken for the end.
+#[test]
+fn a_failed_read_walking_empty_chunks_is_refused() {
+    // "RIFF" <size> "WAVE", then a zeroed chunk header and zeros to the end.
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(b"WAVE");
+    bytes.resize(120_000, 0);
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(100_000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
 }
 
 // Helpers that drive the reader-based checks over an in-memory file.
