@@ -328,8 +328,9 @@ fn find_signature(chunk: &[u8]) -> Option<(usize, Signature)> {
 /// The tag at `at`, header and all, as far as the bytes go. `None` when those
 /// three letters start no tag a parser would take.
 fn read_tag<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> Option<Vec<u8>> {
-    let tag = read_declared(reader, at, cap).ok()?;
-    (&tag[..3] == b"ID3" && (2..=4).contains(&tag[3])).then_some(tag)
+    // `read_declared` already rejects anything that is not an ID3v2 tag a parser
+    // reads, so a successful read is one to check.
+    read_declared(reader, at, cap).ok()
 }
 
 /// The ten bytes at `at` and as many behind them as they declare, as far as
@@ -340,10 +341,14 @@ fn read_declared<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> io::Resul
     let mut header = [0_u8; TAG_HEADER_LEN];
     reader.seek(SeekFrom::Start(at))?;
     reader.read_exact(&mut header)?;
-    if &header[..3] != b"ID3" {
+    // Validated before the body is read, not after. A signature whose version
+    // no parser reads would otherwise have its declared body read and allocated
+    // and then thrown away by the caller, uncharged — which repeated signatures
+    // could turn into repeated large reads the budget never sees.
+    if &header[..3] != b"ID3" || !(2..=4).contains(&header[3]) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "not an ID3v2 tag",
+            "not an ID3v2 tag a parser reads",
         ));
     }
     let slack = if header[5] & 0x40 != 0 {

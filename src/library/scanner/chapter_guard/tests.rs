@@ -451,6 +451,7 @@ fn read_declared_caps_the_body_at_the_given_limit() {
 
 /// A chunk declaring far more than the budget is refused, and the read that
 /// refuses it is itself bounded by the budget rather than the declared size.
+/// Measured, so an unbounded read that still fails `spend` would not pass here.
 #[test]
 fn a_chunk_larger_than_the_budget_is_refused() {
     let payload = vec![b'A'; 8192];
@@ -462,8 +463,42 @@ fn a_chunk_larger_than_the_budget_is_refused() {
     riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
     riff.extend_from_slice(&body);
     let mut budget = 64_u64;
-    let verdict = check_chunks(&mut Cursor::new(riff), 0, false, &mut budget);
+    let mut reader = CountingReader::new(Cursor::new(riff));
+    let verdict = check_chunks(&mut reader, 0, false, &mut budget);
     assert_eq!(verdict, Err(NestedChapters));
+    // The eight-byte chunk header, then at most the budget plus one byte of body.
+    assert!(
+        reader.read <= 8 + 64 + 1,
+        "the walk read {} bytes, past the budget rather than stopping at it",
+        reader.read
+    );
+}
+
+/// A reader that counts the bytes read through it, to prove a read stopped at
+/// the budget rather than running to the declared size.
+struct CountingReader<R> {
+    inner: R,
+    read: u64,
+}
+
+impl<R> CountingReader<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, read: 0 }
+    }
+}
+
+impl<R: Read> Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.read += n as u64;
+        Ok(n)
+    }
+}
+
+impl<R: Seek> Seek for CountingReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
 }
 
 #[test]
