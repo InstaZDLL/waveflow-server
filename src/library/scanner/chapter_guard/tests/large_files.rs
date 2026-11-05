@@ -289,6 +289,39 @@ fn a_chunk_header_whose_read_fails_is_refused() {
     assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
+/// A reader that cannot seek to its end, and reads and seeks otherwise.
+struct NoSeekToEnd(Cursor<Vec<u8>>);
+
+impl Read for NoSeekToEnd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Seek for NoSeekToEnd {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match pos {
+            SeekFrom::End(_) => Err(io::Error::other("cannot seek to the end")),
+            other => self.0.seek(other),
+        }
+    }
+}
+
+/// A chunk walk that cannot learn how long the file is cannot walk it, and
+/// the file is refused rather than passed unwalked: lofty walks it all the
+/// same. The nested tag stands where only the chunk walk reaches it; the
+/// control, read whole, is refused for the nesting.
+#[test]
+fn a_wav_whose_length_cannot_be_read_is_refused() {
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    let mut chunks = chunk(b"JUNK", &vec![0_u8; 2 * HEAD_CHUNK], false);
+    chunks.extend_from_slice(&chunk(b"id3 ", &hostile, false));
+    let file = wav_of(&chunks);
+    assert_eq!(check_file_bytes(&file), Err(Refusal::Nested), "the control");
+    let mut reader = NoSeekToEnd(Cursor::new(file));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
+}
+
 /// The two refusals read differently, since one of them found no nesting.
 #[test]
 fn an_exhausted_budget_does_not_claim_a_nesting() {

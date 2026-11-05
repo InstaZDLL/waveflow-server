@@ -53,9 +53,10 @@ out first, whether or not it breaks a compile.
   guard never reached. A read that fails partway now refuses the file — not
   indexed by a scan, an upload answered `422` — where 2.1.1 passed it; a read
   that is merely interrupted is retried, as the parsers retry it, rather than
-  refusing a benign file. #430 closes the reads #429 left out: the header and
-  the body of a WAV or AIFF chunk, whose failed read still skipped the check
-  of the tag the chunk held.
+  refusing a benign file. #430 closes the reads #429 left out in the walk of
+  a WAV or AIFF: the seek to the file's end that measures it, and the header
+  and the body of a chunk, whose failure still skipped the check of the tags
+  behind it.
 
 ## [2.1.1] — 2026-11-05
 

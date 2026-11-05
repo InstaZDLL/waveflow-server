@@ -469,9 +469,11 @@ fn check_chunks<R: Read + Seek>(
     big_endian: bool,
     budget: &mut u64,
 ) -> Result<(), Refusal> {
-    let Ok(len) = reader.seek(SeekFrom::End(0)) else {
-        return Ok(());
-    };
+    // A walk that cannot learn the file's length cannot walk it, and lofty
+    // walks it all the same: refused, not passed unwalked.
+    let len = reader
+        .seek(SeekFrom::End(0))
+        .map_err(|_| Refusal::ReadFailed)?;
     // Each position comes with whether it reads the audio's header one byte
     // off (see `odd_chunk_continuations`), whose body is then left unread.
     let mut pending = vec![(start + 12, false)];
