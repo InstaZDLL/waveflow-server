@@ -542,6 +542,12 @@ fn check_chunks<R: Read + Seek>(
                 }
             }
         }
+        // Walked on behind every chunk — the misread one too, whose body alone
+        // is left unread. Behind a padding byte written as a letter, lofty
+        // itself takes the misread chunk and reads on where it ends, inside the
+        // audio; a tag standing there is one lofty reads, so stopping here
+        // would let it through. It is also where the residue of #428 comes from.
+        // Held by `a_tag_where_the_misread_audio_header_ends_is_reached`.
         let next = at + 8 + size;
         if next < len {
             if pending.len() >= MAX_PENDING_CHUNKS {

@@ -192,10 +192,15 @@ fn nesting_behind_an_odd_chunk_is_refused_whatever_pads_it() {
 /// whose chunks lead nowhere has no audio properties to read, so properties are
 /// turned off to reach the tag the file does carry.
 fn title_lofty_reads(file: Vec<u8>, kind: lofty::file::FileType) -> Option<String> {
+    title_lofty_reads_from(Cursor::new(file), kind)
+}
+
+/// The same, from a reader rather than bytes.
+fn title_lofty_reads_from<R: Read + Seek>(file: R, kind: lofty::file::FileType) -> Option<String> {
     use lofty::file::TaggedFileExt;
     use lofty::prelude::Accessor;
     let options = lofty::config::ParseOptions::new().read_properties(false);
-    let tagged = lofty::probe::Probe::with_file_type(Cursor::new(file), kind)
+    let tagged = lofty::probe::Probe::with_file_type(file, kind)
         .options(options)
         .read()
         .ok()?;
@@ -280,6 +285,8 @@ fn an_exhausted_budget_does_not_claim_a_nesting() {
 /// budget's worth of every file before it says so.
 struct Virtual {
     head: Vec<u8>,
+    /// Where in the made-up audio some chosen bytes stand, and those bytes.
+    island: (u64, Vec<u8>),
     len: u64,
     pos: u64,
     read: u64,
@@ -289,6 +296,7 @@ impl Virtual {
     fn new(head: Vec<u8>, len: u64) -> Self {
         Self {
             head,
+            island: (0, Vec::new()),
             len,
             pos: 0,
             read: 0,
@@ -303,7 +311,12 @@ impl Read for Virtual {
         }
         let count = (buf.len() as u64).min(self.len.saturating_sub(self.pos)) as usize;
         for (at, byte) in (self.pos..).zip(&mut buf[..count]) {
-            *byte = match usize::try_from(at).ok().and_then(|at| self.head.get(at)) {
+            let island = at
+                .checked_sub(self.island.0)
+                .and_then(|offset| usize::try_from(offset).ok())
+                .and_then(|offset| self.island.1.get(offset));
+            let chosen = usize::try_from(at).ok().and_then(|at| self.head.get(at));
+            *byte = match chosen.or(island) {
                 Some(value) => *value,
                 None => {
                     let mut x = (at / 8).wrapping_mul(0x9e37_79b9_7f4a_7c15);
@@ -482,6 +495,103 @@ fn nesting_behind_the_audio_of_an_odd_chunk_is_refused_whatever_pads_it() {
             "AIFF, padding {pad:?}"
         );
     }
+}
+
+/// A file behind a `JUNK` chunk the size of the head read, a five-byte chunk and
+/// a letter `X` for its padding byte, whose audio declares `audio` bytes and
+/// holds `tag`, in a tag chunk, exactly where the audio's header read from that
+/// letter ends: in a WAV, `Xdat` of `0x61 + 256 × (audio & 0xFF_FFFF)` bytes;
+/// in an AIFF, `XSSN` of `0x4400_0000 + (audio >> 8)`. Its `RIFF`/`FORM` size
+/// covers the whole file, as lofty needs to walk that far.
+fn tag_where_the_misread_audio_ends(big_endian: bool, audio: u32, tag: &[u8]) -> Virtual {
+    let junk = vec![0_u8; HEAD_CHUNK];
+    let (mut head, len, letter, misread, tag_name) = if big_endian {
+        let mut chunks = chunk(b"JUNK", &junk, true);
+        chunks.extend_from_slice(&chunk(b"NAME", b"Title", true));
+        chunks.extend_from_slice(b"XSSND");
+        chunks.extend_from_slice(&audio.to_be_bytes());
+        chunks.extend_from_slice(&[0; 8]);
+        let head = aiff_of(&chunks);
+        let len = head.len() as u64 - 8 + u64::from(audio);
+        let letter = head.len() as u64 - 17;
+        (
+            head,
+            len,
+            letter,
+            0x4400_0000 + u64::from(audio >> 8),
+            b"ID3 ",
+        )
+    } else {
+        let mut chunks = chunk(b"JUNK", &junk, false);
+        chunks.extend_from_slice(&chunk(b"iXML", b"<x/>\n", false));
+        chunks.extend_from_slice(b"Xdata");
+        chunks.extend_from_slice(&audio.to_le_bytes());
+        let head = wav_of(&chunks);
+        let len = head.len() as u64 + u64::from(audio);
+        let letter = head.len() as u64 - 9;
+        (
+            head,
+            len,
+            letter,
+            0x61 + 256 * u64::from(audio & 0xff_ffff),
+            b"id3 ",
+        )
+    };
+    let form = (len - 8) as u32;
+    head[4..8].copy_from_slice(&if big_endian {
+        form.to_be_bytes()
+    } else {
+        form.to_le_bytes()
+    });
+    let island = chunk(tag_name, tag, big_endian);
+    let at = letter + 8 + misread;
+    assert!(
+        at > head.len() as u64 && at + island.len() as u64 <= len,
+        "the misread chunk must end inside the audio"
+    );
+    let mut file = Virtual::new(head, len);
+    file.island = (at, island);
+    file
+}
+
+/// Behind a padding byte written as a letter, lofty takes the wrong
+/// continuation itself: the letter and the three after it form a valid name, so
+/// it reads the audio's header one byte off, skips the misread size and reads
+/// on from there, inside the audio. A tag chunk standing exactly there is one
+/// lofty reads, so the guard must walk on behind a misread chunk even though it
+/// leaves its body unread. This holds lofty to reading the honest tag there,
+/// and the guard to refusing the hostile one. In a WAV the misread chunk ends
+/// inside the audio only from 16 MiB of it — below, `256 ×` its size is past the
+/// end — and in an AIFF from about 1.07 GiB; the reader makes either up as it is
+/// read. The AIFF is tried with a misread size even and odd, its padding byte
+/// then being the tag chunk's first letter, which lofty re-reads from.
+#[test]
+fn a_tag_where_the_misread_audio_header_ends_is_reached() {
+    use lofty::file::FileType;
+    let honest = tag(&title(4, "found"));
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    let mut failures = Vec::new();
+    for (kind, big_endian, audio) in [
+        (FileType::Wav, false, 0x0100_0010),
+        (FileType::Wav, false, 0x1008_0000),
+        (FileType::Aiff, true, 0x4800_0000),
+        (FileType::Aiff, true, 0x4800_0100),
+    ] {
+        let file = tag_where_the_misread_audio_ends(big_endian, audio, &honest);
+        let read = title_lofty_reads_from(file, kind);
+        if read.as_deref() != Some("found") {
+            failures.push(format!("lofty, {kind:?} of {audio:#x}: {read:?}"));
+        }
+        let mut file = tag_where_the_misread_audio_ends(big_endian, audio, &hostile);
+        let verdict = check_reader(&mut file);
+        if verdict != Err(Refusal::Nested) {
+            failures.push(format!(
+                "the guard, {kind:?} of {audio:#x}: {verdict:?} after reading {}",
+                file.read
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 /// Every four bytes over an alphabet that reaches each edge of lofty's rule: a
