@@ -202,6 +202,18 @@ fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(),
     Ok(())
 }
 
+/// What [`read_declared`] found at a position.
+enum DeclaredTag {
+    /// A tag, read as far as it declares (up to the cap).
+    Tag(Vec<u8>),
+    /// Not a tag a parser reads: wrong magic, or a version none of them take.
+    /// The walk moves on, as the parser would.
+    NotTag,
+    /// The read failed partway. The parser that runs next may read past the
+    /// failure, so the file is refused rather than passed.
+    ReadFailed,
+}
+
 /// Reads the tag standing at `offset` as far as it declares, and checks it.
 fn check_tag_at<R: Read + Seek>(
     file: &mut R,
@@ -209,11 +221,12 @@ fn check_tag_at<R: Read + Seek>(
     budget: &mut u64,
 ) -> Result<(), NestedChapters> {
     match read_declared(file, offset, budget.saturating_add(1)) {
-        Ok(tag) => {
+        DeclaredTag::Tag(tag) => {
             spend(budget, tag.len() as u64)?;
             check_tag(&tag)
         }
-        Err(_) => Ok(()),
+        DeclaredTag::NotTag => Ok(()),
+        DeclaredTag::ReadFailed => Err(NestedChapters),
     }
 }
 
@@ -259,7 +272,13 @@ fn check_tags_from<R: Read + Seek>(
         let found = at + offset as u64;
         match signature {
             Signature::Id3 => {
-                let tag = read_tag(reader, found, budget.saturating_add(1));
+                let tag = match read_declared(reader, found, budget.saturating_add(1)) {
+                    DeclaredTag::Tag(tag) => Some(tag),
+                    DeclaredTag::NotTag => None,
+                    // An I/O error reading the tag is refused, not swallowed as
+                    // "no tag here": the parser that runs next may read it whole.
+                    DeclaredTag::ReadFailed => return Err(NestedChapters),
+                };
                 if let Some(tag) = &tag {
                     spend(budget, tag.len() as u64)?;
                     check_tag(tag)?;
@@ -336,31 +355,35 @@ fn find_signature(chunk: &[u8]) -> Option<(usize, Signature)> {
         })
 }
 
-/// The tag at `at`, header and all, as far as the bytes go. `None` when those
-/// three letters start no tag a parser would take.
-fn read_tag<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> Option<Vec<u8>> {
-    // `read_declared` already rejects anything that is not an ID3v2 tag a parser
-    // reads, so a successful read is one to check.
-    read_declared(reader, at, cap).ok()
-}
-
 /// The ten bytes at `at` and as many behind them as they declare, as far as
 /// there are any, and never more than `cap` bytes of body — so a huge declared
 /// size cannot allocate past the caller's budget. A tag with an extended header
 /// gets [`EXTENDED_HEADER_SLACK`] more.
-fn read_declared<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> io::Result<Vec<u8>> {
+///
+/// An I/O failure is reported as [`DeclaredTag::ReadFailed`], distinct from the
+/// bytes simply not being a tag ([`DeclaredTag::NotTag`]): a read that failed
+/// partway must refuse the file, since the parser that runs next may read it
+/// whole, whereas bytes that are no tag are passed over.
+fn read_declared<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> DeclaredTag {
     let mut header = [0_u8; TAG_HEADER_LEN];
-    reader.seek(SeekFrom::Start(at))?;
-    reader.read_exact(&mut header)?;
+    if reader.seek(SeekFrom::Start(at)).is_err() {
+        return DeclaredTag::ReadFailed;
+    }
+    match reader.read_exact(&mut header) {
+        Ok(()) => {}
+        // Fewer than ten bytes here is the end of the file, not a failure: there
+        // is no tag to read, and no parser would find one either.
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+            return DeclaredTag::NotTag;
+        }
+        Err(_) => return DeclaredTag::ReadFailed,
+    }
     // Validated before the body is read, not after. A signature whose version
     // no parser reads would otherwise have its declared body read and allocated
-    // and then thrown away by the caller, uncharged — which repeated signatures
-    // could turn into repeated large reads the budget never sees.
+    // and then thrown away, uncharged — which repeated signatures could turn
+    // into repeated large reads the budget never sees.
     if &header[..3] != b"ID3" || !(2..=4).contains(&header[3]) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "not an ID3v2 tag a parser reads",
-        ));
+        return DeclaredTag::NotTag;
     }
     let slack = if header[5] & 0x40 != 0 {
         EXTENDED_HEADER_SLACK
@@ -368,11 +391,14 @@ fn read_declared<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> io::Resul
         0
     };
     let mut bytes = header.to_vec();
-    reader
+    match reader
         .by_ref()
         .take((u64::from(synchsafe(&header[6..10])) + slack).min(cap))
-        .read_to_end(&mut bytes)?;
-    Ok(bytes)
+        .read_to_end(&mut bytes)
+    {
+        Ok(_) => DeclaredTag::Tag(bytes),
+        Err(_) => DeclaredTag::ReadFailed,
+    }
 }
 
 /// From the start of a tag to what follows it. Not past a footer: lofty reads on

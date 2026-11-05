@@ -459,7 +459,9 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     let mut raw = b"ID3\x04\0\0".to_vec();
     raw.extend_from_slice(&synchsafe_bytes(body.len()));
     raw.extend_from_slice(&body);
-    let tag = read_declared(&mut Cursor::new(raw), 0, 100).expect("reads the header and the cap");
+    let DeclaredTag::Tag(tag) = read_declared(&mut Cursor::new(raw), 0, 100) else {
+        panic!("the header and the capped body read as a tag");
+    };
     assert!(
         tag.len() <= TAG_HEADER_LEN + 100,
         "the body read is capped at the limit, not the declared size: {} bytes",
@@ -548,8 +550,14 @@ impl FlakyReader {
 impl Read for FlakyReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let pos = self.inner.position();
-        if self.fail_at.is_some_and(|at| pos >= at) {
-            return Err(io::Error::other("a read that fails partway"));
+        if let Some(at) = self.fail_at {
+            if pos >= at {
+                // One-off, like a transient I/O error: a later read of the same
+                // bytes succeeds, which is what tells a guard that gave up on
+                // the failure from one that keeps the byte budget's refusal.
+                self.fail_at = None;
+                return Err(io::Error::other("a read that fails partway"));
+            }
         }
         if let Some(at) = self.interrupt_at {
             if pos >= at {
@@ -591,6 +599,32 @@ fn a_read_that_fails_partway_is_refused() {
     bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(1000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
+/// An interruption does not stop the walk short: a nested tag that follows is
+/// still reached and refused, proving the read continued past the interruption
+/// rather than taking it for the end of the file.
+#[test]
+fn an_interrupted_read_still_reaches_a_later_tag() {
+    let mut bytes = vec![b'J'; 64];
+    bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
+    let mut reader = FlakyReader::new(bytes);
+    reader.interrupt_at = Some(0);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
+/// An I/O error while reading a tag's declared body is refused, not swallowed
+/// as "no tag here". The tag sits past the head window so the failure lands in
+/// the tag read rather than the head scan, and it is a one-off, so a guard that
+/// gave up on it (rather than refusing) would pass the file on the retry.
+#[test]
+fn a_tag_whose_body_read_fails_is_refused() {
+    let mut bytes = b"ID3\x04\0\0".to_vec();
+    bytes.extend_from_slice(&synchsafe_bytes(200_000));
+    bytes.resize(10 + 200_000, 0);
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(100_000);
     assert_eq!(check_reader(&mut reader), Err(NestedChapters));
 }
 
