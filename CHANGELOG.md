@@ -22,11 +22,13 @@ out first, whether or not it breaks a compile.
   reading it, and a file in a scanned folder was read by the next scan, so the
   scan at start-up met it again and the server crashed on every restart until
   someone removed the file by hand. A check now runs ahead of both readers, for
-  every format and for the ID3 tag inside a DSF or DFF file: an upload of such
-  a file is refused with `422` and leaves nothing in the library, a scan
-  records an error for the file and goes on. A real chapter layout, with a
-  table of contents, titled chapters, links and pictures, is read as before.
-  Every version from 2.0.0 to 2.1.0 is affected.
+  every format and for the ID3 tag inside a DSF or DFF file, and refuses a tag
+  whose chapter frames nest more than three levels under the first, well short
+  of the depth that overflows the stack; one chapter frame inside another is
+  not refused. An upload of a refused file is answered `422` and leaves nothing
+  in the library, a scan records an error for the file and goes on. A real
+  chapter layout, with a table of contents, titled chapters, links and
+  pictures, is read as before. Every version from 2.0.0 to 2.1.0 is affected.
 
 ## [2.1.0] — 2026-11-03
 
