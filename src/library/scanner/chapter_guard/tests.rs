@@ -526,6 +526,74 @@ fn bytes_that_are_not_a_tag_pass() {
     assert_eq!(check_tag(&[]), Ok(()));
 }
 
+/// A reader that injects a one-off interrupted read, then a hard read error,
+/// at chosen byte offsets, to prove the walk retries the first and refuses on
+/// the second rather than taking either for the end of the file.
+struct FlakyReader {
+    inner: Cursor<Vec<u8>>,
+    interrupt_at: Option<u64>,
+    fail_at: Option<u64>,
+}
+
+impl FlakyReader {
+    fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            inner: Cursor::new(bytes),
+            interrupt_at: None,
+            fail_at: None,
+        }
+    }
+}
+
+impl Read for FlakyReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let pos = self.inner.position();
+        if self.fail_at.is_some_and(|at| pos >= at) {
+            return Err(io::Error::other("a read that fails partway"));
+        }
+        if let Some(at) = self.interrupt_at {
+            if pos >= at {
+                self.interrupt_at = None;
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+        }
+        // Stop a read just before the fail point so the error lands midway.
+        let limit = self
+            .fail_at
+            .map_or(buf.len(), |at| (at.saturating_sub(pos)) as usize)
+            .clamp(1, buf.len());
+        self.inner.read(&mut buf[..limit])
+    }
+}
+
+impl Seek for FlakyReader {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+/// An interrupted read is retried, not taken for the end of the file, so a
+/// benign file read through one such hiccup still passes rather than being
+/// refused.
+#[test]
+fn an_interrupted_read_is_retried() {
+    let bytes = mp3(&tag(&[title(4, "a plain title, no chapters")].concat()));
+    let mut reader = FlakyReader::new(bytes);
+    reader.interrupt_at = Some(0);
+    assert_eq!(check_reader(&mut reader), Ok(()));
+}
+
+/// A read that fails partway is refused, not taken for the end of a clean file:
+/// the parser that runs next may read past the failure.
+#[test]
+fn a_read_that_fails_partway_is_refused() {
+    let mut bytes = vec![b'J'; 2000];
+    bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(1000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
 // Helpers that drive the reader-based checks over an in-memory file.
 fn check_file_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
     check_reader(&mut Cursor::new(bytes.to_vec()))

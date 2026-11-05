@@ -230,8 +230,11 @@ fn check_tags_from<R: Read + Seek>(
     let mut leading_zeros = true;
     let mut behind_ape = false;
     while at < scan_end {
+        // A read that fails midway is refused, not taken for the end of the
+        // file: the parser that runs next may read the file to its end and meet
+        // the chapter frames this walk never reached.
         let Ok(read) = read_at(reader, at, &mut buffer) else {
-            return Ok(());
+            return Err(NestedChapters);
         };
         spend(budget, read as u64)?;
         let chunk = &buffer[..read];
@@ -296,9 +299,14 @@ fn read_at<R: Read + Seek>(reader: &mut R, at: u64, buffer: &mut [u8]) -> io::Re
     reader.seek(SeekFrom::Start(at))?;
     let mut filled = 0;
     while filled < buffer.len() {
-        match reader.read(&mut buffer[filled..])? {
-            0 => break,
-            read => filled += read,
+        match reader.read(&mut buffer[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            // An interrupted read is retried, as the parsers' own reads are:
+            // treating it as the end of the file would stop the walk short of
+            // frames the parser goes on to read.
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
         }
     }
     Ok(filled)
@@ -464,8 +472,10 @@ fn past_zero_chunks<R: Read + Seek>(
     let mut buffer = vec![0_u8; HEAD_CHUNK];
     let mut from = at;
     loop {
+        // A read that fails midway is refused, like the head walk above, rather
+        // than taken for the end of the run.
         let Ok(read) = read_at(reader, from, &mut buffer) else {
-            return Ok(None);
+            return Err(NestedChapters);
         };
         spend(budget, read as u64)?;
         if read == 0 {
