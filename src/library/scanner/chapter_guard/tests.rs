@@ -433,6 +433,39 @@ fn a_riff_body_stuffed_with_id3_markers_is_refused() {
     assert_eq!(check_file_bytes(&riff), Err(NestedChapters));
 }
 
+/// The read of a tag body stops at the cap, so a header declaring a huge size
+/// cannot allocate past the caller's budget before it is refused.
+#[test]
+fn read_declared_caps_the_body_at_the_given_limit() {
+    let body = vec![0_u8; 1024 * 1024];
+    let mut raw = b"ID3\x04\0\0".to_vec();
+    raw.extend_from_slice(&synchsafe_bytes(body.len()));
+    raw.extend_from_slice(&body);
+    let tag = read_declared(&mut Cursor::new(raw), 0, 100).expect("reads the header and the cap");
+    assert!(
+        tag.len() <= TAG_HEADER_LEN + 100,
+        "the body read is capped at the limit, not the declared size: {} bytes",
+        tag.len()
+    );
+}
+
+/// A chunk declaring far more than the budget is refused, and the read that
+/// refuses it is itself bounded by the budget rather than the declared size.
+#[test]
+fn a_chunk_larger_than_the_budget_is_refused() {
+    let payload = vec![b'A'; 8192];
+    let mut body = b"WAVE".to_vec();
+    body.extend_from_slice(b"LIST");
+    body.extend_from_slice(&u32::MAX.to_le_bytes()); // declares ~4 GiB
+    body.extend_from_slice(&payload);
+    let mut riff = b"RIFF".to_vec();
+    riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    riff.extend_from_slice(&body);
+    let mut budget = 64_u64;
+    let verdict = check_chunks(&mut Cursor::new(riff), 0, false, &mut budget);
+    assert_eq!(verdict, Err(NestedChapters));
+}
+
 #[test]
 fn bytes_that_are_not_a_tag_pass() {
     assert_eq!(check_tag(b"not a tag at all"), Ok(()));

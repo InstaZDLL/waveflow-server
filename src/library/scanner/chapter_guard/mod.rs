@@ -205,7 +205,7 @@ fn check_tag_at<R: Read + Seek>(
     offset: u64,
     budget: &mut u64,
 ) -> Result<(), NestedChapters> {
-    match read_declared(file, offset) {
+    match read_declared(file, offset, budget.saturating_add(1)) {
         Ok(tag) => {
             spend(budget, tag.len() as u64)?;
             check_tag(&tag)
@@ -253,7 +253,7 @@ fn check_tags_from<R: Read + Seek>(
         let found = at + offset as u64;
         match signature {
             Signature::Id3 => {
-                let tag = read_tag(reader, found);
+                let tag = read_tag(reader, found, budget.saturating_add(1));
                 if let Some(tag) = &tag {
                     spend(budget, tag.len() as u64)?;
                     check_tag(tag)?;
@@ -327,15 +327,16 @@ fn find_signature(chunk: &[u8]) -> Option<(usize, Signature)> {
 
 /// The tag at `at`, header and all, as far as the bytes go. `None` when those
 /// three letters start no tag a parser would take.
-fn read_tag<R: Read + Seek>(reader: &mut R, at: u64) -> Option<Vec<u8>> {
-    let tag = read_declared(reader, at).ok()?;
+fn read_tag<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> Option<Vec<u8>> {
+    let tag = read_declared(reader, at, cap).ok()?;
     (&tag[..3] == b"ID3" && (2..=4).contains(&tag[3])).then_some(tag)
 }
 
 /// The ten bytes at `at` and as many behind them as they declare, as far as
-/// there are any. A tag with an extended header gets [`EXTENDED_HEADER_SLACK`]
-/// more.
-fn read_declared<R: Read + Seek>(reader: &mut R, at: u64) -> io::Result<Vec<u8>> {
+/// there are any, and never more than `cap` bytes of body — so a huge declared
+/// size cannot allocate past the caller's budget. A tag with an extended header
+/// gets [`EXTENDED_HEADER_SLACK`] more.
+fn read_declared<R: Read + Seek>(reader: &mut R, at: u64, cap: u64) -> io::Result<Vec<u8>> {
     let mut header = [0_u8; TAG_HEADER_LEN];
     reader.seek(SeekFrom::Start(at))?;
     reader.read_exact(&mut header)?;
@@ -353,7 +354,7 @@ fn read_declared<R: Read + Seek>(reader: &mut R, at: u64) -> io::Result<Vec<u8>>
     let mut bytes = header.to_vec();
     reader
         .by_ref()
-        .take(u64::from(synchsafe(&header[6..10])) + slack)
+        .take((u64::from(synchsafe(&header[6..10])) + slack).min(cap))
         .read_to_end(&mut bytes)?;
     Ok(bytes)
 }
@@ -410,7 +411,11 @@ fn check_chunks<R: Read + Seek>(
         });
         if !matches!(&header[..4], b"SSND" | b"data") {
             let mut body = Vec::new();
-            if reader.by_ref().take(size).read_to_end(&mut body).is_ok() {
+            // Bounded to the budget before the read, so the allocation itself
+            // cannot exceed it: a chunk declaring a huge size reads one byte
+            // past the budget at most, and `spend` then refuses the file.
+            let limit = size.min(budget.saturating_add(1));
+            if reader.by_ref().take(limit).read_to_end(&mut body).is_ok() {
                 spend(budget, body.len() as u64)?;
                 if matches!(&header[..4], b"ID3 " | b"id3 ") {
                     check_tag(&body)?;
