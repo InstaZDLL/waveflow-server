@@ -233,6 +233,88 @@ async fn a_file_the_catalogue_cannot_read_does_not_stay() {
     );
 }
 
+/// A file whose ID3v2 chapter frames nest is refused at commit, not read.
+///
+/// Such a tag overflows lofty's stack and aborts the whole process, and because
+/// the commit renames the file into place before reading it, the aborted file
+/// would sit under its final name and overflow every scan after it — the server
+/// would never finish booting again. The guard refuses it before lofty, so the
+/// commit fails cleanly, the file is removed, and the session is closed.
+#[tokio::test]
+async fn a_file_that_nests_chapter_frames_is_refused_not_read() {
+    let (_temp, config, state) = upload_app(|limits| limits.chunk_bytes = 4096).await;
+    let fixture = fixture(&config, &state, "nested-chapters").await;
+    state
+        .db
+        .set_library_accepts_uploads(fixture.owner, fixture.library, true, now_ms())
+        .await
+        .unwrap();
+
+    // A 2.4 tag of sixty-four `CHAP` frames nested one in the next, behind one
+    // MPEG frame so the extension is honest, built here rather than committed to
+    // the repository as a hostile file.
+    let synchsafe = |value: usize| {
+        [
+            ((value >> 21) & 0x7f) as u8,
+            ((value >> 14) & 0x7f) as u8,
+            ((value >> 7) & 0x7f) as u8,
+            (value & 0x7f) as u8,
+        ]
+    };
+    let prefix: &[u8] = b"c\0\0\0\0\0\0\0\x03\xe8\xff\xff\xff\xff\xff\xff\xff\xff";
+    let mut inner = Vec::new();
+    for _ in 0..64 {
+        let mut frame = b"CHAP".to_vec();
+        frame.extend_from_slice(&synchsafe(prefix.len() + inner.len()));
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(prefix);
+        frame.extend_from_slice(&inner);
+        inner = frame;
+    }
+    let mut bytes = b"ID3\x04\0\0".to_vec();
+    bytes.extend_from_slice(&synchsafe(inner.len()));
+    bytes.extend_from_slice(&inner);
+    bytes.extend_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+    bytes.resize(bytes.len() + 1024, 0);
+
+    let session = open_session(&config, &state, &fixture, &bytes, "mp3").await;
+    for (index, chunk) in bytes.chunks(4096).enumerate() {
+        let (status, _) = put_chunk(&config, &state, &fixture.token, &session, index, chunk).await;
+        assert_eq!(status, StatusCode::OK, "fragment {index}");
+    }
+
+    // The process is still here: the commit refused the file rather than
+    // aborting on it.
+    let (committed, _) = commit(&config, &state, &fixture.token, &session).await;
+    assert_eq!(committed, StatusCode::UNPROCESSABLE_ENTITY);
+
+    assert_eq!(
+        state
+            .db
+            .list_tracks_for_user(fixture.owner, fixture.library)
+            .await
+            .unwrap()
+            .len(),
+        0,
+        "nothing was indexed"
+    );
+    assert_eq!(open_sessions(&state).await, 0, "the session is closed");
+    let root = state
+        .db
+        .library_for_user(fixture.owner, fixture.library)
+        .await
+        .unwrap()
+        .unwrap()
+        .root_path;
+    let leftovers: Vec<_> = std::fs::read_dir(root.join(".waveflow-managed"))
+        .map(|dir| dir.filter_map(Result::ok).collect())
+        .unwrap_or_default();
+    assert!(
+        leftovers.is_empty(),
+        "the refused file is gone, under neither its staging nor its final name: {leftovers:?}"
+    );
+}
+
 /// A session is not an authorisation the client carries away with it.
 ///
 /// The server already holds this rule for playback: a stream ticket re-checks

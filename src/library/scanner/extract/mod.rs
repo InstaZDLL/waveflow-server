@@ -152,6 +152,10 @@ pub(crate) fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTra
             .as_deref(),
         Some("dsf" | "dff")
     ) {
+        // The DSD metadata reader hands an embedded ID3v2 blob to the `id3`
+        // crate, which overflows the stack on nested chapter frames. Refuse
+        // such a file before it is read rather than let it abort the process.
+        super::chapter_guard::check_dsd(path).map_err(|error| error.to_string())?;
         return extract_dsd(
             path,
             artwork_dir,
@@ -162,6 +166,12 @@ pub(crate) fn extract_file(path: &Path, artwork_dir: &Path) -> Result<CatalogTra
             full_hash,
         );
     }
+    // lofty reads the frames inside an ID3v2 `CHAP`/`CTOC` with the function
+    // that reads the tag, recursing once per nested level with no depth limit,
+    // so a crafted tag of a few kilobytes overflows the stack and aborts the
+    // process — a crash no `catch_unwind` can hold, and one the next scan of the
+    // same file would repeat. Refuse the file here, before lofty sees it.
+    super::chapter_guard::check_file(path).map_err(|error| error.to_string())?;
     let tagged = lofty::read_from_path(path).map_err(|error| format!("lofty: {error}"))?;
     let props = tagged.properties();
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag());

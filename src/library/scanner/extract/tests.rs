@@ -1,10 +1,119 @@
 //! Unit tests of the tag readers and the lyrics sidecars.
 
-use super::{extended_tags, read_sidecar, MAX_LYRICS_BYTES};
+use super::{extended_tags, extract_file, read_sidecar, MAX_LYRICS_BYTES};
 use lofty::{
     prelude::ItemKey,
     tag::{Tag, TagType},
 };
+
+/// Smaller than the 2 MiB of a blocking task, so a file the guard lets through
+/// to lofty or the `id3` crate would overflow it. What the guard refuses never
+/// reaches a parser, so it needs no stack to speak of. Without the guard this
+/// thread aborts the whole test process on the hostile fixtures below, which is
+/// the regression these tests hold.
+const SMALL_STACK: usize = 256 * 1024;
+
+fn synchsafe_len(value: usize) -> [u8; 4] {
+    [
+        ((value >> 21) & 0x7f) as u8,
+        ((value >> 14) & 0x7f) as u8,
+        ((value >> 7) & 0x7f) as u8,
+        (value & 0x7f) as u8,
+    ]
+}
+
+/// A 2.4 tag of `depth` `CHAP` frames, each nested inside the last.
+fn nested_tag(depth: usize) -> Vec<u8> {
+    let prefix: &[u8] = b"c\0\0\0\0\0\0\0\x03\xe8\xff\xff\xff\xff\xff\xff\xff\xff";
+    let mut inner = Vec::new();
+    for _ in 0..depth {
+        let mut frame = b"CHAP".to_vec();
+        frame.extend_from_slice(&synchsafe_len(prefix.len() + inner.len()));
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(prefix);
+        frame.extend_from_slice(&inner);
+        inner = frame;
+    }
+    let mut tag = b"ID3\x04\0\0".to_vec();
+    tag.extend_from_slice(&synchsafe_len(inner.len()));
+    tag.extend_from_slice(&inner);
+    tag
+}
+
+/// A DSF whose metadata offset points at `tag` sitting at the end.
+///
+/// The `fmt ` chunk carries valid values rather than zeros, so that with the
+/// guard removed `parse_dsf` succeeds and the metadata reader really reaches the
+/// `id3` crate — otherwise an invalid rate would be refused first and this
+/// fixture would prove nothing about the chapter guard.
+fn dsf_with(tag: &[u8]) -> Vec<u8> {
+    let audio = vec![0_u8; 256];
+    let offset = 28_u64 + 52 + (12 + audio.len() as u64);
+    let mut out = b"DSD ".to_vec();
+    out.extend_from_slice(&28_u64.to_le_bytes());
+    out.extend_from_slice(&(offset + tag.len() as u64).to_le_bytes());
+    out.extend_from_slice(&offset.to_le_bytes());
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&52_u64.to_le_bytes());
+    out.extend_from_slice(&1_u32.to_le_bytes()); // format version
+    out.extend_from_slice(&0_u32.to_le_bytes()); // raw DSD
+    out.extend_from_slice(&2_u32.to_le_bytes()); // channel type: stereo
+    out.extend_from_slice(&2_u32.to_le_bytes()); // channel count
+    out.extend_from_slice(&2_822_400_u32.to_le_bytes()); // DSD64 sample rate
+    out.extend_from_slice(&1_u32.to_le_bytes()); // bits per sample
+    out.extend_from_slice(&1024_u64.to_le_bytes()); // samples per channel
+    out.extend_from_slice(&4096_u32.to_le_bytes()); // block size per channel
+    out.extend_from_slice(&0_u32.to_le_bytes()); // reserved
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(12 + audio.len() as u64).to_le_bytes());
+    out.extend_from_slice(&audio);
+    out.extend_from_slice(tag);
+    out
+}
+
+fn on_small_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(SMALL_STACK)
+        .spawn(work)
+        .expect("spawn")
+        .join()
+        .expect("the guard refused the file without reaching a parser")
+}
+
+/// An MP3 whose ID3v2 tag nests chapter frames aborts lofty with a stack
+/// overflow, which `extract_file` must refuse before reaching it. Red before the
+/// guard: this very thread overflows and takes the test binary down with it.
+#[test]
+fn a_nested_chapter_mp3_is_refused_before_lofty_overflows() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut mp3 = nested_tag(64);
+    mp3.extend_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+    mp3.resize(mp3.len() + 1024, 0);
+    let path = temp.path().join("hostile.mp3");
+    std::fs::write(&path, &mp3).unwrap();
+    let artwork = temp.path().join("artwork");
+    std::fs::create_dir_all(&artwork).unwrap();
+    let error = on_small_stack(move || extract_file(&path, &artwork).err());
+    assert!(
+        error.is_some_and(|message| message.contains("nests chapter frames")),
+        "the guard, not some other error, must be what refuses the file"
+    );
+}
+
+/// The same for the `id3` crate, reached through the DSD metadata path.
+#[test]
+fn a_nested_chapter_dsf_is_refused_before_id3_overflows() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hostile.dsf");
+    std::fs::write(&path, dsf_with(&nested_tag(64))).unwrap();
+    let artwork = temp.path().join("artwork");
+    std::fs::create_dir_all(&artwork).unwrap();
+    let error = on_small_stack(move || extract_file(&path, &artwork).err());
+    assert!(
+        error.is_some_and(|message| message.contains("nests chapter frames")),
+        "the guard, not the DSD parser, must be what refuses the file"
+    );
+}
 
 #[test]
 fn extended_tags_survive_the_shapes_real_files_use() {
