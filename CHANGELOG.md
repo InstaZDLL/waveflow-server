@@ -30,6 +30,18 @@ out first, whether or not it breaks a compile.
   chapter layout, with a table of contents, titled chapters, links and
   pictures, is read as before. Every version from 2.0.0 to 2.1.0 is affected.
 
+### Known issues
+
+- **The check refuses some large files that nest nothing** (#428). It gives up
+  on a file once it has read 64 MiB of it, and two shapes make it read that
+  much with no chapter frame in them: a WAV or an AIFF with a chunk of odd
+  length ahead of its audio, and a file that is neither with the letters
+  `RIFF` or `FORM` in its first 64 KiB, such as a FLAC that keeps the chunks
+  of the WAV it was made from. Measured on files built for the purpose:
+  refused at 70 MiB, read at 10 MiB. The file is not indexed, or its upload is
+  answered `422`, for a reason that speaks of nested chapter frames; the file
+  itself is never changed.
+
 ## [2.1.0] — 2026-11-03
 
 ### Added
