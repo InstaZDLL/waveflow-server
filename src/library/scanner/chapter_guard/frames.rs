@@ -8,7 +8,7 @@
 use super::*;
 
 /// One whole tag, from its `ID3` on, or bytes that are not one and pass.
-pub(crate) fn check_tag(tag: &[u8]) -> Result<(), NestedChapters> {
+pub(crate) fn check_tag(tag: &[u8]) -> Result<(), Refusal> {
     let Some(header) = tag.get(..TAG_HEADER_LEN) else {
         return Ok(());
     };
@@ -67,7 +67,7 @@ impl FrameScan {
     /// Walks `frames` at `level`, counting the chapter names no parser can
     /// avoid reading and refusing once more than [`ALLOWED_UNEXPLAINED_CHAPTERS`]
     /// are seen.
-    fn walk(&mut self, frames: &[u8], level: Level) -> Result<(), NestedChapters> {
+    fn walk(&mut self, frames: &[u8], level: Level) -> Result<(), Refusal> {
         let mut at = 0;
         while let Some(header) = frames.get(at..at + FRAME_HEADER_LEN) {
             let raw = &header[4..8];
@@ -91,12 +91,12 @@ impl FrameScan {
             let id = &header[..4];
             if is_chapter(id) {
                 if flags & self.compression_flag() != 0 {
-                    return Err(NestedChapters);
+                    return Err(Refusal::Nested);
                 }
                 if level == Level::Top && id == b"CTOC" {
                     self.tables += 1;
                     if self.tables > MAX_TABLES_OF_CONTENTS {
-                        return Err(NestedChapters);
+                        return Err(Refusal::Nested);
                     }
                 }
                 match (level, self.in_step && flags == 0, children_of(id, body)) {
@@ -132,10 +132,10 @@ impl FrameScan {
     }
 
     /// Adds `names` to the unexplained count, refusing once it passes the limit.
-    fn count(&mut self, names: usize) -> Result<(), NestedChapters> {
+    fn count(&mut self, names: usize) -> Result<(), Refusal> {
         self.unexplained += names;
         if self.unexplained > ALLOWED_UNEXPLAINED_CHAPTERS {
-            Err(NestedChapters)
+            Err(Refusal::Nested)
         } else {
             Ok(())
         }
@@ -146,12 +146,7 @@ impl FrameScan {
     /// itself, which the main walk reaches next and counts on its own terms. A
     /// range that reached into it would count a legitimate `CHAP`/`CTOC`
     /// following a frame this walk stopped trusting (a `TIPL`, say) as a stray.
-    fn count_around(
-        &mut self,
-        frames: &[u8],
-        from: usize,
-        body_end: usize,
-    ) -> Result<(), NestedChapters> {
+    fn count_around(&mut self, frames: &[u8], from: usize, body_end: usize) -> Result<(), Refusal> {
         self.count_names(frames, from, body_end)?;
         self.count_names(frames, body_end + 1, body_end + 3)
     }
@@ -160,7 +155,7 @@ impl FrameScan {
     /// end. A parser that lost the row reads straight across the frames it is
     /// made of, so a name may start in one and end in the next, its flags
     /// further on still.
-    fn count_names(&mut self, frames: &[u8], from: usize, to: usize) -> Result<(), NestedChapters> {
+    fn count_names(&mut self, frames: &[u8], from: usize, to: usize) -> Result<(), Refusal> {
         let to = to.min(frames.len());
         let Some(starts) = frames.get(from..to) else {
             return Ok(());
@@ -178,7 +173,7 @@ impl FrameScan {
                 // In an unsynchronised frame, a parser reads this header with
                 // the zero after a 0xff taken out, so its flags are not here.
                 if header.contains(&0xff) {
-                    return Err(NestedChapters);
+                    return Err(Refusal::Nested);
                 }
                 let flags = u16::from_be_bytes([header[4], header[5]]);
                 let after = &frames[start + FRAME_HEADER_LEN..];
@@ -186,7 +181,7 @@ impl FrameScan {
                 if flags & self.compression_flag() != 0
                     && (probe.contains(&0xff) || inflatable_after(after))
                 {
-                    return Err(NestedChapters);
+                    return Err(Refusal::Nested);
                 }
             }
             self.count(1)?;

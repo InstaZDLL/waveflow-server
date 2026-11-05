@@ -70,6 +70,88 @@ async fn a_full_scan_reads_what_an_ordinary_one_would_skip() {
     assert_eq!(job_of(fourth).await.skipped, 1);
 }
 
+/// A 2.4 tag of `depth` `CHAP` frames nested one in the next, behind one MPEG
+/// frame so lofty would take it for an MP3. The chapter guard refuses it.
+fn nested_chapters_file(depth: usize) -> Vec<u8> {
+    let synchsafe = |value: usize| {
+        [
+            ((value >> 21) & 0x7f) as u8,
+            ((value >> 14) & 0x7f) as u8,
+            ((value >> 7) & 0x7f) as u8,
+            (value & 0x7f) as u8,
+        ]
+    };
+    let prefix: &[u8] = b"c\0\0\0\0\0\0\0\x03\xe8\xff\xff\xff\xff\xff\xff\xff\xff";
+    let mut inner = Vec::new();
+    for _ in 0..depth {
+        let mut frame = b"CHAP".to_vec();
+        frame.extend_from_slice(&synchsafe(prefix.len() + inner.len()));
+        frame.extend_from_slice(&[0, 0]);
+        frame.extend_from_slice(prefix);
+        frame.extend_from_slice(&inner);
+        inner = frame;
+    }
+    let mut bytes = b"ID3\x04\0\0".to_vec();
+    bytes.extend_from_slice(&synchsafe(inner.len()));
+    bytes.extend_from_slice(&inner);
+    bytes.extend_from_slice(&[0xff, 0xfb, 0x90, 0x00]);
+    bytes.resize(bytes.len() + 1024, 0);
+    bytes
+}
+
+/// What a full rescan does to a track that is already in the catalogue when the
+/// chapter guard refuses its file: it is marked unavailable, not deleted and not
+/// left available. The file is still on disk, so this is a conservative answer —
+/// the track and everything hung off it survive, and the next scan that reads
+/// the file restores it. The regression behind #428 is that a WAV/AIFF/FLAC
+/// nesting nothing could be refused by mistake and meet exactly this fate on a
+/// full rescan; here the refusal is a genuine nesting, which still does.
+#[tokio::test]
+async fn a_full_rescan_that_the_guard_refuses_marks_the_track_unavailable() {
+    let (_temp, state, owner, library, _root) = incremental_library("rescan-refused", |music| {
+        write_test_wav(&music.join("Track.wav"));
+    })
+    .await;
+    let track_path = library.root_path.join("Track.wav");
+
+    let first = job(
+        &state,
+        owner,
+        scan_once(&state, owner, library.clone()).await,
+    )
+    .await;
+    assert_eq!(first.added, 1);
+    let available: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track WHERE is_available = 1")
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert_eq!(available, 1);
+
+    // The same path, now holding a file the guard refuses.
+    std::fs::write(&track_path, nested_chapters_file(64)).unwrap();
+    state.db.request_full_scan_everywhere().await.unwrap();
+    let second = job(&state, owner, scan_once(&state, owner, library).await).await;
+
+    assert_eq!(
+        second.errors, 1,
+        "the guard's refusal is counted as a read error"
+    );
+    assert_eq!(
+        second.unavailable, 1,
+        "the track the scan could not read is marked missing"
+    );
+    let (available, since): (i64, Option<i64>) =
+        sqlx::query_as("SELECT is_available, unavailable_since FROM track")
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(available, 0, "the track is unavailable, not deleted");
+    assert!(
+        since.is_some(),
+        "and the moment it went missing is recorded"
+    );
+}
+
 /// The request outlives a run that does not finish.
 ///
 /// This is the whole reason it is a stored state rather than an argument. A

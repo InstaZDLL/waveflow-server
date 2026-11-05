@@ -247,7 +247,7 @@ fn a_file_with_no_chapters_passes() {
 fn deeply_nested_chap_is_refused() {
     assert_eq!(
         check_tag(&tag(&nested(4, &[b"CHAP"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -255,21 +255,21 @@ fn deeply_nested_chap_is_refused() {
 fn deeply_nested_ctoc_is_refused() {
     assert_eq!(
         check_tag(&tag(&nested(4, &[b"CTOC"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
 #[test]
 fn mixed_chap_and_ctoc_nesting_is_refused() {
     let frames = nested(4, &[b"CTOC", b"CHAP"], 64);
-    assert_eq!(check_tag(&tag(&frames)), Err(NestedChapters));
+    assert_eq!(check_tag(&tag(&frames)), Err(Refusal::Nested));
 }
 
 #[test]
 fn nesting_in_a_v23_tag_is_refused() {
     assert_eq!(
         check_tag(&tag_with(3, 0, &nested(3, &[b"CHAP"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -289,7 +289,7 @@ fn an_unsynchronised_v23_tag_that_nests_is_refused() {
     }
     raw[6..10].copy_from_slice(&synchsafe_bytes(body.len()));
     raw.extend_from_slice(&body);
-    assert_eq!(check_tag(&raw), Err(NestedChapters));
+    assert_eq!(check_tag(&raw), Err(Refusal::Nested));
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn a_compressed_chapter_is_refused_unread() {
     let mut body = (inner.len() as u32).to_be_bytes().to_vec();
     body.extend_from_slice(&compressed);
     let frames = frame(4, b"CHAP", 0x0008, &body);
-    assert_eq!(check_tag(&tag(&frames)), Err(NestedChapters));
+    assert_eq!(check_tag(&tag(&frames)), Err(Refusal::Nested));
 }
 
 #[test]
@@ -319,14 +319,14 @@ fn nesting_behind_junk_in_an_mp3_is_refused() {
     let mut file = vec![0_u8; 200];
     file.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     file.extend_from_slice(&audio());
-    assert_eq!(check_file_bytes(&file), Err(NestedChapters));
+    assert_eq!(check_file_bytes(&file), Err(Refusal::Nested));
 }
 
 #[test]
 fn nesting_in_a_wav_id3_chunk_is_refused() {
     assert_eq!(
         check_file_bytes(&wav(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -339,7 +339,7 @@ fn an_honest_wav_passes() {
 fn nesting_in_an_aiff_id3_chunk_is_refused() {
     assert_eq!(
         check_file_bytes(&aiff(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -347,7 +347,7 @@ fn nesting_in_an_aiff_id3_chunk_is_refused() {
 fn nesting_in_a_dsf_blob_is_refused() {
     assert_eq!(
         check_dsd_bytes(&dsf(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -362,7 +362,7 @@ fn an_honest_dsf_passes() {
 fn nesting_in_a_dff_id3_chunk_is_refused() {
     assert_eq!(
         check_dsd_bytes(&dff(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -386,7 +386,7 @@ fn a_dff_with_too_many_chunks_is_refused() {
     let mut dff = b"FRM8".to_vec();
     dff.extend_from_slice(&(form.len() as u64).to_be_bytes());
     dff.extend_from_slice(&form);
-    assert_eq!(check_dsd_bytes(&dff), Err(NestedChapters));
+    assert_eq!(check_dsd_bytes(&dff), Err(Refusal::OverBudget));
 }
 
 /// A table of contents naming four chapters, then the four flat `CHAP` frames,
@@ -448,7 +448,7 @@ fn a_riff_body_stuffed_with_id3_markers_is_refused() {
     let mut riff = b"RIFF".to_vec();
     riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
     riff.extend_from_slice(&body);
-    assert_eq!(check_file_bytes(&riff), Err(NestedChapters));
+    assert_eq!(check_file_bytes(&riff), Err(Refusal::OverBudget));
 }
 
 /// The read of a tag body stops at the cap, so a header declaring a huge size
@@ -469,11 +469,12 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     );
 }
 
-/// A chunk declaring far more than the budget is refused, and the read that
-/// refuses it is itself bounded by the budget rather than the declared size.
-/// Measured, so an unbounded read that still fails `spend` would not pass here.
+/// A chunk declaring far more than the file holds is where every IFF reader
+/// stops, so the walk stops there too: its body is not read at all, not even up
+/// to the budget. Measured through [`CountingReader`], so a read that ran into
+/// the declared size would be seen here.
 #[test]
-fn a_chunk_larger_than_the_budget_is_refused() {
+fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let payload = vec![b'A'; 8192];
     let mut body = b"WAVE".to_vec();
     body.extend_from_slice(b"LIST");
@@ -484,12 +485,11 @@ fn a_chunk_larger_than_the_budget_is_refused() {
     riff.extend_from_slice(&body);
     let mut budget = 64_u64;
     let mut reader = CountingReader::new(Cursor::new(riff));
-    let verdict = check_chunks(&mut reader, 0, false, &mut budget);
-    assert_eq!(verdict, Err(NestedChapters));
-    // The eight-byte chunk header, then at most the budget plus one byte of body.
+    assert_eq!(check_chunks(&mut reader, 0, false, &mut budget), Ok(()));
+    // Only the eight-byte header of the oversized chunk; its body is never read.
     assert!(
-        reader.read <= 8 + 64 + 1,
-        "the walk read {} bytes, past the budget rather than stopping at it",
+        reader.read <= 8,
+        "the walk read {} bytes of a chunk no reader would read a body of",
         reader.read
     );
 }
@@ -519,6 +519,271 @@ impl<R: Seek> Seek for CountingReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
         self.inner.seek(pos)
     }
+}
+
+/// More than the check may read of one file, so a walk that reads the audio
+/// runs out of budget on it.
+const PAST_BUDGET: usize = MAX_SCAN_BYTES as usize + 6 * 1024 * 1024;
+
+/// What a check that leaves the audio alone stays far under.
+const A_FEW_HEAD_READS: u64 = 1024 * 1024;
+
+/// Pseudo-random bytes standing for audio: no run of zeros for the walk to step
+/// over and no chunk a header could be told from, [`PAST_BUDGET`] of them.
+fn noise() -> &'static [u8] {
+    static NOISE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    NOISE.get_or_init(|| {
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut out = Vec::with_capacity(PAST_BUDGET + 8);
+        while out.len() < PAST_BUDGET {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            out.extend_from_slice(&state.to_le_bytes());
+        }
+        out.truncate(PAST_BUDGET);
+        out
+    })
+}
+
+/// One chunk, with no padding byte behind it whatever its length.
+fn chunk(id: &[u8; 4], body: &[u8], big_endian: bool) -> Vec<u8> {
+    let size = body.len() as u32;
+    let mut out = id.to_vec();
+    out.extend_from_slice(&if big_endian {
+        size.to_be_bytes()
+    } else {
+        size.to_le_bytes()
+    });
+    out.extend_from_slice(body);
+    out
+}
+
+fn wav_format() -> Vec<u8> {
+    let mut body = Vec::new();
+    for field in [1_u16, 1] {
+        body.extend_from_slice(&field.to_le_bytes());
+    }
+    body.extend_from_slice(&8000_u32.to_le_bytes());
+    body.extend_from_slice(&16_000_u32.to_le_bytes());
+    for field in [2_u16, 16] {
+        body.extend_from_slice(&field.to_le_bytes());
+    }
+    chunk(b"fmt ", &body, false)
+}
+
+/// A WAV of `chunks` behind its `fmt `.
+fn wav_of(chunks: &[u8]) -> Vec<u8> {
+    let body = [b"WAVE".as_slice(), &wav_format(), chunks].concat();
+    [
+        b"RIFF".as_slice(),
+        &(body.len() as u32).to_le_bytes(),
+        &body,
+    ]
+    .concat()
+}
+
+/// An AIFF of `chunks` behind its `COMM`.
+fn aiff_of(chunks: &[u8]) -> Vec<u8> {
+    let mut common = 1_u16.to_be_bytes().to_vec();
+    common.extend_from_slice(&800_u32.to_be_bytes());
+    common.extend_from_slice(&16_u16.to_be_bytes());
+    common.extend_from_slice(&[0x40, 0x0b, 0xfa, 0, 0, 0, 0, 0, 0, 0]);
+    let body = [b"AIFF".as_slice(), &chunk(b"COMM", &common, true), chunks].concat();
+    [
+        b"FORM".as_slice(),
+        &(body.len() as u32).to_be_bytes(),
+        &body,
+    ]
+    .concat()
+}
+
+/// A FLAC made with `flac --keep-foreign-metadata`: the header of the WAV it
+/// was encoded from and each of its chunks sit in `APPLICATION` blocks of their
+/// own, so the letters `RIFF` are followed by a block header, not by a chunk.
+fn flac_keeping_its_riff_chunks(audio: &[u8]) -> Vec<u8> {
+    let block = |kind: u8, body: &[u8]| {
+        let mut out = vec![kind];
+        out.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        out.extend_from_slice(body);
+        out
+    };
+    let mut header = b"riffRIFF".to_vec();
+    header.extend_from_slice(&(audio.len() as u32 + 36).to_le_bytes());
+    header.extend_from_slice(b"WAVE");
+    let mut data = b"riffdata".to_vec();
+    data.extend_from_slice(&(audio.len() as u32).to_le_bytes());
+    let mut out = b"fLaC".to_vec();
+    out.extend_from_slice(&block(0, &[0x10; 34]));
+    out.extend_from_slice(&block(2, &header));
+    out.extend_from_slice(&block(2, &[b"riff".as_slice(), &wav_format()].concat()));
+    out.extend_from_slice(&block(0x82, &data));
+    out.extend_from_slice(audio);
+    out
+}
+
+/// The file passes, and the check never read its audio to say so.
+fn assert_passes_unread(file: Vec<u8>) {
+    let mut reader = CountingReader::new(Cursor::new(file));
+    assert_eq!(check_reader(&mut reader), Ok(()));
+    assert!(
+        reader.read < A_FEW_HEAD_READS,
+        "the check read {} bytes of a file whose tags are a few dozen",
+        reader.read
+    );
+}
+
+/// The first shape of #428. Behind a chunk of odd length the walk went on from
+/// the padding byte as well as from behind it, read the `data` header one byte
+/// off, and so read the audio as a chunk of some other name until the budget
+/// ran out.
+#[test]
+fn a_large_wav_with_an_odd_chunk_ahead_of_its_audio_passes() {
+    let mut chunks = chunk(b"iXML", b"<x/>\n", false);
+    chunks.push(0);
+    chunks.extend_from_slice(&chunk(b"data", noise(), false));
+    assert_passes_unread(wav_of(&chunks));
+}
+
+#[test]
+fn a_large_aiff_with_an_odd_chunk_ahead_of_its_audio_passes() {
+    let mut chunks = chunk(b"NAME", b"Title", true);
+    chunks.push(0);
+    let sound = [[0_u8; 8].as_slice(), noise()].concat();
+    chunks.extend_from_slice(&chunk(b"SSND", &sound, true));
+    assert_passes_unread(aiff_of(&chunks));
+}
+
+/// The second shape of #428: `RIFF` in the head of a file that is no WAV. The
+/// walk it starts reads a block header as a chunk, whose length is then the
+/// letters `riff`, and the rest of the file was read as that chunk.
+#[test]
+fn a_large_flac_that_keeps_its_riff_chunks_passes() {
+    assert_passes_unread(flac_keeping_its_riff_chunks(noise()));
+}
+
+/// An encoder that pads nothing leaves the next chunk where the padding byte
+/// would be. Both continuations are walked then, and the wrong one, which reads
+/// the `data` header one byte off, must not cost the file its place either.
+#[test]
+fn a_large_wav_whose_odd_chunk_was_never_padded_passes() {
+    let mut chunks = chunk(b"iXML", b"<x/>\n", false);
+    chunks.extend_from_slice(&chunk(b"data", noise(), false));
+    assert_eq!(check_reader(&mut Cursor::new(wav_of(&chunks))), Ok(()));
+}
+
+/// The leniency is only for the audio behind a chunk, never for a nested tag:
+/// an `id3`/`ID3 ` chunk behind an odd one is still reached and refused,
+/// whatever stands where its padding byte would, since both continuations are
+/// walked.
+#[test]
+fn nesting_behind_an_odd_chunk_is_refused_whatever_pads_it() {
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    for pad in [&[][..], &[0], &[1], b"X"] {
+        let mut chunks = chunk(b"iXML", b"<x/>\n", false);
+        chunks.extend_from_slice(pad);
+        chunks.extend_from_slice(&chunk(b"id3 ", &hostile, false));
+        chunks.extend_from_slice(&chunk(b"data", &[0; 1600], false));
+        assert_eq!(
+            check_file_bytes(&wav_of(&chunks)),
+            Err(Refusal::Nested),
+            "WAV, padding {pad:?}"
+        );
+        let mut chunks = chunk(b"NAME", b"Title", true);
+        chunks.extend_from_slice(pad);
+        chunks.extend_from_slice(&chunk(b"ID3 ", &hostile, true));
+        chunks.extend_from_slice(&chunk(b"SSND", &[0; 1608], true));
+        assert_eq!(
+            check_file_bytes(&aiff_of(&chunks)),
+            Err(Refusal::Nested),
+            "AIFF, padding {pad:?}"
+        );
+    }
+}
+
+/// The ID3v2 title lofty reads from `file` taken as `kind`, tags only — a file
+/// whose chunks lead nowhere has no audio properties to read, so properties are
+/// turned off to reach the tag the file does carry.
+fn title_lofty_reads(file: Vec<u8>, kind: lofty::file::FileType) -> Option<String> {
+    use lofty::file::TaggedFileExt;
+    use lofty::prelude::Accessor;
+    let options = lofty::config::ParseOptions::new().read_properties(false);
+    let tagged = lofty::probe::Probe::with_file_type(Cursor::new(file), kind)
+        .options(options)
+        .read()
+        .ok()?;
+    let tag = tagged.tag(lofty::tag::TagType::Id3v2)?;
+    tag.title().map(|title| title.into_owned())
+}
+
+/// Why the walk follows a `RIFF`/`FORM` only at the head of the file: lofty
+/// reads IFF chunks only when the file opens with them, so one deeper in leads
+/// to nothing it reads. This holds lofty to that — the control reads the tag
+/// from a file that opens with the signature, and every file that does not
+/// opens hides it.
+#[test]
+fn lofty_reads_chunks_only_in_a_file_that_opens_with_them() {
+    use lofty::file::FileType;
+    let honest = tag(&title(4, "found"));
+    for (file, kind) in [
+        (wav(&honest), FileType::Wav),
+        (aiff(&honest), FileType::Aiff),
+    ] {
+        assert_eq!(
+            title_lofty_reads(file.clone(), kind).as_deref(),
+            Some("found"),
+            "the control: {kind:?} read from its first byte"
+        );
+        for ahead in [&[0_u8][..], &[0; 3], b"junk", &[0xff, 0xfb, 0x90, 0x00]] {
+            let moved = [ahead, &file].concat();
+            assert_eq!(
+                title_lofty_reads(moved, kind),
+                None,
+                "{kind:?} behind {ahead:?}"
+            );
+        }
+    }
+}
+
+/// More empty chunks than the walk follows, behind the letters that start one.
+fn riff_of_too_many_chunks() -> Vec<u8> {
+    let mut body = b"WAVE".to_vec();
+    for _ in 0..=MAX_CHUNKS {
+        body.extend_from_slice(b"junk\0\0\0\0");
+    }
+    [
+        b"RIFF".as_slice(),
+        &(body.len() as u32).to_le_bytes(),
+        &body,
+    ]
+    .concat()
+}
+
+/// In a file that opens with `RIFF`, lofty walks as far as the chunks go, so a
+/// walk that gives up before the end has not checked what lofty will read:
+/// refused, and for an exhausted budget, not for a nesting nobody saw.
+#[test]
+fn a_wav_of_more_chunks_than_the_walk_follows_is_refused_as_unchecked() {
+    assert_eq!(
+        check_file_bytes(&riff_of_too_many_chunks()),
+        Err(Refusal::OverBudget)
+    );
+}
+
+/// The same chunks behind four bytes of something else are in a file no reader
+/// takes for a WAV. The walk is not begun, and the file passes.
+#[test]
+fn a_walk_begun_inside_a_file_gives_up_without_refusing_it() {
+    let file = [b"\xff\xfb\x90\0".as_slice(), &riff_of_too_many_chunks()].concat();
+    assert_eq!(check_file_bytes(&file), Ok(()));
+}
+
+/// The two refusals read differently, since one of them found no nesting.
+#[test]
+fn an_exhausted_budget_does_not_claim_a_nesting() {
+    assert!(Refusal::Nested.to_string().contains("nests chapter frames"));
+    assert!(!Refusal::OverBudget.to_string().contains("nests"));
+    assert!(!Refusal::ReadFailed.to_string().contains("nests"));
 }
 
 #[test]
@@ -599,7 +864,7 @@ fn a_read_that_fails_partway_is_refused() {
     bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(1000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 /// An interruption does not stop the walk short: a nested tag that follows is
@@ -611,7 +876,7 @@ fn an_interrupted_read_still_reaches_a_later_tag() {
     bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     let mut reader = FlakyReader::new(bytes);
     reader.interrupt_at = Some(0);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::Nested));
 }
 
 /// An I/O error while reading a tag's declared body is refused, not swallowed
@@ -625,7 +890,7 @@ fn a_tag_whose_body_read_fails_is_refused() {
     bytes.resize(10 + 200_000, 0);
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(100_000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 /// The same for the read that walks a run of empty chunks: a `RIFF` whose first
@@ -640,15 +905,15 @@ fn a_failed_read_walking_empty_chunks_is_refused() {
     bytes.resize(120_000, 0);
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(100_000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 // Helpers that drive the reader-based checks over an in-memory file.
-fn check_file_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
+fn check_file_bytes(bytes: &[u8]) -> Result<(), Refusal> {
     check_reader(&mut Cursor::new(bytes.to_vec()))
 }
 
-fn check_dsd_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
+fn check_dsd_bytes(bytes: &[u8]) -> Result<(), Refusal> {
     // Through a real file and the production entry point, so the DSF/DFF
     // dispatch itself is what these tests exercise.
     let file = tempfile::NamedTempFile::new().expect("temporary DSD file");

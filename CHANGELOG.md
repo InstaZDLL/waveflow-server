@@ -10,6 +10,28 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The chapter guard no longer refuses a large WAV, AIFF or FLAC that nests
+  nothing** (#428, the known issue 2.1.1 shipped). The guard gave up on a file
+  once it had read 64 MiB of it, and two honest shapes reached that budget: a
+  WAV or an AIFF with a chunk of odd length ahead of its audio, where the walk
+  read the audio's header one byte off and then read the audio itself as a
+  giant chunk; and a file that opens on neither but carries `RIFF` or `FORM`
+  further in, such as a FLAC that keeps the chunks of the WAV it was made from
+  (`flac --keep-foreign-metadata`), where the walk left the embedded structure
+  and read the audio as chunk headers. The guard now walks a WAV or AIFF only
+  when `RIFF`/`FORM` opens the file and carries the matching form type — the
+  only shape lofty reads as chunks — and, within that walk, stops at any chunk
+  declaring more than the file holds, exactly where every IFF reader stops,
+  reading no audio. A tag nested behind an odd chunk is still reached and
+  refused, whatever padding stands before it, because both continuations are
+  still walked. A refusal for an exhausted budget, or for a read that fails
+  partway through the file, is now told apart from a nesting and no longer
+  claims the file nests chapter frames. On a full rescan a file the guard
+  refuses marks its track unavailable rather than deleting it; the file is
+  untouched and a later scan that reads it restores the track.
+
 ## [2.1.1] — 2026-11-05
 
 ### Security
