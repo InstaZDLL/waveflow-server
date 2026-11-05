@@ -484,8 +484,17 @@ fn check_chunks<R: Read + Seek>(
             return Err(Refusal::OverBudget);
         }
         let mut header = [0_u8; 8];
-        if reader.seek(SeekFrom::Start(at)).is_err() || reader.read_exact(&mut header).is_err() {
-            continue;
+        if reader.seek(SeekFrom::Start(at)).is_err() {
+            return Err(Refusal::ReadFailed);
+        }
+        match reader.read_exact(&mut header) {
+            Ok(()) => {}
+            // Fewer than eight bytes left is no chunk header, for lofty either:
+            // this continuation ends. Any other failure is an I/O error, and
+            // passing over it would leave the chunk lofty reads here unchecked.
+            // `read_exact` already retries an interrupted read.
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => continue,
+            Err(_) => return Err(Refusal::ReadFailed),
         }
         spend(budget, 8)?;
         // Silence behind a `data` chunk whose length was never written is a

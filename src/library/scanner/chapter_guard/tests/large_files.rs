@@ -270,6 +270,25 @@ fn a_walk_begun_inside_a_file_gives_up_without_refusing_it() {
     assert_eq!(check_file_bytes(&file), Ok(()));
 }
 
+/// A chunk header whose read fails is refused, not passed over: the walk that
+/// skipped it never reached the chunk, whose tag lofty goes on to read. Here a
+/// nested tag stands behind a `JUNK` chunk larger than the head read, so only
+/// the chunk walk reaches it, and the read of its header fails once. The
+/// control, read without the failure, is refused for the nesting.
+#[test]
+fn a_chunk_header_whose_read_fails_is_refused() {
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    let mut chunks = chunk(b"JUNK", &vec![0_u8; 2 * HEAD_CHUNK], false);
+    let header_at = 12 + wav_format().len() + chunks.len();
+    chunks.extend_from_slice(&chunk(b"id3 ", &hostile, false));
+    let file = wav_of(&chunks);
+    assert_eq!(&file[header_at..header_at + 4], b"id3 ");
+    assert_eq!(check_file_bytes(&file), Err(Refusal::Nested), "the control");
+    let mut reader = FlakyReader::new(file);
+    reader.fail_at = Some(header_at as u64);
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
+}
+
 /// The two refusals read differently, since one of them found no nesting.
 #[test]
 fn an_exhausted_budget_does_not_claim_a_nesting() {
