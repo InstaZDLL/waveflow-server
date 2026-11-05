@@ -314,6 +314,8 @@ fn check_tags_from<R: Read + Seek>(
     Ok(())
 }
 
+/// Fills `buffer` from `at`, returning how many bytes were read. Stops at the
+/// end of the file, retries an interrupted read, and surfaces any other error.
 fn read_at<R: Read + Seek>(reader: &mut R, at: u64, buffer: &mut [u8]) -> io::Result<usize> {
     reader.seek(SeekFrom::Start(at))?;
     let mut filled = 0;
@@ -332,6 +334,8 @@ fn read_at<R: Read + Seek>(reader: &mut R, at: u64, buffer: &mut [u8]) -> io::Re
 }
 
 #[derive(Clone, Copy)]
+/// A container or tag marker the walk stops on: an ID3v2 tag, an APE tag, or the
+/// `RIFF`/`FORM` header of a WAV or AIFF.
 enum Signature {
     Id3,
     Ape,
@@ -339,6 +343,8 @@ enum Signature {
     Form,
 }
 
+/// The first [`Signature`] in `chunk`, with its offset, or `None` if none is in
+/// the part scanned.
 fn find_signature(chunk: &[u8]) -> Option<(usize, Signature)> {
     chunk
         .windows(SIGNATURE_OVERLAP)
@@ -552,12 +558,15 @@ pub fn check_tag(tag: &[u8]) -> Result<(), NestedChapters> {
     audit.walk(frames, Level::Top)
 }
 
+/// Where in the frame tree the walk is: the tag's top level, or inside a
+/// chapter's own sub-frames.
 #[derive(Clone, Copy, PartialEq)]
 enum Level {
     Top,
     InsideChapter,
 }
 
+/// The running state of one pass over a tag's frames.
 struct Audit {
     major: u8,
     unexplained: usize,
@@ -568,6 +577,9 @@ struct Audit {
 }
 
 impl Audit {
+    /// Walks `frames` at `level`, counting the chapter names no parser can
+    /// avoid reading and refusing once more than [`ALLOWED_UNEXPLAINED_CHAPTERS`]
+    /// are seen.
     fn walk(&mut self, frames: &[u8], level: Level) -> Result<(), NestedChapters> {
         let mut at = 0;
         while let Some(header) = frames.get(at..at + FRAME_HEADER_LEN) {
@@ -632,6 +644,7 @@ impl Audit {
         self.count_names(frames, at, frames.len())
     }
 
+    /// Adds `names` to the unexplained count, refusing once it passes the limit.
     fn count(&mut self, names: usize) -> Result<(), NestedChapters> {
         self.unexplained += names;
         if self.unexplained > ALLOWED_UNEXPLAINED_CHAPTERS {
@@ -715,6 +728,7 @@ fn inflatable_after(body: &[u8]) -> bool {
     })
 }
 
+/// Whether `id` names a chapter frame — a `CHAP` or a `CTOC`.
 fn is_chapter(id: &[u8]) -> bool {
     id == b"CHAP" || id == b"CTOC"
 }
@@ -784,6 +798,7 @@ fn synchsafe(bytes: &[u8]) -> u32 {
         .fold(0_u32, |value, byte| (value << 7) | u32::from(byte & 0x7f))
 }
 
+/// Reverses ID3v2 unsynchronisation: drops the zero inserted after each `0xff`.
 fn resynchronise(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     let mut after_ff = false;
