@@ -371,6 +371,24 @@ fn an_honest_dff_passes() {
     assert_eq!(check_dsd_bytes(&dff(&tag(&honest_chapters()))), Ok(()));
 }
 
+/// A DFF whose chunk walk runs past `MAX_CHUNKS` is refused, not passed: the DSD
+/// reader would walk on and could reach a tag beyond where the guard gave up.
+#[test]
+fn a_dff_with_too_many_chunks_is_refused() {
+    // `FRM8` <8-byte size> "DSD ", then many empty chunks: a 4-byte id, an
+    // 8-byte zero length, no body. One more than the walk will follow.
+    let count = MAX_CHUNKS + 1;
+    let mut form = b"DSD ".to_vec();
+    for _ in 0..count {
+        form.extend_from_slice(b"junk");
+        form.extend_from_slice(&0_u64.to_be_bytes());
+    }
+    let mut dff = b"FRM8".to_vec();
+    dff.extend_from_slice(&(form.len() as u64).to_be_bytes());
+    dff.extend_from_slice(&form);
+    assert_eq!(check_dsd_bytes(&dff), Err(NestedChapters));
+}
+
 /// A table of contents naming four chapters, then the four flat `CHAP` frames,
 /// with innocuous element ids and no chapter text in any body.
 fn toc_and_four_flat_chapters() -> Vec<u8> {

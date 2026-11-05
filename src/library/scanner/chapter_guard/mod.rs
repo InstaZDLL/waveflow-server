@@ -177,7 +177,10 @@ fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(),
     while at + 12 <= end {
         chunks += 1;
         if chunks > MAX_CHUNKS {
-            return Ok(());
+            // Refused, not passed: the DSD reader walks on past this point, so a
+            // tag beyond the chunk the walk gave up at would reach the `id3`
+            // crate unchecked. A real `DFF` has a handful of chunks.
+            return Err(NestedChapters);
         }
         let mut header = [0_u8; 12];
         if file.seek(SeekFrom::Start(at)).is_err() || file.read_exact(&mut header).is_err() {
