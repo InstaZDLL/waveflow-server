@@ -10,6 +10,24 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-11-05
+
+### Security
+
+- **A file whose ID3v2 chapter frames nest no longer crashes the server**
+  (#426). A `CHAP` or `CTOC` frame can hold frames of its own, and the tag
+  readers the server uses, lofty and the `id3` crate, recurse once per nested
+  level with no limit, so a crafted tag of a few kilobytes overflowed the stack
+  and aborted the whole process. An upload put the file in the library before
+  reading it, and a file in a scanned folder was read by the next scan, so the
+  scan at start-up met it again and the server crashed on every restart until
+  someone removed the file by hand. A check now runs ahead of both readers, for
+  every format and for the ID3 tag inside a DSF or DFF file: an upload of such
+  a file is refused with `422` and leaves nothing in the library, a scan
+  records an error for the file and goes on. A real chapter layout, with a
+  table of contents, titled chapters, links and pictures, is read as before.
+  Every version from 2.0.0 to 2.1.0 is affected.
+
 ## [2.1.0] — 2026-11-03
 
 ### Added
@@ -387,7 +405,8 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.0...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.1...main
+[2.1.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.1
 [2.1.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.0
 [2.0.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.1
 [2.0.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.0
