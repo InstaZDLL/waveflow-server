@@ -26,10 +26,11 @@ out first, whether or not it breaks a compile.
   whose chapter frames nest more than three levels under the first, well short
   of the depth that overflows the stack; one chapter frame inside another is
   not refused. An upload of a refused file is answered `422` and the file is
-  taken back out of the library, a scan records an error for the file and goes
-  on. A real chapter layout, with a table of contents, titled chapters, links
-  and pictures, is read as before. Every version from 2.0.0 to 2.1.0 is
-  affected.
+  taken back out of the library; should the disk allow neither moving it back
+  nor deleting it, the answer is `503` and the file and its session stay. A
+  scan records an error for the file and goes on. A real chapter layout, with
+  a table of contents, titled chapters, links and pictures, is read as before.
+  Every version from 2.0.0 to 2.1.0 is affected.
 
 ### Known issues
 
