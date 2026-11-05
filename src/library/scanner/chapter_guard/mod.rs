@@ -77,10 +77,13 @@ const SIGNATURE_OVERLAP: usize = 8;
 const MAX_CHUNKS: usize = 65_536;
 
 /// How many bytes the whole check may read from one file before refusing it. A
-/// real file's tags and metadata chunks are far smaller; only a crafted one —
-/// chunks declaring huge sizes, or a body repeating `ID3 ` to make the walk
-/// re-read the file — reaches this, and refusing it is the safe answer. The
-/// audio itself is never read: `data` and `SSND` chunks are skipped.
+/// real file's tags and metadata chunks are far smaller, and the audio itself
+/// is not read: `data` and `SSND` chunks are skipped, and so is their header
+/// misread one byte off behind a chunk of odd length. What reaches this is a
+/// file whose metadata chunks are themselves that large, or a walk led into
+/// the audio some other way — chunks declaring sizes that land inside it, a
+/// body repeating `ID3 ` to make the walk re-read the file — and refusing it
+/// is the safe answer, as [`Refusal::OverBudget`], not as a nesting.
 const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Chunk positions a WAV or AIFF walk may hold at once. A real container has a
@@ -88,30 +91,52 @@ const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 /// occurrence, so the queue is bounded like the work it drives.
 const MAX_PENDING_CHUNKS: usize = MAX_CHUNKS;
 
-/// The file was refused: its ID3v2 chapter frames nest, or one hides its body.
+/// Why the guard refused a file. These are not the same fact, and must not be
+/// reported as one: a nesting is something the guard saw in the tag, while an
+/// exhausted budget or a failed read leaves a file the guard could not finish
+/// reading, about whose chapters it therefore says nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NestedChapters;
+pub enum Refusal {
+    /// The ID3v2 chapter frames nest, or one hides its body.
+    Nested,
+    /// The check read [`MAX_SCAN_BYTES`] of the file without settling the
+    /// question: a container declaring huge or endlessly many chunks, not
+    /// honest audio. Refusing it is safer than reading on, but it is not a
+    /// nesting — none was found.
+    OverBudget,
+    /// A read failed partway through the file. The parser that runs next may
+    /// read past the failure and meet chapter frames this check never reached,
+    /// so the file is refused — but no nesting was seen either.
+    ReadFailed,
+}
 
-impl fmt::Display for NestedChapters {
+impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("the ID3v2 tag nests chapter frames, refusing to read it")
+        f.write_str(match self {
+            Self::Nested => "the ID3v2 tag nests chapter frames, refusing to read it",
+            Self::OverBudget => {
+                "the file's metadata runs past what the guard will read, refusing it"
+            }
+            Self::ReadFailed => "the file could not be read through its tags, refusing it",
+        })
     }
 }
 
-impl std::error::Error for NestedChapters {}
+impl std::error::Error for Refusal {}
 
 /// Subtracts the bytes just read from the budget, refusing the file when it runs
 /// out. A file that makes the check read more than [`MAX_SCAN_BYTES`] is
 /// pathological, and refusing it is safer than reading on.
-fn spend(budget: &mut u64, bytes: u64) -> Result<(), NestedChapters> {
-    *budget = budget.checked_sub(bytes).ok_or(NestedChapters)?;
+fn spend(budget: &mut u64, bytes: u64) -> Result<(), Refusal> {
+    *budget = budget.checked_sub(bytes).ok_or(Refusal::OverBudget)?;
     Ok(())
 }
 
 /// Whether the file at `path` is safe to hand to lofty. A file that cannot be
-/// opened or read passes: the parser is about to meet the same error and report
-/// it, and refusing here would turn an unreadable file into an absent one.
-pub fn check_file(path: &Path) -> Result<(), NestedChapters> {
+/// opened passes: the parser is about to meet the same error and report it, and
+/// refusing here would turn an unreadable file into an absent one. A read that
+/// fails partway is another matter, refused as [`Refusal::ReadFailed`].
+pub fn check_file(path: &Path) -> Result<(), Refusal> {
     match std::fs::File::open(path) {
         Ok(mut file) => check_reader(&mut file),
         Err(_) => Ok(()),
@@ -119,7 +144,7 @@ pub fn check_file(path: &Path) -> Result<(), NestedChapters> {
 }
 
 /// [`check_file`] over a reader, from where it stands, which is where it is left.
-pub fn check_reader<R: Read + Seek>(reader: &mut R) -> Result<(), NestedChapters> {
+pub fn check_reader<R: Read + Seek>(reader: &mut R) -> Result<(), Refusal> {
     let Ok(start) = reader.stream_position() else {
         return Ok(());
     };
@@ -140,7 +165,7 @@ pub fn check_reader<R: Read + Seek>(reader: &mut R) -> Result<(), NestedChapters
 /// way the reader does and checked on its own. A container this cannot make
 /// sense of passes: the reader will meet the same bytes and read nothing from
 /// them.
-pub fn check_dsd(path: &Path) -> Result<(), NestedChapters> {
+pub fn check_dsd(path: &Path) -> Result<(), Refusal> {
     let Ok(mut file) = std::fs::File::open(path) else {
         return Ok(());
     };
@@ -157,7 +182,7 @@ pub fn check_dsd(path: &Path) -> Result<(), NestedChapters> {
 }
 
 /// The ID3 blob a `DSF` names at byte twenty, read to the file's end and checked.
-fn check_dsf_blob<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), NestedChapters> {
+fn check_dsf_blob<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), Refusal> {
     let mut offset = [0_u8; 8];
     if file.seek(SeekFrom::Start(20)).is_err() || file.read_exact(&mut offset).is_err() {
         return Ok(());
@@ -170,7 +195,7 @@ fn check_dsf_blob<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), 
 }
 
 /// Every `ID3 ` chunk of a `DFF` `FRM8` form, checked where it sits.
-fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), NestedChapters> {
+fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), Refusal> {
     let Ok(end) = file.seek(SeekFrom::End(0)) else {
         return Ok(());
     };
@@ -183,7 +208,7 @@ fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(),
             // Refused, not passed: the DSD reader walks on past this point, so a
             // tag beyond the chunk the walk gave up at would reach the `id3`
             // crate unchecked. A real `DFF` has a handful of chunks.
-            return Err(NestedChapters);
+            return Err(Refusal::OverBudget);
         }
         let mut header = [0_u8; 12];
         if file.seek(SeekFrom::Start(at)).is_err() || file.read_exact(&mut header).is_err() {
@@ -222,14 +247,14 @@ fn check_tag_at<R: Read + Seek>(
     file: &mut R,
     offset: u64,
     budget: &mut u64,
-) -> Result<(), NestedChapters> {
+) -> Result<(), Refusal> {
     match read_declared(file, offset, budget.saturating_add(1)) {
         DeclaredTag::Tag(tag) => {
             spend(budget, tag.len() as u64)?;
             check_tag(&tag)
         }
         DeclaredTag::NotTag => Ok(()),
-        DeclaredTag::ReadFailed => Err(NestedChapters),
+        DeclaredTag::ReadFailed => Err(Refusal::ReadFailed),
     }
 }
 
@@ -239,7 +264,7 @@ fn check_tags_from<R: Read + Seek>(
     reader: &mut R,
     start: u64,
     budget: &mut u64,
-) -> Result<(), NestedChapters> {
+) -> Result<(), Refusal> {
     let mut buffer = vec![0_u8; HEAD_CHUNK];
     let mut at = start;
     let mut scan_end = start.saturating_add(HEAD_WINDOW);
@@ -250,7 +275,7 @@ fn check_tags_from<R: Read + Seek>(
         // file: the parser that runs next may read the file to its end and meet
         // the chapter frames this walk never reached.
         let Ok(read) = read_at(reader, at, &mut buffer) else {
-            return Err(NestedChapters);
+            return Err(Refusal::ReadFailed);
         };
         spend(budget, read as u64)?;
         let chunk = &buffer[..read];
@@ -280,7 +305,7 @@ fn check_tags_from<R: Read + Seek>(
                     DeclaredTag::NotTag => None,
                     // An I/O error reading the tag is refused, not swallowed as
                     // "no tag here": the parser that runs next may read it whole.
-                    DeclaredTag::ReadFailed => return Err(NestedChapters),
+                    DeclaredTag::ReadFailed => return Err(Refusal::ReadFailed),
                 };
                 if let Some(tag) = &tag {
                     spend(budget, tag.len() as u64)?;
@@ -304,12 +329,27 @@ fn check_tags_from<R: Read + Seek>(
                 scan_end = u64::MAX;
                 at = found + 1;
             }
+            // A WAV or an AIFF is walked only when its `RIFF`/`FORM` opens the
+            // file and carries the right form type, because that is the only
+            // shape lofty reads as chunks: `read_from_path` picks the reader by
+            // extension, and that reader's `verify` fails unless the first
+            // twelve bytes are `RIFF…WAVE` or `FORM…AIFF`/`AIFC`. The `id3`
+            // crate is reached only on the DSD path, checked apart, and
+            // symphonia is reached by no server path. So a `RIFF`/`FORM` found
+            // deeper in a file — a FLAC keeping the chunks of the WAV it was
+            // made from, a WebP cover — leads to nothing a parser walks, and
+            // walking it ourselves read tens of MiB of audio for nothing.
             Signature::Riff => {
-                check_chunks(reader, found, false, budget)?;
+                if found == start && chunk.get(offset + 8..offset + 12) == Some(b"WAVE") {
+                    check_chunks(reader, found, false, budget)?;
+                }
                 at = found + 1;
             }
             Signature::Form => {
-                check_chunks(reader, found, true, budget)?;
+                let form = chunk.get(offset + 8..offset + 12);
+                if found == start && matches!(form, Some(b"AIFF" | b"AIFC")) {
+                    check_chunks(reader, found, true, budget)?;
+                }
                 at = found + 1;
             }
         }
@@ -420,29 +460,43 @@ fn tag_span(tag: &[u8]) -> u64 {
 /// The `ID3 ` chunks of the WAV or AIFF at `start`. A chunk of odd length is
 /// followed by a padding byte that lofty and symphonia disagree about when it is
 /// not a zero, so both continuations are walked. The name of a chunk is looked
-/// for inside every chunk but the audio, since a reader that lost its place in a
-/// `COMM` looks for the next chunk wherever it stopped.
+/// for inside every chunk but the audio, and its header read one byte off,
+/// since a reader that lost its place in a `COMM` looks for the next chunk
+/// wherever it stopped.
 fn check_chunks<R: Read + Seek>(
     reader: &mut R,
     start: u64,
     big_endian: bool,
     budget: &mut u64,
-) -> Result<(), NestedChapters> {
-    let Ok(len) = reader.seek(SeekFrom::End(0)) else {
-        return Ok(());
-    };
-    let mut pending = vec![start + 12];
+) -> Result<(), Refusal> {
+    // A walk that cannot learn the file's length cannot walk it, and lofty
+    // walks it all the same: refused, not passed unwalked.
+    let len = reader
+        .seek(SeekFrom::End(0))
+        .map_err(|_| Refusal::ReadFailed)?;
+    // Each position comes with whether it reads the audio's header one byte
+    // off (see `odd_chunk_continuations`), whose body is then left unread.
+    let mut pending = vec![(start + 12, false)];
     let mut seen = std::collections::HashSet::new();
-    while let Some(at) = pending.pop() {
-        if !seen.insert(at) {
+    while let Some((at, misread)) = pending.pop() {
+        if !seen.insert((at, misread)) {
             continue;
         }
         if seen.len() > MAX_CHUNKS {
-            return Err(NestedChapters);
+            return Err(Refusal::OverBudget);
         }
         let mut header = [0_u8; 8];
-        if reader.seek(SeekFrom::Start(at)).is_err() || reader.read_exact(&mut header).is_err() {
-            continue;
+        if reader.seek(SeekFrom::Start(at)).is_err() {
+            return Err(Refusal::ReadFailed);
+        }
+        match reader.read_exact(&mut header) {
+            Ok(()) => {}
+            // Fewer than eight bytes left is no chunk header, for lofty either:
+            // this continuation ends. Any other failure is an I/O error, and
+            // passing over it would leave the chunk lofty reads here unchecked.
+            // `read_exact` already retries an interrupted read.
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => continue,
+            Err(_) => return Err(Refusal::ReadFailed),
         }
         spend(budget, 8)?;
         // Silence behind a `data` chunk whose length was never written is a
@@ -450,8 +504,17 @@ fn check_chunks<R: Read + Seek>(
         // give up on the rest.
         if header == [0; 8] {
             if let Some(next) = past_zero_chunks(reader, at, budget)? {
-                pending.push(next);
+                pending.push((next, false));
             }
+            continue;
+        }
+        // A name that is no FourCC ends this continuation, as it ends lofty's
+        // whole walk: lofty reads nothing behind it along this path. It is how
+        // the wrong continuation of an odd chunk looks when the padding byte is
+        // the zero it should be — the `data`/`SSND` header read one byte early
+        // opens on that zero — so the misread header and the audio its size
+        // would cover are left alone, whatever that size happens to be.
+        if !is_fourcc([header[0], header[1], header[2], header[3]]) {
             continue;
         }
         let raw = [header[4], header[5], header[6], header[7]];
@@ -460,40 +523,93 @@ fn check_chunks<R: Read + Seek>(
         } else {
             u32::from_le_bytes(raw)
         });
-        if !matches!(&header[..4], b"SSND" | b"data") {
+        // A chunk declaring more than the file holds yields lofty nothing: past
+        // what is left counting its header, `Chunks::next` stops there; within
+        // those eight bytes it takes the chunk and then fails to read its body.
+        // So this continuation reads no body of it either, and stops. A chunk
+        // that does fit is read as before — unless it is the audio, or the
+        // audio's header misread — bounded to the budget so an honest but huge
+        // metadata chunk still cannot run away.
+        let fits = size <= len.saturating_sub(at + 8);
+        if fits && !misread && !is_audio(&header[..4]) {
             let mut body = Vec::new();
             // Bounded to the budget before the read, so the allocation itself
             // cannot exceed it: a chunk declaring a huge size reads one byte
             // past the budget at most, and `spend` then refuses the file.
             let limit = size.min(budget.saturating_add(1));
-            if reader.by_ref().take(limit).read_to_end(&mut body).is_ok() {
-                spend(budget, body.len() as u64)?;
-                if matches!(&header[..4], b"ID3 " | b"id3 ") {
-                    check_tag(&body)?;
-                } else {
-                    for (offset, name) in body.windows(4).enumerate() {
-                        if matches!(name, b"ID3 " | b"id3 ") {
-                            if pending.len() >= MAX_PENDING_CHUNKS {
-                                return Err(NestedChapters);
-                            }
-                            pending.push(at + 8 + offset as u64);
+            // The chunk fits, so its body cannot end early: a read that fails
+            // is an I/O error, and taking it for "nothing here" would skip the
+            // check of whatever the body holds. `read_to_end` already retries
+            // an interrupted read.
+            reader
+                .by_ref()
+                .take(limit)
+                .read_to_end(&mut body)
+                .map_err(|_| Refusal::ReadFailed)?;
+            spend(budget, body.len() as u64)?;
+            if matches!(&header[..4], b"ID3 " | b"id3 ") {
+                check_tag(&body)?;
+            } else {
+                for (offset, name) in body.windows(4).enumerate() {
+                    if matches!(name, b"ID3 " | b"id3 ") {
+                        if pending.len() >= MAX_PENDING_CHUNKS {
+                            return Err(Refusal::OverBudget);
                         }
+                        pending.push((at + 8 + offset as u64, false));
                     }
                 }
             }
         }
+        // Walked on behind every chunk — the misread one too, whose body alone
+        // is left unread. Behind a padding byte written as a letter, lofty
+        // itself takes the misread chunk and reads on where it ends, inside the
+        // audio; a tag standing there is one lofty reads, so stopping here
+        // would let it through. It is also where the residue of #428 comes from.
+        // Held by `a_tag_where_the_misread_audio_header_ends_is_reached`.
         let next = at + 8 + size;
         if next < len {
             if pending.len() >= MAX_PENDING_CHUNKS {
-                return Err(NestedChapters);
+                return Err(Refusal::OverBudget);
             }
-            pending.push(next);
             if size % 2 == 1 {
-                pending.push(next + 1);
+                pending.extend(odd_chunk_continuations(reader, next, budget)?);
+            } else {
+                pending.push((next, false));
             }
         }
     }
     Ok(())
+}
+
+/// The names of the chunks that hold the audio, whose bodies are never read.
+fn is_audio(name: &[u8]) -> bool {
+    matches!(name, b"data" | b"SSND")
+}
+
+/// Both continuations behind a chunk of odd length, ending at `next`: from
+/// `next`, where its padding byte should be, and from `next + 1`, behind it.
+///
+/// When one of them opens on the name of the audio's chunk, the other reads
+/// that header one byte off — a writer that left out the padding byte puts
+/// the audio at `next`, one that wrote a letter for it puts it at `next + 1`
+/// — and its misread size then covers the audio, which it would read as the
+/// body of a chunk of some other name. That continuation is still walked, and
+/// what follows its misread chunk too, but the body is marked to be left
+/// unread: it starts inside the audio, which the walk never reads from the
+/// other continuation either, and whatever stands past the end of the audio
+/// is reached and read from that other continuation, which goes on behind it.
+/// The name skipped is never a tag's: shifted by a byte, `data` and `SSND`
+/// leave three of their letters in it.
+fn odd_chunk_continuations<R: Read + Seek>(
+    reader: &mut R,
+    next: u64,
+    budget: &mut u64,
+) -> Result<[(u64, bool); 2], Refusal> {
+    let mut peek = [0_u8; 5];
+    let read = read_at(reader, next, &mut peek).map_err(|_| Refusal::ReadFailed)?;
+    spend(budget, read as u64)?;
+    let audio_at = |offset: usize| read == peek.len() && is_audio(&peek[offset..offset + 4]);
+    Ok([(next, audio_at(1)), (next + 1, audio_at(0))])
 }
 
 /// Where the run of empty chunks at `at` ends, on the eight-byte steps it is
@@ -503,14 +619,14 @@ fn past_zero_chunks<R: Read + Seek>(
     reader: &mut R,
     at: u64,
     budget: &mut u64,
-) -> Result<Option<u64>, NestedChapters> {
+) -> Result<Option<u64>, Refusal> {
     let mut buffer = vec![0_u8; HEAD_CHUNK];
     let mut from = at;
     loop {
         // A read that fails midway is refused, like the head walk above, rather
         // than taken for the end of the run.
         let Ok(read) = read_at(reader, from, &mut buffer) else {
-            return Err(NestedChapters);
+            return Err(Refusal::ReadFailed);
         };
         spend(budget, read as u64)?;
         if read == 0 {
@@ -521,6 +637,19 @@ fn past_zero_chunks<R: Read + Seek>(
         }
         from += read as u64;
     }
+}
+
+/// Whether lofty takes `name` for the name of a chunk: four printable ASCII
+/// bytes, from the space to the tilde, no space before a printing one. lofty
+/// ends its whole chunk walk at any other (`iff/chunk.rs`, `valid_fourcc`), so
+/// this must accept every name lofty accepts — rejecting one it reads would end
+/// a continuation where lofty goes on. Held to lofty byte for byte by a test.
+fn is_fourcc(name: [u8; 4]) -> bool {
+    let mut spaced = false;
+    name.iter().all(|byte| {
+        spaced |= *byte == b' ';
+        (b' '..=b'~').contains(byte) && (!spaced || *byte == b' ')
+    })
 }
 
 /// Seven bits to the byte, the top one dropped, as lofty and the `id3` crate

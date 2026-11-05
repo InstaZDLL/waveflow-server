@@ -2,6 +2,8 @@ use std::io::Cursor;
 
 use super::*;
 
+mod large_files;
+
 fn synchsafe_bytes(value: usize) -> [u8; 4] {
     [
         ((value >> 21) & 0x7f) as u8,
@@ -247,7 +249,7 @@ fn a_file_with_no_chapters_passes() {
 fn deeply_nested_chap_is_refused() {
     assert_eq!(
         check_tag(&tag(&nested(4, &[b"CHAP"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -255,21 +257,21 @@ fn deeply_nested_chap_is_refused() {
 fn deeply_nested_ctoc_is_refused() {
     assert_eq!(
         check_tag(&tag(&nested(4, &[b"CTOC"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
 #[test]
 fn mixed_chap_and_ctoc_nesting_is_refused() {
     let frames = nested(4, &[b"CTOC", b"CHAP"], 64);
-    assert_eq!(check_tag(&tag(&frames)), Err(NestedChapters));
+    assert_eq!(check_tag(&tag(&frames)), Err(Refusal::Nested));
 }
 
 #[test]
 fn nesting_in_a_v23_tag_is_refused() {
     assert_eq!(
         check_tag(&tag_with(3, 0, &nested(3, &[b"CHAP"], 64))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -289,7 +291,7 @@ fn an_unsynchronised_v23_tag_that_nests_is_refused() {
     }
     raw[6..10].copy_from_slice(&synchsafe_bytes(body.len()));
     raw.extend_from_slice(&body);
-    assert_eq!(check_tag(&raw), Err(NestedChapters));
+    assert_eq!(check_tag(&raw), Err(Refusal::Nested));
 }
 
 #[test]
@@ -300,7 +302,7 @@ fn a_compressed_chapter_is_refused_unread() {
     let mut body = (inner.len() as u32).to_be_bytes().to_vec();
     body.extend_from_slice(&compressed);
     let frames = frame(4, b"CHAP", 0x0008, &body);
-    assert_eq!(check_tag(&tag(&frames)), Err(NestedChapters));
+    assert_eq!(check_tag(&tag(&frames)), Err(Refusal::Nested));
 }
 
 #[test]
@@ -319,14 +321,14 @@ fn nesting_behind_junk_in_an_mp3_is_refused() {
     let mut file = vec![0_u8; 200];
     file.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     file.extend_from_slice(&audio());
-    assert_eq!(check_file_bytes(&file), Err(NestedChapters));
+    assert_eq!(check_file_bytes(&file), Err(Refusal::Nested));
 }
 
 #[test]
 fn nesting_in_a_wav_id3_chunk_is_refused() {
     assert_eq!(
         check_file_bytes(&wav(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -339,7 +341,7 @@ fn an_honest_wav_passes() {
 fn nesting_in_an_aiff_id3_chunk_is_refused() {
     assert_eq!(
         check_file_bytes(&aiff(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -347,7 +349,7 @@ fn nesting_in_an_aiff_id3_chunk_is_refused() {
 fn nesting_in_a_dsf_blob_is_refused() {
     assert_eq!(
         check_dsd_bytes(&dsf(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -362,7 +364,7 @@ fn an_honest_dsf_passes() {
 fn nesting_in_a_dff_id3_chunk_is_refused() {
     assert_eq!(
         check_dsd_bytes(&dff(&tag(&nested(4, &[b"CHAP"], 64)))),
-        Err(NestedChapters)
+        Err(Refusal::Nested)
     );
 }
 
@@ -386,7 +388,7 @@ fn a_dff_with_too_many_chunks_is_refused() {
     let mut dff = b"FRM8".to_vec();
     dff.extend_from_slice(&(form.len() as u64).to_be_bytes());
     dff.extend_from_slice(&form);
-    assert_eq!(check_dsd_bytes(&dff), Err(NestedChapters));
+    assert_eq!(check_dsd_bytes(&dff), Err(Refusal::OverBudget));
 }
 
 /// A table of contents naming four chapters, then the four flat `CHAP` frames,
@@ -448,7 +450,7 @@ fn a_riff_body_stuffed_with_id3_markers_is_refused() {
     let mut riff = b"RIFF".to_vec();
     riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
     riff.extend_from_slice(&body);
-    assert_eq!(check_file_bytes(&riff), Err(NestedChapters));
+    assert_eq!(check_file_bytes(&riff), Err(Refusal::OverBudget));
 }
 
 /// The read of a tag body stops at the cap, so a header declaring a huge size
@@ -469,11 +471,12 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     );
 }
 
-/// A chunk declaring far more than the budget is refused, and the read that
-/// refuses it is itself bounded by the budget rather than the declared size.
-/// Measured, so an unbounded read that still fails `spend` would not pass here.
+/// A chunk declaring far more than the file holds is where every IFF reader
+/// stops, so the walk stops there too: its body is not read at all, not even up
+/// to the budget. Measured through [`CountingReader`], so a read that ran into
+/// the declared size would be seen here.
 #[test]
-fn a_chunk_larger_than_the_budget_is_refused() {
+fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let payload = vec![b'A'; 8192];
     let mut body = b"WAVE".to_vec();
     body.extend_from_slice(b"LIST");
@@ -484,12 +487,11 @@ fn a_chunk_larger_than_the_budget_is_refused() {
     riff.extend_from_slice(&body);
     let mut budget = 64_u64;
     let mut reader = CountingReader::new(Cursor::new(riff));
-    let verdict = check_chunks(&mut reader, 0, false, &mut budget);
-    assert_eq!(verdict, Err(NestedChapters));
-    // The eight-byte chunk header, then at most the budget plus one byte of body.
+    assert_eq!(check_chunks(&mut reader, 0, false, &mut budget), Ok(()));
+    // Only the eight-byte header of the oversized chunk; its body is never read.
     assert!(
-        reader.read <= 8 + 64 + 1,
-        "the walk read {} bytes, past the budget rather than stopping at it",
+        reader.read <= 8,
+        "the walk read {} bytes of a chunk no reader would read a body of",
         reader.read
     );
 }
@@ -599,7 +601,7 @@ fn a_read_that_fails_partway_is_refused() {
     bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(1000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 /// An interruption does not stop the walk short: a nested tag that follows is
@@ -611,7 +613,7 @@ fn an_interrupted_read_still_reaches_a_later_tag() {
     bytes.extend_from_slice(&tag(&nested(4, &[b"CHAP"], 64)));
     let mut reader = FlakyReader::new(bytes);
     reader.interrupt_at = Some(0);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::Nested));
 }
 
 /// An I/O error while reading a tag's declared body is refused, not swallowed
@@ -625,7 +627,7 @@ fn a_tag_whose_body_read_fails_is_refused() {
     bytes.resize(10 + 200_000, 0);
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(100_000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 /// The same for the read that walks a run of empty chunks: a `RIFF` whose first
@@ -640,15 +642,29 @@ fn a_failed_read_walking_empty_chunks_is_refused() {
     bytes.resize(120_000, 0);
     let mut reader = FlakyReader::new(bytes);
     reader.fail_at = Some(100_000);
-    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
+}
+
+/// The same for the body of a chunk the walk reads: one that fits in the file
+/// cannot end early, so a read of it that fails is an I/O error, and the walk
+/// that took it for "nothing here" would skip the check of whatever the body
+/// holds. Here an `id3 ` chunk runs past the head window, and its read fails
+/// there.
+#[test]
+fn a_chunk_whose_body_read_fails_is_refused() {
+    let mut body = tag(&title(4, "a plain title, no chapters"));
+    body.resize(2 * HEAD_CHUNK, 0);
+    let mut reader = FlakyReader::new(wav(&body));
+    reader.fail_at = Some(HEAD_CHUNK as u64 + 1000);
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
 // Helpers that drive the reader-based checks over an in-memory file.
-fn check_file_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
+fn check_file_bytes(bytes: &[u8]) -> Result<(), Refusal> {
     check_reader(&mut Cursor::new(bytes.to_vec()))
 }
 
-fn check_dsd_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
+fn check_dsd_bytes(bytes: &[u8]) -> Result<(), Refusal> {
     // Through a real file and the production entry point, so the DSF/DFF
     // dispatch itself is what these tests exercise.
     let file = tempfile::NamedTempFile::new().expect("temporary DSD file");
