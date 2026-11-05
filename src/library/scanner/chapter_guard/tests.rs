@@ -628,6 +628,21 @@ fn a_tag_whose_body_read_fails_is_refused() {
     assert_eq!(check_reader(&mut reader), Err(NestedChapters));
 }
 
+/// The same for the read that walks a run of empty chunks: a `RIFF` whose first
+/// chunk header is zeros sends the walk into `past_zero_chunks`, and a read that
+/// fails there, past the head window, is refused rather than taken for the end.
+#[test]
+fn a_failed_read_walking_empty_chunks_is_refused() {
+    // "RIFF" <size> "WAVE", then a zeroed chunk header and zeros to the end.
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(b"WAVE");
+    bytes.resize(120_000, 0);
+    let mut reader = FlakyReader::new(bytes);
+    reader.fail_at = Some(100_000);
+    assert_eq!(check_reader(&mut reader), Err(NestedChapters));
+}
+
 // Helpers that drive the reader-based checks over an in-memory file.
 fn check_file_bytes(bytes: &[u8]) -> Result<(), NestedChapters> {
     check_reader(&mut Cursor::new(bytes.to_vec()))
