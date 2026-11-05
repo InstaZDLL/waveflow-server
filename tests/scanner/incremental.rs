@@ -130,11 +130,22 @@ async fn a_full_rescan_that_the_guard_refuses_marks_the_track_unavailable() {
     // The same path, now holding a file the guard refuses.
     std::fs::write(&track_path, nested_chapters_file(64)).unwrap();
     state.db.request_full_scan_everywhere().await.unwrap();
-    let second = job(&state, owner, scan_once(&state, owner, library).await).await;
+    let second_scan = scan_once(&state, owner, library).await;
+    let second = job(&state, owner, second_scan).await;
 
     assert_eq!(
         second.errors, 1,
         "the guard's refusal is counted as a read error"
+    );
+    // The guard's own reason, so an error from lofty would not pass here.
+    let message: String = sqlx::query_scalar("SELECT message FROM scan_error WHERE scan_id = ?")
+        .bind(second_scan.to_string())
+        .fetch_one(state.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        message.contains("the ID3v2 tag nests chapter frames"),
+        "{message}"
     );
     assert_eq!(
         second.unavailable, 1,
