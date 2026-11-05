@@ -3,6 +3,7 @@ use std::io::Cursor;
 use super::*;
 
 mod large_files;
+mod lofty_walk;
 
 fn synchsafe_bytes(value: usize) -> [u8; 4] {
     [
@@ -434,14 +435,15 @@ fn a_flagged_frame_before_flat_chapters_passes() {
     assert_eq!(check_tag(&tag(&frames)), Ok(()));
 }
 
-/// A container chunk whose body repeats `ID3 ` would queue one position per
-/// occurrence; the walk bounds that queue and refuses rather than exhausting
-/// memory, and it returns rather than running away.
+/// The items of a `LIST INFO` are walked as lofty walks them, one after the
+/// other, so a list of more of them than the walk follows has not been
+/// checked: refused for the budget, and the walk returns rather than running
+/// away. Named `ID3 `, they are items to lofty, not tags.
 #[test]
-fn a_riff_body_stuffed_with_id3_markers_is_refused() {
-    let mut list_body = Vec::new();
-    for _ in 0..(MAX_PENDING_CHUNKS + 100) {
-        list_body.extend_from_slice(b"ID3 ");
+fn a_list_info_of_more_items_than_the_walk_follows_is_refused() {
+    let mut list_body = b"INFO".to_vec();
+    for _ in 0..(MAX_CHUNKS + 100) {
+        list_body.extend_from_slice(b"ID3 \0\0\0\0");
     }
     let mut body = b"WAVE".to_vec();
     body.extend_from_slice(b"LIST");

@@ -29,7 +29,7 @@ fn noise() -> &'static [u8] {
 }
 
 /// One chunk, with no padding byte behind it whatever its length.
-fn chunk(id: &[u8; 4], body: &[u8], big_endian: bool) -> Vec<u8> {
+pub(super) fn chunk(id: &[u8; 4], body: &[u8], big_endian: bool) -> Vec<u8> {
     let size = body.len() as u32;
     let mut out = id.to_vec();
     out.extend_from_slice(&if big_endian {
@@ -41,7 +41,7 @@ fn chunk(id: &[u8; 4], body: &[u8], big_endian: bool) -> Vec<u8> {
     out
 }
 
-fn wav_format() -> Vec<u8> {
+pub(super) fn wav_format() -> Vec<u8> {
     let mut body = Vec::new();
     for field in [1_u16, 1] {
         body.extend_from_slice(&field.to_le_bytes());
@@ -55,7 +55,7 @@ fn wav_format() -> Vec<u8> {
 }
 
 /// A WAV of `chunks` behind its `fmt `.
-fn wav_of(chunks: &[u8]) -> Vec<u8> {
+pub(super) fn wav_of(chunks: &[u8]) -> Vec<u8> {
     let body = [b"WAVE".as_slice(), &wav_format(), chunks].concat();
     [
         b"RIFF".as_slice(),
@@ -66,7 +66,7 @@ fn wav_of(chunks: &[u8]) -> Vec<u8> {
 }
 
 /// An AIFF of `chunks` behind its `COMM`.
-fn aiff_of(chunks: &[u8]) -> Vec<u8> {
+pub(super) fn aiff_of(chunks: &[u8]) -> Vec<u8> {
     let mut common = 1_u16.to_be_bytes().to_vec();
     common.extend_from_slice(&800_u32.to_be_bytes());
     common.extend_from_slice(&16_u16.to_be_bytes());
@@ -191,7 +191,7 @@ fn nesting_behind_an_odd_chunk_is_refused_whatever_pads_it() {
 /// The ID3v2 title lofty reads from `file` taken as `kind`, tags only — a file
 /// whose chunks lead nowhere has no audio properties to read, so properties are
 /// turned off to reach the tag the file does carry.
-fn title_lofty_reads(file: Vec<u8>, kind: lofty::file::FileType) -> Option<String> {
+pub(super) fn title_lofty_reads(file: Vec<u8>, kind: lofty::file::FileType) -> Option<String> {
     title_lofty_reads_from(Cursor::new(file), kind)
 }
 
@@ -440,7 +440,8 @@ const MIB: u32 = 1024 * 1024;
 /// zero padding byte reads the `data` header one byte off: in a WAV its size is
 /// then `0x61 + 256 × (the low 24 bits of the real size)`, in an AIFF
 /// `0x4400_0000 + (the real size >> 8)`. Wherever that lands inside the file,
-/// the misread chunk fits and its body — the audio — is read. These sizes are
+/// the misread chunk fits, and the walk of 2.1.1 read its body — the audio —
+/// until the budget ran out. These sizes are
 /// picked so that it does: past the budget, under it, and in an AIFF past the
 /// 1.06 GiB where the misread size first fits.
 #[test]
@@ -500,19 +501,17 @@ fn a_sweep_of_audio_sizes_behind_a_padded_odd_chunk_passes() {
 }
 
 /// Behind a padding byte left out, or written as a letter, the wrong
-/// continuation reads the audio's header one byte off from the other side,
-/// and that misread chunk's body is left unread as well. What follows it is
-/// still walked, though — lofty walks it when the padding is a letter — and
-/// that lands inside the audio: on four printable bytes declaring a size that
-/// fits, the walk reads on into the audio and the file is refused for the
-/// budget. That is a known residue of #428, a few files in a thousand of these
-/// malformed ones; this holds it there, against the third to all of them
-/// refused before the misread was recognised.
+/// continuation reads the audio's header one byte off, and what follows that
+/// misread chunk lands inside the audio — lofty walks there itself when the
+/// padding is a letter. The walk goes on there too, from header to header, but
+/// reads no body lofty skips, so four printable bytes declaring a size that
+/// fits no longer lead it to read the audio. Before, a few files in a thousand
+/// of these were refused for the budget: the residue #430 left of #428.
 #[test]
-fn a_sweep_of_audio_sizes_behind_a_malformed_padding_mostly_passes() {
+fn a_sweep_of_audio_sizes_behind_a_malformed_padding_passes() {
     for pad in [&[][..], b"X"] {
-        let (total, failures) = sweep(pad);
-        assert!(failures.len() * 50 <= total, "{failures:#?}");
+        let (_, failures) = sweep(pad);
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 }
 
