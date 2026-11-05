@@ -645,6 +645,20 @@ fn a_failed_read_walking_empty_chunks_is_refused() {
     assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
+/// The same for the body of a chunk the walk reads: one that fits in the file
+/// cannot end early, so a read of it that fails is an I/O error, and the walk
+/// that took it for "nothing here" would skip the check of whatever the body
+/// holds. Here an `id3 ` chunk runs past the head window, and its read fails
+/// there.
+#[test]
+fn a_chunk_whose_body_read_fails_is_refused() {
+    let mut body = tag(&title(4, "a plain title, no chapters"));
+    body.resize(2 * HEAD_CHUNK, 0);
+    let mut reader = FlakyReader::new(wav(&body));
+    reader.fail_at = Some(HEAD_CHUNK as u64 + 1000);
+    assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
+}
+
 // Helpers that drive the reader-based checks over an in-memory file.
 fn check_file_bytes(bytes: &[u8]) -> Result<(), Refusal> {
     check_reader(&mut Cursor::new(bytes.to_vec()))

@@ -526,18 +526,25 @@ fn check_chunks<R: Read + Seek>(
             // cannot exceed it: a chunk declaring a huge size reads one byte
             // past the budget at most, and `spend` then refuses the file.
             let limit = size.min(budget.saturating_add(1));
-            if reader.by_ref().take(limit).read_to_end(&mut body).is_ok() {
-                spend(budget, body.len() as u64)?;
-                if matches!(&header[..4], b"ID3 " | b"id3 ") {
-                    check_tag(&body)?;
-                } else {
-                    for (offset, name) in body.windows(4).enumerate() {
-                        if matches!(name, b"ID3 " | b"id3 ") {
-                            if pending.len() >= MAX_PENDING_CHUNKS {
-                                return Err(Refusal::OverBudget);
-                            }
-                            pending.push((at + 8 + offset as u64, false));
+            // The chunk fits, so its body cannot end early: a read that fails
+            // is an I/O error, and taking it for "nothing here" would skip the
+            // check of whatever the body holds. `read_to_end` already retries
+            // an interrupted read.
+            reader
+                .by_ref()
+                .take(limit)
+                .read_to_end(&mut body)
+                .map_err(|_| Refusal::ReadFailed)?;
+            spend(budget, body.len() as u64)?;
+            if matches!(&header[..4], b"ID3 " | b"id3 ") {
+                check_tag(&body)?;
+            } else {
+                for (offset, name) in body.windows(4).enumerate() {
+                    if matches!(name, b"ID3 " | b"id3 ") {
+                        if pending.len() >= MAX_PENDING_CHUNKS {
+                            return Err(Refusal::OverBudget);
                         }
+                        pending.push((at + 8 + offset as u64, false));
                     }
                 }
             }
