@@ -302,6 +302,21 @@ That check is not a piece to write — it is the decision above. Applying the fi
 through the scan path means having it read by the same extractor; what it cannot
 read does not get in.
 
+One reading is not refused, it is lethal: an ID3v2 tag whose `CHAP`/`CTOC`
+chapter frames nest makes lofty and the `id3` crate recurse once per level with
+no bound, and a crafted tag of a few kilobytes overflows the stack and aborts
+the whole process — a crash no `catch_unwind` can hold. Because the commit
+renames the file into place at step 3 before reading it at step 4, the aborted
+file would then sit under its final name and abort every scan that follows, so
+the server would never finish booting again. A pre-check
+(`scanner::chapter_guard`) therefore runs ahead of the extractor on both reading
+paths — lofty for every container, the `id3` crate for a DSD blob — and refuses
+such a tag before it is parsed, which turns the abort into the ordinary refusal
+above: the working area is cleaned and the session closed. It counts
+chapter-frame names rather than imitating a parser, since a tag read is
+read differently by each parser; a real chapter layout (a table of contents,
+titled chapters, links, pictures) passes untouched.
+
 ### The order, because there is no shared transaction
 
 SQLite and the filesystem share no transaction. The order is therefore a
