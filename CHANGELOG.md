@@ -13,24 +13,47 @@ out first, whether or not it breaks a compile.
 ### Fixed
 
 - **The chapter guard no longer refuses a large WAV, AIFF or FLAC that nests
-  nothing** (#428, the known issue 2.1.1 shipped). The guard gave up on a file
-  once it had read 64 MiB of it, and two honest shapes reached that budget: a
-  WAV or an AIFF with a chunk of odd length ahead of its audio, where the walk
-  read the audio's header one byte off and then read the audio itself as a
-  giant chunk; and a file that opens on neither but carries `RIFF` or `FORM`
-  further in, such as a FLAC that keeps the chunks of the WAV it was made from
-  (`flac --keep-foreign-metadata`), where the walk left the embedded structure
-  and read the audio as chunk headers. The guard now walks a WAV or AIFF only
-  when `RIFF`/`FORM` opens the file and carries the matching form type — the
-  only shape lofty reads as chunks — and, within that walk, stops at any chunk
-  declaring more than the file holds, exactly where every IFF reader stops,
-  reading no audio. A tag nested behind an odd chunk is still reached and
-  refused, whatever padding stands before it, because both continuations are
-  still walked. A refusal for an exhausted budget, or for a read that fails
-  partway through the file, is now told apart from a nesting and no longer
-  claims the file nests chapter frames. On a full rescan a file the guard
-  refuses marks its track unavailable rather than deleting it; the file is
-  untouched and a later scan that reads it restores the track.
+  nothing, in the shapes a conforming writer produces** (#428, the known issue
+  2.1.1 shipped). The guard gave up on a file once it had read 64 MiB of it,
+  and two honest shapes reached that budget: a WAV or an AIFF with a chunk of
+  odd length ahead of its audio, where the walk read the audio's header one
+  byte off and, whenever the size it misread landed inside the file — which
+  depends on the size of the audio, not on how large the file is — read the
+  audio itself as a chunk; and a file that opens on neither but carries
+  `RIFF` or `FORM` further in, such as a FLAC that keeps the chunks of the WAV
+  it was made from (`flac --keep-foreign-metadata`), where the walk left the
+  embedded structure and read the audio as chunk headers. The guard now walks
+  a WAV or AIFF only when `RIFF`/`FORM` opens the file and carries the
+  matching form type, the only shape lofty reads as chunks. Within that walk
+  it stops where lofty stops: at a chunk name that is no FourCC, which is how
+  the audio's header looks when read one byte early from a zero padding byte,
+  and at a chunk declaring more than the file holds, from which lofty reads no
+  tag. When the padding byte is missing, or written as a letter, the header
+  misread one byte off is recognised and its body, the audio, left unread.
+  Tests hold each of those three behaviours of lofty, so a change in lofty
+  fails them. A tag nested behind an odd chunk, or behind the audio that
+  follows one, is still reached and refused, whatever stands where the padding
+  byte goes, because both continuations are still walked. A refusal for an
+  exhausted budget, or for a read that fails partway through the file, is now
+  told apart from a nesting and no longer claims the file nests chapter
+  frames. On a full rescan a file the guard refuses marks its track
+  unavailable rather than deleting it; the file is untouched and a later scan
+  that reads it restores the track.
+
+  **Known residue.** Behind a padding byte that is missing or a letter —
+  writers that break the IFF rule — the walk still follows what comes after
+  the misread header, as lofty does in the second case, and that lands inside
+  the audio. Where four bytes of audio there read as a chunk whose size fits,
+  the walk reads on and the file is refused for the budget. Measured on built
+  files with pseudo-random audio of 100 MiB to 3.5 GiB: a few in a thousand of
+  those malformed files, none behind a zero padding byte.
+- **The chapter guard refuses a file it fails to read partway** (#429). It
+  took any read error for the end of a clean file and passed the file, while
+  the parser that runs next reads on and could still meet chapter frames the
+  guard never reached. A read that fails partway now refuses the file — not
+  indexed by a scan, an upload answered `422` — where 2.1.1 passed it; a read
+  that is merely interrupted is retried, as the parsers retry it, rather than
+  refusing a benign file.
 
 ## [2.1.1] — 2026-11-05
 
