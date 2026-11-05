@@ -2,8 +2,8 @@
 //!
 //! The counting strategy and why it leans only on the frame names no parser can
 //! avoid reading are explained on the module above. This file is that count:
-//! [`check_tag`] over a tag's bytes, the [`Audit`] walk it drives, and the frame
-//! helpers that tell one parser's reading of a frame from another's.
+//! [`check_tag`] over a tag's bytes, the [`FrameScan`] walk it drives, and the
+//! frame helpers that tell one parser's reading of a frame from another's.
 
 use super::*;
 
@@ -34,7 +34,7 @@ pub(crate) fn check_tag(tag: &[u8]) -> Result<(), NestedChapters> {
     } else {
         body
     };
-    let mut audit = Audit {
+    let mut scan = FrameScan {
         major,
         unexplained: 0,
         tables: 0,
@@ -42,7 +42,7 @@ pub(crate) fn check_tag(tag: &[u8]) -> Result<(), NestedChapters> {
         // 2.4 this flag means a frame's bytes are not what the row below sees.
         in_step: !extended && !(unsynchronised && major == 4),
     };
-    audit.walk(frames, Level::Top)
+    scan.walk(frames, Level::Top)
 }
 
 /// Where in the frame tree the walk is: the tag's top level, or inside a
@@ -54,7 +54,7 @@ enum Level {
 }
 
 /// The running state of one pass over a tag's frames.
-struct Audit {
+struct FrameScan {
     major: u8,
     unexplained: usize,
     tables: usize,
@@ -63,7 +63,7 @@ struct Audit {
     in_step: bool,
 }
 
-impl Audit {
+impl FrameScan {
     /// Walks `frames` at `level`, counting the chapter names no parser can
     /// avoid reading and refusing once more than [`ALLOWED_UNEXPLAINED_CHAPTERS`]
     /// are seen.

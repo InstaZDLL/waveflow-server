@@ -31,8 +31,8 @@ use std::fmt;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-mod audit;
-pub(crate) use audit::check_tag;
+mod frames;
+pub(crate) use frames::check_tag;
 
 #[cfg(test)]
 mod tests;
