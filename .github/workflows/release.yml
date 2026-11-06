@@ -32,6 +32,12 @@ name: Release
 # here — a tag that disagrees with it would produce an image labelled one way
 # and reporting itself another, so the two are checked against each other
 # before anything is built.
+#
+# Once the release is out, `mirror` copies its files onto the R2 bucket behind
+# download.waveflow.app and records the release on the GitLab backup, so losing
+# this repository loses neither. `.gitlab-ci.yml` is this file's standby twin,
+# and the release logic both run is in scripts/release/
+# (docs/guides/releasing.md).
 
 on:
   push:
@@ -336,43 +342,24 @@ jobs:
           # its notes link the changelog, and the list since the last stable
           # tag runs to hundreds of lines.
           case "$VERSION" in
-            *-*) release_flag="--prerelease" ; channel="beta"   ; generate="--generate-notes" ;;
-            *)   release_flag="--latest"     ; channel="latest" ; generate=""                 ;;
+            *-*) release_flag="--prerelease" ; generate="--generate-notes" ;;
+            *)   release_flag="--latest"     ; generate=""                 ;;
           esac
 
-          # printf with a single-quoted format rather than a heredoc: the body
-          # is mostly backticks, and every one of them would be a command
-          # substitution in an unquoted here-document.
           # Written notes come first, when the tag carries them; the downloads
           # and the pull commands follow, so a reader who scrolls past the prose
-          # still finds them. Without notes, the generated list is all the page
-          # has.
-          notes_file="docs/releases/$TAG.md"
-          if [ -s "$notes_file" ]; then
-            cat "$notes_file" > notes.md
-            printf '\n' >> notes.md
-          else
-            : > notes.md
-            generate="--generate-notes"
-          fi
-          sources="$(basename release-assets/ffmpeg-*-sources.tar.gz)"
-          {
-            printf '## Download\n\nThe server for one computer, without Docker: extract the archive and start `waveflow-server` inside it. Each archive holds the server, its own FFmpeg and a `README.txt` to read first.\n\n'
-            printf '| System | Archive |\n| --- | --- |\n'
-            while IFS='|' read -r system suffix; do
-              file="waveflow-server-$VERSION-$suffix"
-              printf '| %s | [%s](https://github.com/%s/releases/download/%s/%s) |\n' "$system" "$file" "$GH_REPO" "$TAG" "$file"
-            done <<'ARCHIVES'
-          Windows (x86_64)|windows-x86_64.zip
-          macOS (Apple silicon)|macos-arm64.zip
-          macOS (Intel)|macos-x86_64.zip
-          Linux (x86_64)|linux-x86_64.tar.gz
-          Linux (arm64)|linux-arm64.tar.gz
-          ARCHIVES
-            printf '\nThe Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch: `README.txt` says what to click past. `SHA256SUMS` holds the checksums of them all, and `%s` the source of the FFmpeg they carry.\n\n' "$sources"
-          } >> notes.md
-          printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system).\n' \
-            "$IMAGE" "$VERSION" "${HUB_IMAGE#docker.io/}" "$VERSION" "$channel" >> notes.md
+          # still finds them. Without notes (the script exits 2), the generated
+          # list is all the page has. The script is shared with .gitlab-ci.yml,
+          # which points the same table at the R2 copy.
+          status=0
+          sh scripts/release/release-notes.sh "$TAG" \
+            "https://github.com/$GH_REPO/releases/download/$TAG" \
+            "$IMAGE" "${HUB_IMAGE#docker.io/}" > notes.md || status=$?
+          case "$status" in
+            0) ;;
+            2) generate="--generate-notes" ;;
+            *) exit "$status" ;;
+          esac
 
           # A release that already exists keeps its body. It was written once,
           # with the changelog appended for a beta, and re-applying our half
@@ -393,3 +380,77 @@ jobs:
               --verify-tag \
               $release_flag
           fi
+
+  # The second home of what was just released, for the day this repository or
+  # its account stops answering (docs/guides/releasing.md): the files on the
+  # Cloudflare R2 bucket behind download.waveflow.app, under
+  # server/releases/<tag>/, and a release on the GitLab backup linking there,
+  # with the page GitHub now shows. The code and the tag reach GitLab through
+  # mirror-gitlab.yml, as soon as the tag is pushed.
+  #
+  # Last and on its own, so nothing here can hold back the GitHub release. With
+  # none of the R2 secrets the job says so and stops; with some of them it
+  # fails, a half-configured mirror being a mistake. Without GITLAB_API_TOKEN
+  # the files are still mirrored and only the GitLab page is skipped. A retry
+  # re-uploads the same names and leaves an existing GitLab page as it is.
+  mirror:
+    name: Mirror to R2 and GitLab
+    needs: [verify, github-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || 'https://download.waveflow.app' }}
+      GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
+      GITLAB_PROJECT: ${{ vars.GITLAB_PROJECT || 'waveflow-groupe/waveflow-server' }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          persist-credentials: false
+
+      - id: r2
+        name: Check the R2 secrets
+        run: |
+          state="$(sh scripts/release/publish-r2.sh --check)"
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          if [ "$state" = absent ]; then
+            echo "::notice::no R2 secret is set: $TAG is not mirrored (docs/guides/releasing.md)"
+          fi
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.r2.outputs.state == 'configured'
+        with:
+          name: standalone-release
+          path: release-assets
+
+      - name: Copy the files to R2
+        if: steps.r2.outputs.state == 'configured'
+        run: sh scripts/release/publish-r2.sh release-assets "$TAG"
+
+      # The page as GitHub shows it, generated list included, with its download
+      # links turned to the R2 copy: on the day GitHub is gone, those are the
+      # ones that still answer.
+      - name: Create the GitLab release
+        if: steps.r2.outputs.state == 'configured'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$GITLAB_API_TOKEN" ]; then
+            echo "::notice::GITLAB_API_TOKEN is not set: the GitLab release of $TAG is skipped"
+            exit 0
+          fi
+          base="${R2_PUBLIC_URL%/}/server/releases/$TAG"
+          {
+            printf '_Mirrored from the GitHub release %s; the downloads are served from %s._\n\n' "$TAG" "${R2_PUBLIC_URL%/}"
+            gh release view "$TAG" --json body --jq .body |
+              sed "s|https://github.com/$GH_REPO/releases/download/$TAG|$base|g"
+          } > gitlab-notes.md
+          python3 scripts/release/gitlab-release.py "$TAG" gitlab-notes.md release-assets "$base"
