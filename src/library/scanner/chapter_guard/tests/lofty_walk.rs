@@ -188,3 +188,75 @@ fn a_tag_where_lofty_resumes_from_a_list_info_is_read_by_the_server() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// A WAV whose `data` lofty meets first, then `lists` lists that each run an
+/// item eight bytes past their end — lofty's count of what is left of the file
+/// is then `8 × lists` bytes ahead of where it reads — and last a `LIST INFO`
+/// declaring `over` bytes more than the file holds, whose items stop at a name
+/// that is no FourCC, right before a tag chunk holding `payload`.
+fn wav_of_lists_ahead_of_the_count(lists: usize, over: u32, payload: &[u8]) -> Vec<u8> {
+    let mut chunks = chunk(b"data", &[0; 16], false);
+    for _ in 0..lists {
+        let info = [b"INFO".as_slice(), b"INAM", &8_u32.to_le_bytes()].concat();
+        chunks.extend_from_slice(&chunk(b"LIST", &info, false));
+        chunks.extend_from_slice(&[1; 8]);
+    }
+    let inside = [
+        b"INFO".as_slice(),
+        b"\x01xyz",
+        &chunk(b"id3 ", payload, false),
+        &[1; 4096],
+    ]
+    .concat();
+    chunks.extend_from_slice(b"LIST");
+    chunks.extend_from_slice(&(inside.len() as u32 + over).to_le_bytes());
+    chunks.extend_from_slice(&inside);
+    wav_of(&chunks)
+}
+
+/// lofty keeps its count of what is left of the file apart from where it reads.
+/// An item running past the end of its `LIST INFO` moves the reader eight bytes
+/// on, but `Chunks::unlock` puts the count back where the end of the list
+/// leaves it, so each such list leaves the count eight bytes ahead, and they
+/// add up. lofty then takes a last `LIST` longer than the file, as long as it
+/// fits that count, walks its items and reads the tag they lead to. The guard
+/// must walk the items of a `LIST` that does not fit the file.
+///
+/// The controls hold the test to that reason: with nothing over, the `LIST`
+/// fits and is walked anyway; with no lists ahead, lofty reads no tag from the
+/// `LIST` over; and a tag longer than the count left once it stops in the list
+/// is one lofty does not read either. Four thousand lists keep the tag past
+/// what the head scan reads.
+#[test]
+fn a_tag_in_a_list_longer_than_the_file_is_reached() {
+    use lofty::file::FileType;
+    let honest = tag(&title(4, "found"));
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    let padded = |tag: &[u8], len: usize| [tag, &vec![0; len]].concat();
+    let mut failures = Vec::new();
+    for (lists, over, filler, read) in [
+        (4096, 0, 0, true),
+        (4096, 1, 0, true),
+        (4096, 2, 0, true),
+        (4096, 2, 30_000, true),
+        (0, 2, 0, false),
+        (4096, 2, 40_000, false),
+    ] {
+        let case = format!("{lists} lists, {over} over, {filler} bytes of padding");
+        let file = wav_of_lists_ahead_of_the_count(lists, over, &padded(&honest, filler));
+        let wanted = read.then_some("found");
+        let plain = title_lofty_reads(file.clone(), FileType::Wav);
+        let server = title_the_server_reads(&file);
+        if plain.as_deref() != wanted || server.as_deref() != wanted {
+            failures.push(format!("lofty, {case}: {plain:?} and {server:?}"));
+        }
+        if read {
+            let file = wav_of_lists_ahead_of_the_count(lists, over, &padded(&hostile, filler));
+            let verdict = check_file_bytes(&file);
+            if verdict != Err(Refusal::Nested) {
+                failures.push(format!("the guard, {case}: {verdict:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}

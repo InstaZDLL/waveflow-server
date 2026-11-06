@@ -473,10 +473,12 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     );
 }
 
-/// A chunk declaring far more than the file holds is where every IFF reader
-/// stops, so the walk stops there too: its body is not read at all, not even up
-/// to the budget. Measured through [`CountingReader`], so a read that ran into
-/// the declared size would be seen here.
+/// A chunk declaring far more than the file holds is where lofty stops, so the
+/// walk stops there too: its body is not read at all, not even up to the
+/// budget. Measured through [`CountingReader`], so a read that ran into the
+/// declared size would be seen here. A `LIST` has the four bytes naming its
+/// type read as well, since lofty walks the items of a `LIST INFO` even past
+/// the end of the file; this one is no `INFO`, and nothing more is read.
 #[test]
 fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let payload = vec![b'A'; 8192];
@@ -490,9 +492,10 @@ fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let mut budget = 64_u64;
     let mut reader = CountingReader::new(Cursor::new(riff));
     assert_eq!(check_chunks(&mut reader, 0, false, &mut budget), Ok(()));
-    // Only the eight-byte header of the oversized chunk; its body is never read.
+    // Only the eight-byte header of the oversized chunk and its list type; its
+    // body is never read.
     assert!(
-        reader.read <= 8,
+        reader.read <= 12,
         "the walk read {} bytes of a chunk no reader would read a body of",
         reader.read
     );

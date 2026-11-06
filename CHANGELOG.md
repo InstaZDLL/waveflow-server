@@ -22,10 +22,17 @@ out first, whether or not it breaks a compile.
   guard went on from the end of the list: a crafted WAV carried nested chapter
   frames past it to lofty, the crash 2.1.1 guards against. Measured on built
   files, where lofty read a tag the guard passed; 2.1.1 has the same walk
-  (read from its code, not run). The guard now works out every place lofty
+  (read from its code, not run). The guard now works out the places lofty
   goes on from after a `LIST INFO` and walks on from each, and tests hold the
   three ways lofty stops, both continuations of an odd item, and the padding
-  of an odd list, against lofty itself.
+  of an odd list, against lofty itself. The same bookkeeping opened a second
+  way past the guard: lofty keeps its count of what is left of the file apart
+  from where it reads, and each list whose last item runs past its end leaves
+  that count eight bytes ahead. After enough of them, lofty takes a last
+  `LIST INFO` longer than the file, walks its items and reads the tag they
+  lead to, where the guard, which skipped a `LIST` that did not fit the file,
+  never looked. The guard now walks the items of every `LIST`, whether or not
+  it fits.
 
 ### Fixed
 

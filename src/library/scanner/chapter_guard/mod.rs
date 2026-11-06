@@ -554,7 +554,15 @@ fn check_chunks<R: Read + Seek>(
         // the audio; a tag standing there is one lofty reads. Held by
         // `a_tag_where_the_misread_audio_header_ends_is_reached`.
         let mut next = vec![at + 8 + size];
-        if fits && !big_endian && &name == b"LIST" {
+        // A `LIST` is walked whether or not it fits the file. lofty's count of
+        // what is left can run ahead of where it reads — every list whose last
+        // item runs past its end leaves it eight bytes ahead — and lofty then
+        // takes a `LIST` longer than the file and walks its items, which are
+        // read one by one and so need not reach that far. Every other chunk
+        // that does not fit gets lofty nowhere: a tag chunk is read whole, and
+        // skipping one leaves lofty past the end of the file. Held by
+        // `a_tag_in_a_list_longer_than_the_file_is_reached`.
+        if !big_endian && &name == b"LIST" {
             next.extend(list_info_resumes(reader, at, size, len, budget)?);
         }
         for position in next {
@@ -589,7 +597,9 @@ fn check_chunks<R: Read + Seek>(
 /// item may declare all that is left counting its own header, which runs its
 /// read eight bytes past the end of the list, where lofty then goes on. Every
 /// item is read whole, so one that runs past the file ends lofty's read. The
-/// padding of an odd item is walked both ways, as for the file's chunks.
+/// padding of an odd item is walked both ways, as for the file's chunks. The
+/// count is kept from the size the list declares, as lofty keeps it, even
+/// when the list runs past the end of the file.
 fn list_info_resumes<R: Read + Seek>(
     reader: &mut R,
     at: u64,
