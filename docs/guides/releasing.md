@@ -161,7 +161,9 @@ Three things differ from GitHub on purpose:
 8. **Recreate any release page the backup lacks**, with a personal access token
    (`api` scope, short expiry, revoked afterwards). The page is the one kept
    on R2 when there is one, GitHub's generated list and hand edits included;
-   otherwise it is written again from the tag's notes. The scripts are this
+   only when R2 answers that there is none (404) is it written again from the
+   tag's notes, and any other answer stops the loop, since a page created from
+   the fallback is not rewritten by a second run. The scripts are this
    checkout's, run inside a worktree of each tag, since a tag older than them
    does not carry them, and each tag gets its own empty folder of files:
 
@@ -178,10 +180,14 @@ Three things differ from GitHub on purpose:
        awk '{print $2}' SHA256SUMS | xargs -I{} curl -fsSO "$r2/$tag/{}" &&
        sha256sum -c SHA256SUMS --quiet) || break
      (cd "$work" &&
-       { curl -fsS -o notes.md "$r2/$tag/RELEASE-NOTES.md" ||
-         sh "$tools/release-notes.sh" "$tag" "$r2/$tag" \
-           registry.gitlab.com/waveflow-groupe/waveflow-server instazdll/waveflow-server \
-           > notes.md || [ $? -eq 10 ]; } &&
+       code=$(curl -sS -o notes.md -w '%{http_code}' "$r2/$tag/RELEASE-NOTES.md") &&
+       case "$code" in
+         200) ;;
+         404) sh "$tools/release-notes.sh" "$tag" "$r2/$tag" \
+                registry.gitlab.com/waveflow-groupe/waveflow-server instazdll/waveflow-server \
+                > notes.md || [ $? -eq 10 ] ;;
+         *) echo "$tag: RELEASE-NOTES.md answered $code; stopping" >&2; false ;;
+       esac &&
        python3 "$tools/gitlab-release.py" "$tag" notes.md release-assets "$r2/$tag") || break
      git worktree remove --force "$work"
    done

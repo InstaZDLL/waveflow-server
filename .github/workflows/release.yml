@@ -457,9 +457,15 @@ jobs:
           gh release view "$TAG" --json body --jq .body > github-body.md
           [ -s github-body.md ] || { echo "::error::the GitHub release of $TAG has no body"; exit 1; }
           base="${R2_PUBLIC_URL%/}/server/releases/$TAG"
+          from="https://github.com/$GH_REPO/releases/download/$TAG"
+          # A literal replacement, both sides quoted: `sed` would read the
+          # tag's dots as any character and an `&` in the address as the match.
+          # The `x` keeps the trailing newlines command substitution would drop.
+          body="$(cat github-body.md; printf x)"
+          body="${body%x}"
           {
             printf '_Mirrored from the GitHub release %s; the downloads are served from %s._\n\n' "$TAG" "${R2_PUBLIC_URL%/}"
-            sed "s|https://github.com/$GH_REPO/releases/download/$TAG|$base|g" github-body.md
+            printf '%s' "${body//"$from"/"$base"}"
           } > release-notes.md
 
       - name: Copy the files to R2
