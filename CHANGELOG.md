@@ -15,7 +15,8 @@ out first, whether or not it breaks a compile.
 ### API
 
 - **`GET` and `PUT /api/v2/server/update`** (#435, RFC-028), administrators
-  only, `403` to anyone else as on the other administrative routes. The `GET`
+  only, as the other administrative routes: `401` without a credential, `403`
+  for an account or a token without administrative authority. The `GET`
   reports the update check: its policy, an administrator's stored answer, the
   running version and its channel, the manifest last read, whether it names a
   newer version, when the check last ran and why it last failed. The `PUT`
