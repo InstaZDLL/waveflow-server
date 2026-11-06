@@ -599,6 +599,24 @@ plain http only while `WAVEFLOW_PODCAST_ALLOW_HTTP` is on; a station image may
 always be, as its stream may. **What it logs**: a verdict such as
 `image over the size ceiling`, never the address.
 
+## Being told a new version is out
+
+The server can check `download.waveflow.app` once a day for a newer version and
+tell administrators, in the web client, when one is out
+([RFC-028](../rfcs/RFC-028-update-check.md); [privacy](privacy.md) says what
+is sent). By default it asks first: the first administrator who signs in after
+the upgrade is asked whether it may, and the answer can be changed in
+Settings › Administration.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `WAVEFLOW_UPDATE_CHECK` | `ask` | `on` checks without asking anyone; `off` never checks and asks nobody, for an instance that must not reach the internet on its own |
+| `WAVEFLOW_UPDATE_URL` | `https://download.waveflow.app/server` | The folder holding `stable.json` and `beta.json`, for a fork that publishes its own; `https`, or plain `http` on a loopback address |
+
+A server on a pre-release follows the beta channel, which every release moves,
+so it hears of the stable version that follows it. The dialog can be dismissed
+per version: the next release is announced again.
+
 **What it stores.** One file per image, `<hash>.<format>`, beside the scanned
 covers. The artwork sweep collects it once nothing names it: when the channel
 or the station is deleted, or when the feed or the account names another
