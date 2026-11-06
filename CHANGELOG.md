@@ -10,6 +10,8 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.1.2] — 2026-11-06
+
 ### Security
 
 - **The chapter guard follows lofty out of a `LIST INFO` it stops reading
@@ -20,19 +22,29 @@ out first, whether or not it breaks a compile.
   list. A chunk header standing there could send lofty anywhere in the file,
   deep into the audio, onto a tag chunk the guard never reached, since the
   guard went on from the end of the list: a crafted WAV carried nested chapter
-  frames past it to lofty, the crash 2.1.1 guards against. Measured on built
-  files, where lofty read a tag the guard passed; 2.1.1 has the same walk
-  (read from its code, not run). The guard now works out the places lofty
-  goes on from after a `LIST INFO` and walks on from each, and tests hold the
-  three ways lofty stops, both continuations of an odd item, and the padding
-  of an odd list, against lofty itself. The same bookkeeping opened a second
-  way past the guard: lofty keeps its count of what is left of the file apart
-  from where it reads, and each list whose last item runs past its end leaves
-  that count eight bytes ahead. After enough of them, lofty takes a last
-  `LIST INFO` longer than the file, walks its items and reads the tag they
-  lead to, where the guard, which skipped a `LIST` that did not fit the file,
-  never looked. The guard now walks the items of every `LIST`, whether or not
-  it fits.
+  frames past it to lofty, the crash 2.1.1 guards against. 2.1.1 is affected:
+  measured on its tag with nine files built for the purpose, the server's own
+  call to lofty read the tag in all nine and the guard passed the hostile twin
+  of six — the three names that are no FourCC, the item longer than the list,
+  the item running past it, and the odd item behind a zero. What was measured
+  is the tag reaching lofty's ID3v2 parser, through the call every tag chunk
+  goes through; no process was crashed along this path. The guard now works
+  out the places lofty goes on from after a `LIST INFO` and walks on from
+  each, and tests hold the three ways lofty stops, both continuations of an
+  odd item, and the padding of an odd list, against lofty itself. It also
+  walks the items of every `LIST`, whether or not the list fits the file:
+  lofty keeps its count of what is left of the file apart from where it reads,
+  each list whose last item runs past its end leaves that count eight bytes
+  ahead, and after enough of them lofty takes a last `LIST INFO` longer than
+  the file and reads the tag its items lead to. That way past the guard never
+  shipped — 2.1.1 refuses those files, measured on its tag; it was found in
+  review of #431, in the walk that pull request first proposed. A seeded sweep
+  of 100,000 malformed WAV and 100,000 malformed AIFF layouts now runs with
+  the tests. Each layout is built twice around one tag chunk: lofty reads the
+  twin whose tag it refuses with an error of its own, which shows it handed
+  that chunk to its ID3v2 parser, and the guard's chunk walk (`check_chunks`,
+  not the scan of the file's head) reads the twin that nests chapter frames.
+  No layout whose tag lofty parses may pass the walk.
 
 ### Fixed
 
@@ -92,6 +104,24 @@ out first, whether or not it breaks a compile.
   and an interrupted read is retried. Read from the code in review of the
   2.1.2 release, raised by CodeRabbit on #432; outside the tests, no file was
   made to fail a read on demand.
+
+### Known issues
+
+- **A file that changes between the guard and the reader is not covered.**
+  The guard reads a file, then lofty or the DSD reader opens it again by its
+  path. A file that grows or is rewritten between the two, such as one still
+  being copied into a scanned folder, is parsed as it then is, not as the
+  guard saw it. Where the guard met the end of the file ahead of a tag — fewer
+  than ten bytes where a DSF says its tag stands, for one — it passed a file
+  with no tag there, and the reader may find one. This has been so since
+  2.1.1: the guard and the reader each open the file and read it at their own
+  moment, so a change between the two cannot be ruled out. It takes write access
+  to the library folder and a change that lands between the two reads. An
+  upload opens no such window by itself, being received whole, hashed and
+  moved into place before it is read, but nothing keeps a file from being
+  changed in the folder afterwards, by someone who can write there.
+  Once the file is whole, every later read of it meets the guard again, the
+  scan at the next start included. Read from the code, not measured.
 
 ## [2.1.1] — 2026-11-05
 
@@ -504,7 +534,8 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.1...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.2...main
+[2.1.2]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.2
 [2.1.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.1
 [2.1.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.0
 [2.0.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.0.1

@@ -619,7 +619,7 @@ podman run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro,z \
-  ghcr.io/instazdll/waveflow-server:2.1.1
+  ghcr.io/instazdll/waveflow-server:2.1.2
 ```
 
 or `- /path/to/music:/music:ro,z` in a compose file. The two compose files in
