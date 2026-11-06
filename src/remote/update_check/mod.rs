@@ -121,6 +121,7 @@ pub fn validate(manifest: &Manifest, channel: Channel) -> Result<semver::Version
 pub struct UpdateClient {
     http: reqwest::Client,
     base_url: String,
+    timeout: Duration,
 }
 
 impl UpdateClient {
@@ -129,12 +130,24 @@ impl UpdateClient {
         Ok(Self {
             http: outbound::client(settings.timeout)?,
             base_url: settings.base_url.clone(),
+            timeout: settings.timeout,
         })
     }
 
     /// Reads and checks one channel's manifest. A failure is a verdict, never
     /// an error carrying the address or the answer.
+    ///
+    /// **The whole request is bounded here**, the answer's body included: the
+    /// outbound client bounds only the connection and leaves the rest to each
+    /// caller (`outbound::client`). A host that accepts and then trickles, or
+    /// never answers, would otherwise hold the background check for ever.
     pub async fn fetch(&self, channel: Channel) -> Result<(Manifest, semver::Version), Failure> {
+        tokio::time::timeout(self.timeout, self.read(channel))
+            .await
+            .unwrap_or(Err(Failure::Unreachable))
+    }
+
+    async fn read(&self, channel: Channel) -> Result<(Manifest, semver::Version), Failure> {
         let response = self
             .http
             .get(format!("{}/{}.json", self.base_url, channel.as_str()))

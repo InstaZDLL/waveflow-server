@@ -13,6 +13,8 @@ use super::*;
 struct Host {
     answers: Arc<Mutex<std::collections::HashMap<String, (StatusCode, String)>>>,
     requests: Arc<AtomicUsize>,
+    /// Holds every answer back far longer than any check waits.
+    stalled: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Host {
@@ -26,6 +28,9 @@ impl Host {
                     let served = served.clone();
                     async move {
                         served.requests.fetch_add(1, Ordering::SeqCst);
+                        if served.stalled.load(Ordering::SeqCst) {
+                            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                        }
                         served
                             .answers
                             .lock()
@@ -82,10 +87,19 @@ struct Instance {
 
 impl Instance {
     async fn new(policy: UpdateCheckPolicy, base_url: &str) -> Self {
+        Self::with_timeout(policy, base_url, std::time::Duration::from_secs(5)).await
+    }
+
+    async fn with_timeout(
+        policy: UpdateCheckPolicy,
+        base_url: &str,
+        timeout: std::time::Duration,
+    ) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let mut config = Config::for_data_dir(temp.path().join("data"));
         config.update_check.policy = policy;
         config.update_check.base_url = base_url.to_owned();
+        config.update_check.timeout = timeout;
         let state = waveflow_server::initialize(&config).await.unwrap();
         // Inserted rather than created, so no literal reaches a cryptographic
         // call: these accounts authenticate by API token.
@@ -348,5 +362,26 @@ async fn an_unreachable_host_is_a_verdict() {
     // The test configuration's closed loopback port.
     let instance = Instance::new(UpdateCheckPolicy::On, "http://127.0.0.1:9").await;
     assert!(instance.check().await);
+    assert_eq!(instance.status().await["failure"], "unreachable");
+}
+
+#[tokio::test]
+async fn a_host_that_never_answers_is_given_up_on() {
+    let (host, base_url) = Host::start().await;
+    host.serve_version("stable.json", NEWER);
+    host.stalled.store(true, Ordering::SeqCst);
+    let instance = Instance::with_timeout(
+        UpdateCheckPolicy::On,
+        &base_url,
+        std::time::Duration::from_millis(500),
+    )
+    .await;
+    let started = std::time::Instant::now();
+    assert!(instance.check().await);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the check waited {:?}",
+        started.elapsed()
+    );
     assert_eq!(instance.status().await["failure"], "unreachable");
 }
