@@ -38,6 +38,9 @@ import urllib.request
 
 
 def api():
+    """Returns a function calling the project's REST API with whichever token
+    the environment provides: GITLAB_API_TOKEN as a bearer, or the CI job's
+    own token."""
     base = os.environ.get("CI_API_V4_URL") or os.environ.get("GITLAB_API_URL") or "https://gitlab.com/api/v4"
     token = os.environ.get("GITLAB_API_TOKEN")
     if token:
@@ -53,6 +56,8 @@ def api():
     root = f"{base.rstrip('/')}/projects/{urllib.parse.quote(project, safe='')}"
 
     def call(method, path, body=None):
+        """Sends one request under the project and returns its status and
+        decoded JSON body; an HTTP error is raised as urllib's HTTPError."""
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(root + path, data=data, method=method)
         request.add_header(*header)
@@ -64,6 +69,8 @@ def api():
 
 
 def main():
+    """Creates the release of the tag named on the command line, or adds the
+    links an existing one lacks, leaving its description as it is."""
     if len(sys.argv) != 5:
         sys.exit(__doc__.strip().splitlines()[2].strip())
     tag, notes, assets, base = sys.argv[1:]
