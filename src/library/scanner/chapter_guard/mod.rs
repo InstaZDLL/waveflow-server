@@ -77,18 +77,17 @@ const SIGNATURE_OVERLAP: usize = 8;
 const MAX_CHUNKS: usize = 65_536;
 
 /// How many bytes the whole check may read from one file before refusing it. A
-/// real file's tags and metadata chunks are far smaller, and the audio itself
-/// is not read: `data` and `SSND` chunks are skipped, and so is their header
-/// misread one byte off behind a chunk of odd length. What reaches this is a
-/// file whose metadata chunks are themselves that large, or a walk led into
-/// the audio some other way — chunks declaring sizes that land inside it, a
-/// body repeating `ID3 ` to make the walk re-read the file — and refusing it
-/// is the safe answer, as [`Refusal::OverBudget`], not as a nesting.
+/// real file's tags are far smaller, and the walk of a WAV or an AIFF reads no
+/// chunk body but a tag's — the audio least of all — as lofty reads no other.
+/// What reaches this is a tag that large, or a file of zeros the walk steps
+/// over, and refusing it is the safe answer, as [`Refusal::OverBudget`], not as
+/// a nesting.
 const MAX_SCAN_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Chunk positions a WAV or AIFF walk may hold at once. A real container has a
-/// handful; a body stuffed with `ID3 ` markers would otherwise queue one per
-/// occurrence, so the queue is bounded like the work it drives.
+/// handful; the two continuations of every odd chunk, and the places a
+/// `LIST INFO` makes lofty go on from, would otherwise queue without end, so
+/// the queue is bounded like the work it drives.
 const MAX_PENDING_CHUNKS: usize = MAX_CHUNKS;
 
 /// Why the guard refused a file. These are not the same fact, and must not be
@@ -457,12 +456,17 @@ fn tag_span(tag: &[u8]) -> u64 {
     (TAG_HEADER_LEN as u64) + u64::from(synchsafe(&tag[6..10]))
 }
 
-/// The `ID3 ` chunks of the WAV or AIFF at `start`. A chunk of odd length is
-/// followed by a padding byte that lofty and symphonia disagree about when it is
-/// not a zero, so both continuations are walked. The name of a chunk is looked
-/// for inside every chunk but the audio, and its header read one byte off,
-/// since a reader that lost its place in a `COMM` looks for the next chunk
-/// wherever it stopped.
+/// The `ID3 ` chunks of the WAV or AIFF at `start`, where lofty reads them.
+///
+/// lofty walks the chunks one after the other, and of each it reads at most
+/// the body, then seeks to its end (`Chunks::skip`): a tag chunk standing
+/// inside another chunk's body is never reached as a chunk, so no body is read
+/// here but a tag's. Two things move lofty off that path, and both are
+/// followed. A chunk of odd length is followed by a padding byte that lofty
+/// steps over, or not, depending on what it holds, so both continuations are
+/// walked. And a `LIST INFO`, whose items lofty walks as chunks of their own,
+/// sends lofty on with the file's chunks from wherever it stopped reading
+/// them, which [`list_info_resumes`] works out.
 fn check_chunks<R: Read + Seek>(
     reader: &mut R,
     start: u64,
@@ -474,12 +478,10 @@ fn check_chunks<R: Read + Seek>(
     let len = reader
         .seek(SeekFrom::End(0))
         .map_err(|_| Refusal::ReadFailed)?;
-    // Each position comes with whether it reads the audio's header one byte
-    // off (see `odd_chunk_continuations`), whose body is then left unread.
-    let mut pending = vec![(start + 12, false)];
+    let mut pending = vec![start + 12];
     let mut seen = std::collections::HashSet::new();
-    while let Some((at, misread)) = pending.pop() {
-        if !seen.insert((at, misread)) {
+    while let Some(at) = pending.pop() {
+        if !seen.insert(at) {
             continue;
         }
         if seen.len() > MAX_CHUNKS {
@@ -504,7 +506,7 @@ fn check_chunks<R: Read + Seek>(
         // give up on the rest.
         if header == [0; 8] {
             if let Some(next) = past_zero_chunks(reader, at, budget)? {
-                pending.push((next, false));
+                pending.push(next);
             }
             continue;
         }
@@ -512,9 +514,9 @@ fn check_chunks<R: Read + Seek>(
         // whole walk: lofty reads nothing behind it along this path. It is how
         // the wrong continuation of an odd chunk looks when the padding byte is
         // the zero it should be — the `data`/`SSND` header read one byte early
-        // opens on that zero — so the misread header and the audio its size
-        // would cover are left alone, whatever that size happens to be.
-        if !is_fourcc([header[0], header[1], header[2], header[3]]) {
+        // opens on that zero.
+        let name = [header[0], header[1], header[2], header[3]];
+        if !is_fourcc(name) {
             continue;
         }
         let raw = [header[4], header[5], header[6], header[7]];
@@ -526,12 +528,9 @@ fn check_chunks<R: Read + Seek>(
         // A chunk declaring more than the file holds yields lofty nothing: past
         // what is left counting its header, `Chunks::next` stops there; within
         // those eight bytes it takes the chunk and then fails to read its body.
-        // So this continuation reads no body of it either, and stops. A chunk
-        // that does fit is read as before — unless it is the audio, or the
-        // audio's header misread — bounded to the budget so an honest but huge
-        // metadata chunk still cannot run away.
+        // So this continuation reads no body of it either, and stops.
         let fits = size <= len.saturating_sub(at + 8);
-        if fits && !misread && !is_audio(&header[..4]) {
+        if fits && matches!(&name, b"ID3 " | b"id3 ") {
             let mut body = Vec::new();
             // Bounded to the budget before the read, so the allocation itself
             // cannot exceed it: a chunk declaring a huge size reads one byte
@@ -539,77 +538,126 @@ fn check_chunks<R: Read + Seek>(
             let limit = size.min(budget.saturating_add(1));
             // The chunk fits, so its body cannot end early: a read that fails
             // is an I/O error, and taking it for "nothing here" would skip the
-            // check of whatever the body holds. `read_to_end` already retries
-            // an interrupted read.
+            // check of the tag. `read_to_end` already retries an interrupted
+            // read.
             reader
                 .by_ref()
                 .take(limit)
                 .read_to_end(&mut body)
                 .map_err(|_| Refusal::ReadFailed)?;
             spend(budget, body.len() as u64)?;
-            if matches!(&header[..4], b"ID3 " | b"id3 ") {
-                check_tag(&body)?;
-            } else {
-                for (offset, name) in body.windows(4).enumerate() {
-                    if matches!(name, b"ID3 " | b"id3 ") {
-                        if pending.len() >= MAX_PENDING_CHUNKS {
-                            return Err(Refusal::OverBudget);
-                        }
-                        pending.push((at + 8 + offset as u64, false));
-                    }
-                }
-            }
+            check_tag(&body)?;
         }
-        // Walked on behind every chunk — the misread one too, whose body alone
-        // is left unread. Behind a padding byte written as a letter, lofty
-        // itself takes the misread chunk and reads on where it ends, inside the
-        // audio; a tag standing there is one lofty reads, so stopping here
-        // would let it through. It is also where the residue of #428 comes from.
-        // Held by `a_tag_where_the_misread_audio_header_ends_is_reached`.
-        let next = at + 8 + size;
-        if next < len {
+        // Walked on behind every chunk, whatever its body. Behind a padding
+        // byte written as a letter, lofty itself takes the audio's header read
+        // one byte off for a chunk and reads on where that chunk ends, inside
+        // the audio; a tag standing there is one lofty reads. Held by
+        // `a_tag_where_the_misread_audio_header_ends_is_reached`.
+        let mut next = vec![at + 8 + size];
+        // A `LIST` is walked whether or not it fits the file. lofty's count of
+        // what is left can run ahead of where it reads — every list whose last
+        // item runs past its end leaves it eight bytes ahead — and lofty then
+        // takes a `LIST` longer than the file and walks its items, which are
+        // read one by one and so need not reach that far. Every other chunk
+        // that does not fit gets lofty nowhere: a tag chunk is read whole, and
+        // skipping one leaves lofty past the end of the file. Held by
+        // `a_tag_in_a_list_longer_than_the_file_is_reached`.
+        if !big_endian && &name == b"LIST" {
+            next.extend(list_info_resumes(reader, at, size, len, budget)?);
+        }
+        for position in next {
+            if position >= len {
+                continue;
+            }
             if pending.len() >= MAX_PENDING_CHUNKS {
                 return Err(Refusal::OverBudget);
             }
+            // lofty looks for the padding of an odd chunk where it goes on,
+            // which for a `LIST` it stopped reading partway is not its end.
             if size % 2 == 1 {
-                pending.extend(odd_chunk_continuations(reader, next, budget)?);
+                pending.extend([position, position + 1]);
             } else {
-                pending.push((next, false));
+                pending.push(position);
             }
         }
     }
     Ok(())
 }
 
-/// The names of the chunks that hold the audio, whose bodies are never read.
-fn is_audio(name: &[u8]) -> bool {
-    matches!(name, b"data" | b"SSND")
-}
-
-/// Both continuations behind a chunk of odd length, ending at `next`: from
-/// `next`, where its padding byte should be, and from `next + 1`, behind it.
+/// Where lofty goes on with the file's chunks after the `LIST` at `at`, of
+/// `size` bytes, when it stops partway through its items rather than at its
+/// end. `len` is the length of the file.
 ///
-/// When one of them opens on the name of the audio's chunk, the other reads
-/// that header one byte off — a writer that left out the padding byte puts
-/// the audio at `next`, one that wrote a letter for it puts it at `next + 1`
-/// — and its misread size then covers the audio, which it would read as the
-/// body of a chunk of some other name. That continuation is still walked, and
-/// what follows its misread chunk too, but the body is marked to be left
-/// unread: it starts inside the audio, which the walk never reads from the
-/// other continuation either, and whatever stands past the end of the audio
-/// is reached and read from that other continuation, which goes on behind it.
-/// The name skipped is never a tag's: shifted by a byte, `data` and `SSND`
-/// leave three of their letters in it.
-fn odd_chunk_continuations<R: Read + Seek>(
+/// lofty reads the items of a `LIST` of type `INFO` as chunks of their own,
+/// within a count of what is left of the list (`Chunks::lock`), and when it
+/// stops it seeks on by what that count says is left (`Chunks::unlock`). The
+/// count only drops by what it read, so where the items stop early it goes on
+/// from there: behind a name that is no FourCC, four bytes in; behind an item
+/// declaring more than is left, eight bytes in, having read its header; and an
+/// item may declare all that is left counting its own header, which runs its
+/// read eight bytes past the end of the list, where lofty then goes on. Every
+/// item is read whole, so one that runs past the file ends lofty's read. The
+/// padding of an odd item is walked both ways, as for the file's chunks. The
+/// count is kept from the size the list declares, as lofty keeps it, even
+/// when the list runs past the end of the file.
+fn list_info_resumes<R: Read + Seek>(
     reader: &mut R,
-    next: u64,
+    at: u64,
+    size: u64,
+    len: u64,
     budget: &mut u64,
-) -> Result<[(u64, bool); 2], Refusal> {
-    let mut peek = [0_u8; 5];
-    let read = read_at(reader, next, &mut peek).map_err(|_| Refusal::ReadFailed)?;
-    spend(budget, read as u64)?;
-    let audio_at = |offset: usize| read == peek.len() && is_audio(&peek[offset..offset + 4]);
-    Ok([(next, audio_at(1)), (next + 1, audio_at(0))])
+) -> Result<Vec<u64>, Refusal> {
+    let mut kind = [0_u8; 4];
+    if size < 4 || read_at(reader, at + 8, &mut kind).map_err(|_| Refusal::ReadFailed)? < 4 {
+        return Ok(Vec::new());
+    }
+    spend(budget, 4)?;
+    if &kind != b"INFO" {
+        return Ok(Vec::new());
+    }
+    let end = at + 8 + size;
+    let mut resumes = Vec::new();
+    let mut items = vec![at + 12];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(item) = items.pop() {
+        if !seen.insert(item) {
+            continue;
+        }
+        if seen.len() > MAX_CHUNKS {
+            return Err(Refusal::OverBudget);
+        }
+        let left = end.saturating_sub(item);
+        if left < 8 {
+            resumes.push(item.max(end));
+            continue;
+        }
+        let mut header = [0_u8; 8];
+        if read_at(reader, item, &mut header).map_err(|_| Refusal::ReadFailed)? < 8 {
+            continue;
+        }
+        spend(budget, 8)?;
+        if !is_fourcc([header[0], header[1], header[2], header[3]]) {
+            resumes.push(item + 4);
+            continue;
+        }
+        let item_size = u64::from(u32::from_le_bytes([
+            header[4], header[5], header[6], header[7],
+        ]));
+        if item_size > left {
+            resumes.push(item + 8);
+            continue;
+        }
+        let next = item + 8 + item_size;
+        if next > len {
+            continue;
+        }
+        if item_size % 2 == 1 {
+            items.extend([next, next + 1]);
+        } else {
+            items.push(next);
+        }
+    }
+    Ok(resumes)
 }
 
 /// Where the run of empty chunks at `at` ends, on the eight-byte steps it is

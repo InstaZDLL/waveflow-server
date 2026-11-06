@@ -10,6 +10,30 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Security
+
+- **The chapter guard follows lofty out of a `LIST INFO` it stops reading
+  partway** (#431). lofty reads the items of a WAV's `LIST INFO` as chunks of
+  their own, and when it stops among them — at a name that is no FourCC, at an
+  item longer than the list, or behind an item that runs past its end — it
+  goes on with the file's chunks from there rather than from the end of the
+  list. A chunk header standing there could send lofty anywhere in the file,
+  deep into the audio, onto a tag chunk the guard never reached, since the
+  guard went on from the end of the list: a crafted WAV carried nested chapter
+  frames past it to lofty, the crash 2.1.1 guards against. Measured on built
+  files, where lofty read a tag the guard passed; 2.1.1 has the same walk
+  (read from its code, not run). The guard now works out the places lofty
+  goes on from after a `LIST INFO` and walks on from each, and tests hold the
+  three ways lofty stops, both continuations of an odd item, and the padding
+  of an odd list, against lofty itself. The same bookkeeping opened a second
+  way past the guard: lofty keeps its count of what is left of the file apart
+  from where it reads, and each list whose last item runs past its end leaves
+  that count eight bytes ahead. After enough of them, lofty takes a last
+  `LIST INFO` longer than the file, walks its items and reads the tag they
+  lead to, where the guard, which skipped a `LIST` that did not fit the file,
+  never looked. The guard now walks the items of every `LIST`, whether or not
+  it fits.
+
 ### Fixed
 
 - **The chapter guard no longer refuses a large WAV, AIFF or FLAC that nests
@@ -28,25 +52,23 @@ out first, whether or not it breaks a compile.
   it stops where lofty stops: at a chunk name that is no FourCC, which is how
   the audio's header looks when read one byte early from a zero padding byte,
   and at a chunk declaring more than the file holds, from which lofty reads no
-  tag. When the padding byte is missing, or written as a letter, the header
-  misread one byte off is recognised and its body, the audio, left unread.
-  Tests hold each of those three behaviours of lofty, so a change in lofty
-  fails them. A tag nested behind an odd chunk, or behind the audio that
+  tag. And it reads no chunk body but a tag's, since lofty skips every other
+  body with one seek to its end: behind a padding byte that is missing or
+  written as a letter, where the walk goes on inside the audio — as lofty does
+  in the second case — it steps from header to header there without reading
+  the audio. Tests hold each of those behaviours of lofty, so a change in
+  lofty fails them. A tag nested behind an odd chunk, or behind the audio that
   follows one, is still reached and refused, whatever stands where the padding
   byte goes, because both continuations are still walked. A refusal for an
   exhausted budget, or for a read that fails partway through the file, is now
   told apart from a nesting and no longer claims the file nests chapter
   frames. On a full rescan a file the guard refuses marks its track
   unavailable rather than deleting it; the file is untouched and a later scan
-  that reads it restores the track.
-
-  **Known residue.** Behind a padding byte that is missing or a letter —
-  writers that break the IFF rule — the walk still follows what comes after
-  the misread header, as lofty does in the second case, and that lands inside
-  the audio. Where four bytes of audio there read as a chunk whose size fits,
-  the walk reads on and the file is refused for the budget. Measured on built
-  files with pseudo-random audio of 100 MiB to 3.5 GiB: a few in a thousand of
-  those malformed files, none behind a zero padding byte.
+  that reads it restores the track. #430 left a residue behind a padding byte
+  that is missing or a letter, a few files in a thousand of those refused for
+  the budget; #431 closes it by reading no body lofty skips. Measured on built
+  files with pseudo-random audio of 100 MiB to 3.5 GiB, 1,600 sizes for each
+  padding: none refused.
 - **The chapter guard refuses a file it fails to read partway** (#429). It
   took any read error for the end of a clean file and passed the file, while
   the parser that runs next reads on and could still meet chapter frames the

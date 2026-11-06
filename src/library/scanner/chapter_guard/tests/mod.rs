@@ -2,7 +2,9 @@ use std::io::Cursor;
 
 use super::*;
 
+mod differential;
 mod large_files;
+mod lofty_walk;
 
 fn synchsafe_bytes(value: usize) -> [u8; 4] {
     [
@@ -434,14 +436,15 @@ fn a_flagged_frame_before_flat_chapters_passes() {
     assert_eq!(check_tag(&tag(&frames)), Ok(()));
 }
 
-/// A container chunk whose body repeats `ID3 ` would queue one position per
-/// occurrence; the walk bounds that queue and refuses rather than exhausting
-/// memory, and it returns rather than running away.
+/// The items of a `LIST INFO` are walked as lofty walks them, one after the
+/// other, so a list of more of them than the walk follows has not been
+/// checked: refused for the budget, and the walk returns rather than running
+/// away. Named `ID3 `, they are items to lofty, not tags.
 #[test]
-fn a_riff_body_stuffed_with_id3_markers_is_refused() {
-    let mut list_body = Vec::new();
-    for _ in 0..(MAX_PENDING_CHUNKS + 100) {
-        list_body.extend_from_slice(b"ID3 ");
+fn a_list_info_of_more_items_than_the_walk_follows_is_refused() {
+    let mut list_body = b"INFO".to_vec();
+    for _ in 0..(MAX_CHUNKS + 100) {
+        list_body.extend_from_slice(b"ID3 \0\0\0\0");
     }
     let mut body = b"WAVE".to_vec();
     body.extend_from_slice(b"LIST");
@@ -451,6 +454,43 @@ fn a_riff_body_stuffed_with_id3_markers_is_refused() {
     riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
     riff.extend_from_slice(&body);
     assert_eq!(check_file_bytes(&riff), Err(Refusal::OverBudget));
+}
+
+/// The items of every `LIST INFO` are read against the budget of the whole
+/// file, not one of their own: ten lists, each well within a budget of 200
+/// bytes, are refused once their item headers together are past it. The control, one
+/// list under the same budget, passes.
+#[test]
+fn the_items_of_many_lists_share_the_files_budget() {
+    let riff_of_lists = |lists: usize| {
+        let mut body = b"WAVE".to_vec();
+        for _ in 0..lists {
+            body.extend_from_slice(b"LIST");
+            body.extend_from_slice(&28_u32.to_le_bytes());
+            body.extend_from_slice(b"INFO");
+            for _ in 0..3 {
+                body.extend_from_slice(b"INAM\0\0\0\0");
+            }
+        }
+        let mut riff = b"RIFF".to_vec();
+        riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        riff.extend_from_slice(&body);
+        riff
+    };
+    // A list costs its header, its type and three item headers: 36 bytes, so
+    // ten cost 360. Walked on budgets of their own, the items would leave the
+    // file only the ten list headers to pay, 80 bytes, and pass.
+    let walk = |lists: usize| {
+        let mut budget = 200_u64;
+        check_chunks(
+            &mut Cursor::new(riff_of_lists(lists)),
+            0,
+            false,
+            &mut budget,
+        )
+    };
+    assert_eq!(walk(1), Ok(()), "the control");
+    assert_eq!(walk(10), Err(Refusal::OverBudget));
 }
 
 /// The read of a tag body stops at the cap, so a header declaring a huge size
@@ -471,10 +511,12 @@ fn read_declared_caps_the_body_at_the_given_limit() {
     );
 }
 
-/// A chunk declaring far more than the file holds is where every IFF reader
-/// stops, so the walk stops there too: its body is not read at all, not even up
-/// to the budget. Measured through [`CountingReader`], so a read that ran into
-/// the declared size would be seen here.
+/// A chunk declaring far more than the file holds is where lofty stops, so the
+/// walk stops there too: its body is not read at all, not even up to the
+/// budget. Measured through [`CountingReader`], so a read that ran into the
+/// declared size would be seen here. A `LIST` has the four bytes naming its
+/// type read as well, since lofty walks the items of a `LIST INFO` even past
+/// the end of the file; this one is no `INFO`, and nothing more is read.
 #[test]
 fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let payload = vec![b'A'; 8192];
@@ -488,9 +530,10 @@ fn a_chunk_larger_than_the_file_is_skipped_unread() {
     let mut budget = 64_u64;
     let mut reader = CountingReader::new(Cursor::new(riff));
     assert_eq!(check_chunks(&mut reader, 0, false, &mut budget), Ok(()));
-    // Only the eight-byte header of the oversized chunk; its body is never read.
+    // Only the eight-byte header of the oversized chunk and its list type; its
+    // body is never read.
     assert!(
-        reader.read <= 8,
+        reader.read <= 12,
         "the walk read {} bytes of a chunk no reader would read a body of",
         reader.read
     );
