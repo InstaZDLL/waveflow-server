@@ -29,6 +29,7 @@ Everything a release is, kept where the GitHub account's fate does not reach:
 | The code and every signed tag | [`gitlab.com/waveflow-groupe/waveflow-server`](https://gitlab.com/waveflow-groupe/waveflow-server), private | [`mirror-gitlab.yml`](../../.github/workflows/mirror-gitlab.yml), on every push to `main` and every tag |
 | waveflow-core, the one git dependency | `gitlab.com/waveflow-groupe/WaveFlow`, the desktop app's backup | the desktop repository |
 | The archives, the FFmpeg sources, `SHA256SUMS` | `https://download.waveflow.app/server/releases/<tag>/`, the R2 bucket `waveflow-releases` | `release.yml`'s `mirror` job |
+| The channel manifests the update check reads ([RFC-028](../rfcs/RFC-028-update-check.md)) | `https://download.waveflow.app/server/stable.json` and `beta.json` | `mirror`, after the files; never moved backwards |
 | The release pages | `RELEASE-NOTES.md` beside the files on R2, as GitHub showed the page when it was mirrored, generated list included; and the GitLab project's releases, linking to R2 | `mirror`; the GitLab page only when `GITLAB_API_TOKEN` is set (see below) |
 | The image | Docker Hub, `instazdll/waveflow-server`: a separate account | the release itself |
 

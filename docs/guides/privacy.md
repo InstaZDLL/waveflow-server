@@ -4,8 +4,8 @@ Every host a WaveFlow Server can contact, what it sends there, when, and the
 setting that stops it. This was written from the code (RFC-019 decision 4), and
 the code is the authority if the two ever disagree: `src/remote/outbound/`,
 `src/remote/enrichment/`, `src/remote/portrait/`, `src/remote/lrclib/`,
-`src/remote/podcast/`, `src/services/remote_artwork/` and
-`src/remote/scrobblers/`.
+`src/remote/podcast/`, `src/services/remote_artwork/`,
+`src/remote/scrobblers/` and `src/remote/update_check/`.
 
 **A server left at its defaults sends nothing on its own.** Booting makes no
 request, and no background task does unless an operator configured it *and*,
@@ -13,7 +13,8 @@ for scrobbling, an account linked a destination — or, for podcasts, an
 administrator subscribed to a feed. The clients are built at boot;
 building one sends nothing. The one request a default server makes is one an
 account asks for by name: the image of a radio station, fetched once when the
-account sets it (below; `WAVEFLOW_REMOTE_ARTWORK=off` stops it).
+account sets it (below; `WAVEFLOW_REMOTE_ARTWORK=off` stops it). The update
+check asks an administrator before it sends anything (below).
 
 ## Rules every request follows
 
@@ -279,6 +280,35 @@ account is given the hash alone. A station's image address is shown to the
 account the station belongs to, and its image is served to that account alone.
 Deleting the channel or the station releases the image, and the artwork sweep
 removes it. No image address, and no part of an answer, is written to the log.
+
+## The update check: download.waveflow.app
+
+**Off until an administrator says yes**
+([RFC-028](../rfcs/RFC-028-update-check.md)). Under the default
+`WAVEFLOW_UPDATE_CHECK=ask`, the web client asks the first administrator who
+signs in whether the server may check for new versions, and nothing is sent
+before the answer is yes; it can be changed in Settings › Administration.
+`WAVEFLOW_UPDATE_CHECK=on` turns it on without asking, `off` turns it off and
+the question with it.
+
+**What is sent.** `GET https://download.waveflow.app/server/stable.json` — or
+`beta.json` on a pre-release — with the User-Agent every request carries,
+`WaveFlowServer/<version>`. Nothing else: no instance identifier, no account,
+no count of anything. The host sees the address the request comes from, as
+any host contacted does. `WAVEFLOW_UPDATE_URL` names another folder.
+
+**When.** Five seconds after boot, then once a day, and at once when an
+administrator turns the check on. Never while it is off.
+
+**Under which rules.** The outbound client's, above: no redirect, no proxy,
+`https` (plain `http` only on a loopback address, for the test suite), and the
+2 MiB API ceiling, with the whole request bounded by its timeout. The answer is
+a manifest — the newest version, its tag, its page — refused unless it is
+coherent, and its page is shown to administrators only, as a link.
+
+**Kept.** In memory only; a restart asks again. **What it logs**: the version
+read, or a one-word verdict (`unreachable`, `status`, `unreadable`, `invalid`),
+never the address or the answer.
 
 ## What the browser contacts
 

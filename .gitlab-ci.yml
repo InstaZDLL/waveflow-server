@@ -694,6 +694,10 @@ publish:
   stage: publish
   image: $ALPINE_IMAGE
   needs: [release-assets, image-publish]
+  # One at a time across tags: each reads a channel manifest before writing it.
+  resource_group: r2-channel-manifests
+  variables:
+    RELEASE_PAGE_URL: $CI_PROJECT_URL/-/releases/$CI_COMMIT_TAG
   script:
     # coreutils for sha256sum --quiet, which busybox lacks.
     - apk add --no-cache aws-cli coreutils curl python3

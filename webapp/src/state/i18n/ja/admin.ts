@@ -150,4 +150,31 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     other: "{count}曲を復元しました。",
   },
   "missing.restoreFailed": "復元できませんでした。もう一度お試しください。",
+  // The update check (RFC-028).
+  "update.askTitle": "新しいバージョンを確認しますか？",
+  "update.askBody":
+    "このサーバーは 1 日 1 回 download.waveflow.app に最新バージョンを問い合わせ、新しいものが出たら管理者に知らせることができます。リクエストに含まれるのはこのサーバーのバージョンだけです。あとで「設定 › 管理」から変更できます。",
+  "update.askYes": "1 日 1 回確認する",
+  "update.askNo": "確認しない",
+  "update.title": "WaveFlow Server {version} が利用可能です",
+  "update.current": "このサーバーは {current} で動作しています。",
+  "update.howTo":
+    "Docker の場合は新しいイメージを取得してコンテナを作り直してください。アーカイブの場合は新しいものをダウンロードしてフォルダーを置き換え、データフォルダーは残してください。",
+  "update.notes": "リリースノートとダウンロード",
+  "update.later": "あとで",
+  "update.dismiss": "このバージョンを今後表示しない",
+  "update.panel": "アップデート",
+  "update.enabled":
+    "このサーバーは 1 日 1 回 download.waveflow.app で新しいバージョンを確認します。",
+  "update.disabled": "このサーバーは新しいバージョンを確認しません。",
+  "update.policyOn": "WAVEFLOW_UPDATE_CHECK=on で有効になっています。",
+  "update.policyOff": "WAVEFLOW_UPDATE_CHECK=off で無効になっています。",
+  "update.turnOn": "1 日 1 回確認する",
+  "update.turnOff": "確認をやめる",
+  "update.lastChecked": "最終確認：{when}。",
+  "update.failed": "前回の確認ではバージョン一覧を読み込めませんでした。",
+  "update.upToDate": "{current} が最新バージョンです。",
+  "update.available": "{version} が利用可能です。",
+  "update.saveError": "設定を保存できませんでした。",
+  "update.never": "まだ確認していません。",
 };

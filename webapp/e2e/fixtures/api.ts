@@ -435,6 +435,25 @@ async function mockAuthenticatedApi(page: Page) {
       await transcodingProfiles(route, url);
       return;
     }
+    if (url.pathname === "/api/v2/server/update") {
+      if (!mock.updateStatus) {
+        await route.fulfill({ status: 404, json: { error: "not found" } });
+        return;
+      }
+      if (route.request().method() === "PUT") {
+        const { enabled } = route.request().postDataJSON() as {
+          enabled: boolean;
+        };
+        mock.updateWrites.push(enabled);
+        mock.updateStatus = {
+          ...mock.updateStatus,
+          decision: enabled,
+          enabled,
+        };
+      }
+      await route.fulfill({ json: mock.updateStatus });
+      return;
+    }
     if (url.pathname === "/api/v2/libraries") {
       await route.fulfill({ json: mock.libraries });
       return;
@@ -863,6 +882,8 @@ export const resetAndMockApi = async ({ page }: { page: Page }) => {
   mock.transcodingProfiles = freshTranscodingProfiles();
   mock.transcodingProfilesFail = false;
   mock.transcodingProfilesGate = Promise.resolve();
+  mock.updateStatus = null;
+  mock.updateWrites = [];
   mock.ownClients = freshClients();
   mock.bookmarks = [];
   mock.importAsks = [];

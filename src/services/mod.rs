@@ -121,6 +121,9 @@ pub struct DomainServices {
     /// Smart playlists (RFC-025): what each reader was last shown, the
     /// evaluation counter and the evaluation budget.
     smart: smart_playlists::SmartRuntime,
+    /// The update check (RFC-028): who decides, the client, and the manifest
+    /// last read.
+    update: update_check::UpdateRuntime,
     /// The client names silent Subsonic streams have come with (RFC-027), which
     /// the Settings section offers for an override.
     seen_stream_clients: transcoding_profiles::SeenClients,
@@ -204,6 +207,7 @@ mod statistics;
 mod sync;
 mod track_metadata;
 mod transcoding_profiles;
+mod update_check;
 pub(crate) mod uploads;
 
 mod access;
@@ -307,6 +311,7 @@ pub use statistics::{
     TopArtist, TopGenre, TopTrack,
 };
 pub use transcoding_profiles::{TranscodingProfileItem, TranscodingProfiles};
+pub use update_check::UpdateStatus;
 
 impl DomainServices {
     pub fn new(
@@ -372,6 +377,7 @@ impl DomainServices {
             remote_artwork: config.remote_artwork,
             station_images: remote_artwork::FetchBudget::default(),
             smart: smart_playlists::SmartRuntime::new(config.db_max_connections),
+            update: update_check::UpdateRuntime::new(config.update_check.clone()),
         }
     }
 

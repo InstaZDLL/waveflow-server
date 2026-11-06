@@ -14,6 +14,7 @@ import {
 } from "../state/library-scope";
 import { LibraryFeed } from "./library-feed";
 import { Brand, Navigation } from "./navigation";
+import { UpdateNotice } from "./update-notice";
 
 /**
  * Takes the first-load screen away once the application has committed a
@@ -101,6 +102,7 @@ export function Shell() {
           <Navigation mobile />
           <PlayerBar />
         </div>
+        <UpdateNotice />
       </PlayerProvider>
     </LibraryScopeProvider>
   );

@@ -14,6 +14,7 @@ mod pid;
 mod podcasts;
 mod scrobbling;
 mod tools;
+mod update_check;
 
 pub use access::SETUP_TOKEN_MIN_CHARS;
 pub use laptop::{load_laptop_env, LAPTOP_ENV_FILE};
@@ -24,6 +25,7 @@ pub use scrobbling::{
     LastFmApplication, ScrobbleDestination, ScrobbleLimits, DEFAULT_SCROBBLE_DESTINATION,
     DEFAULT_SCROBBLE_MAX_ATTEMPTS,
 };
+pub use update_check::{UpdateCheckPolicy, UpdateCheckSettings, DEFAULT_UPDATE_URL};
 
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
@@ -280,6 +282,9 @@ pub struct Config {
     /// Podcast covers and station images — RFC-025, amended. See
     /// [`RemoteArtworkSettings`].
     pub remote_artwork: RemoteArtworkSettings,
+    /// Telling an administrator a new version is out — RFC-028. See
+    /// [`UpdateCheckSettings`].
+    pub update_check: UpdateCheckSettings,
     pub allowed_origins: Vec<axum::http::HeaderValue>,
     /// `WAVEFLOW_TRUSTED_PROXIES`: the reverse proxies whose
     /// `X-Forwarded-For` is believed when telling one client from another
@@ -359,6 +364,7 @@ impl std::fmt::Debug for Config {
             .field("lyrics", &self.lyrics)
             .field("podcasts", &self.podcasts)
             .field("remote_artwork", &self.remote_artwork)
+            .field("update_check", &self.update_check)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
             // Whether it is set, never what it is.

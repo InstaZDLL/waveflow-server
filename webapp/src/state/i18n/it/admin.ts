@@ -152,4 +152,32 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     other: "{count} brani ripristinati.",
   },
   "missing.restoreFailed": "Il ripristino non è riuscito. Riprova.",
+  // The update check (RFC-028).
+  "update.askTitle": "Cercare nuove versioni?",
+  "update.askBody":
+    "Una volta al giorno, questo server può chiedere a download.waveflow.app qual è la versione più recente e avvisare gli amministratori quando ne esce una. La richiesta contiene la versione di questo server e nient’altro su di lui. Puoi cambiare idea in Impostazioni › Amministrazione.",
+  "update.askYes": "Controlla una volta al giorno",
+  "update.askNo": "Non controllare",
+  "update.title": "WaveFlow Server {version} è disponibile",
+  "update.current": "Questo server esegue la {current}.",
+  "update.howTo":
+    "Con Docker, scarica la nuova immagine e ricrea il container. Con un archivio, scarica il nuovo e sostituisci la cartella, tenendo la tua cartella dei dati.",
+  "update.notes": "Note di rilascio e download",
+  "update.later": "Più tardi",
+  "update.dismiss": "Non mostrare più questa versione",
+  "update.panel": "Aggiornamenti",
+  "update.enabled":
+    "Questo server cerca nuove versioni su download.waveflow.app una volta al giorno.",
+  "update.disabled": "Questo server non cerca nuove versioni.",
+  "update.policyOn": "Attivato da WAVEFLOW_UPDATE_CHECK=on.",
+  "update.policyOff": "Disattivato da WAVEFLOW_UPDATE_CHECK=off.",
+  "update.turnOn": "Controlla una volta al giorno",
+  "update.turnOff": "Smetti di controllare",
+  "update.lastChecked": "Ultimo controllo: {when}.",
+  "update.failed":
+    "L’ultimo controllo non ha potuto leggere l’elenco delle versioni.",
+  "update.upToDate": "{current} è la versione più recente.",
+  "update.available": "{version} è disponibile.",
+  "update.saveError": "Non è stato possibile salvare l’impostazione.",
+  "update.never": "Non ancora controllato.",
 };

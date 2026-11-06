@@ -144,4 +144,31 @@ export const admin = {
     other: "{count} tracks restored.",
   },
   "missing.restoreFailed": "The restoration did not work. Try again.",
+  // The update check (RFC-028).
+  "update.askTitle": "Check for new versions?",
+  "update.askBody":
+    "Once a day, this server can ask download.waveflow.app which version is the newest, and tell administrators when one is out. The request carries this server's version and nothing else about it. You can change this later in Settings › Administration.",
+  "update.askYes": "Check once a day",
+  "update.askNo": "Don't check",
+  "update.title": "WaveFlow Server {version} is available",
+  "update.current": "This server runs {current}.",
+  "update.howTo":
+    "With Docker, pull the new image and recreate the container. With an archive, download the new one and replace the folder, keeping your data folder.",
+  "update.notes": "Release notes and downloads",
+  "update.later": "Later",
+  "update.dismiss": "Don't show this version again",
+  "update.panel": "Updates",
+  "update.enabled":
+    "This server checks download.waveflow.app for new versions once a day.",
+  "update.disabled": "This server does not check for new versions.",
+  "update.policyOn": "Turned on by WAVEFLOW_UPDATE_CHECK=on.",
+  "update.policyOff": "Turned off by WAVEFLOW_UPDATE_CHECK=off.",
+  "update.turnOn": "Check once a day",
+  "update.turnOff": "Stop checking",
+  "update.lastChecked": "Last checked {when}.",
+  "update.failed": "The last check could not read the list of versions.",
+  "update.upToDate": "{current} is the newest version.",
+  "update.available": "{version} is available.",
+  "update.saveError": "The setting could not be saved.",
+  "update.never": "Not checked yet.",
 } as const;

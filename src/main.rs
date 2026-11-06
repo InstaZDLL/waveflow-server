@@ -136,6 +136,9 @@ async fn serve(
     // Off unless WAVEFLOW_PODCASTS says otherwise, and then the first pass
     // waits one interval: a boot fetches nothing (RFC-025 decision 9).
     state.services.spawn_podcast_refresher();
+    // Sends nothing unless WAVEFLOW_UPDATE_CHECK=on, or an administrator said
+    // yes under the default `ask` (RFC-028 decision 2).
+    state.services.spawn_update_checker();
     state.db.spawn_authorization_pruning();
     // Refused sign-ins, counted and logged once a minute (RFC-017).
     state.auth.sign_in_guard().spawn_summary();

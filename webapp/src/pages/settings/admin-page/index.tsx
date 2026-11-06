@@ -21,6 +21,7 @@ import { useI18n } from "../../../state/i18n";
 import { NowPlayingPanel, ScanProgress, TranscodingPanel } from "./activity";
 import { ApiTokensPanel, CredentialForm } from "./credentials";
 import { LibraryMembersPanel, LibrarySettingsPanel } from "./libraries";
+import { UpdatesPanel } from "./updates";
 
 export function AdminPage() {
   const signedInUser = currentUser();
@@ -239,6 +240,7 @@ export function AdminPage() {
       </div>
       <NowPlayingPanel />
       <TranscodingPanel />
+      <UpdatesPanel />
     </section>
   );
 }

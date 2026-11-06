@@ -408,6 +408,13 @@ jobs:
     needs: [verify, github-release]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # One at a time across tags: each reads a channel manifest before writing
+    # it (RFC-028), and two interleaved would let the older version win.
+    # `queue: max` keeps every waiting run instead of only the last.
+    concurrency:
+      group: r2-channel-manifests
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
     # Each secret is given to the steps that use it, not to the whole job.
@@ -475,6 +482,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          RELEASE_PAGE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ inputs.tag || github.ref_name }}
         run: sh scripts/release/publish-r2.sh release-assets "$TAG" release-notes.md
 
       - name: Create the GitLab release

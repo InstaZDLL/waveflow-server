@@ -73,6 +73,15 @@ class MockState {
   /** Holds a write on those routes until a test lets it through. */
   transcodingProfilesGate: Promise<void> = Promise.resolve();
 
+  /**
+   * What `/server/update` answers (RFC-028), or `null` for the 404 a server
+   * gives a route it does not hold: every spec but the update one, so no
+   * dialog opens over what they drive.
+   */
+  updateStatus: Record<string, unknown> | null = null;
+  /** Each answer an administrator sent, in order. */
+  updateWrites: boolean[] = [];
+
   ownClients: Client[] = [];
   /**
    * The Subsonic credential this account holds, or `null` for none.

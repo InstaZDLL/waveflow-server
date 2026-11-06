@@ -54,6 +54,7 @@ The design decisions, one per document. A `Status` line never changes; the
 | [RFC-025](rfcs/RFC-025-smart-playlists-and-podcasts.md) | Smart playlists and podcasts |
 | [RFC-026](rfcs/RFC-026-no-jukebox.md) | No jukebox mode: why the server does not play on its own output |
 | [RFC-027](rfcs/RFC-027-transcoding-profiles.md) | Transcoding profiles: per account and Subsonic client name |
+| [RFC-028](rfcs/RFC-028-update-check.md) | Telling an administrator a new version is out: a manifest on R2, asked only once an administrator agrees |
 
 ## Plans and analyses
 
