@@ -10,9 +10,15 @@
 # and SHA256SUMS. <notes.md>, when given, is the release page as published,
 # kept beside the files as RELEASE-NOTES.md: what GitHub alone holds (the list
 # of changes it generates for a pre-release, an advisory added by hand) then
-# outlives it, without waiting for a token GitLab's Free tier does not offer. `--check` prints `configured` when the four R2_* variables are
-# set, `absent` when none is, and fails naming the missing ones when only some
-# are: a half-configured mirror is a mistake, not a choice.
+# outlives it, without waiting for a token GitLab's Free tier does not offer.
+# `--check` prints `configured` when the four R2_* variables are set, `absent`
+# when none is, and fails naming the missing ones when only some are: a
+# half-configured mirror is a mistake, not a choice.
+#
+# Last, the channel manifests the update check reads (RFC-028 decision 1):
+# server/beta.json for every release, server/stable.json for a stable one,
+# written by channel-manifest.py, which leaves a newer one in place. They name
+# the release page, RELEASE_PAGE_URL, which the caller sets.
 #
 # Run by release.yml after the GitHub release, and by .gitlab-ci.yml, where R2
 # is the only download host. docs/guides/releasing.md says what to create.
@@ -21,12 +27,13 @@
 #   R2_ACCOUNT_ID                           the Cloudflare account id, or its S3 endpoint
 #   R2_BUCKET                               the bucket, shared with the desktop app
 #   R2_PUBLIC_URL                           default https://download.waveflow.app
+#   RELEASE_PAGE_URL                        the release's page, for the manifests
 #
 # The prefix keeps the server's files apart from the desktop app's, which owns
 # releases/<tag>/ and the channel manifests at the root of the same bucket: both
 # repositories tag v2.x, and a shared prefix would let one overwrite the other.
 #
-# Needs the AWS CLI, curl and sha256sum.
+# Needs the AWS CLI, curl, sha256sum and python3.
 
 set -eu
 
@@ -70,6 +77,7 @@ notes=${3:-}
 [ -z "$notes" ] || [ -s "$notes" ] || die "$notes is missing or empty"
 [ "$(check)" = configured ] || die "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID and R2_BUCKET are required"
 [ -s "$dir/SHA256SUMS" ] || die "$dir/SHA256SUMS is missing"
+[ -n "${RELEASE_PAGE_URL:-}" ] || die "RELEASE_PAGE_URL is required: the channel manifests link the release page"
 case "$tag" in
     v[0-9]*) ;;
     *) die "not a release tag: $tag" ;;
@@ -151,3 +159,43 @@ if [ -n "$notes" ]; then
     echo "$public/$prefix/RELEASE-NOTES.md serves the page uploaded"
 fi
 echo "$public/$prefix/ serves all $(echo "$files" | wc -w | tr -d ' ') files, checked against SHA256SUMS"
+
+# The channel manifests, after the files they point to are known to be served.
+# A pre-release moves beta only; a stable release moves both, so a server on a
+# pre-release hears of the stable version that follows it.
+here=$(cd "$(dirname "$0")" && pwd)
+case "${tag#v}" in
+    *-*) channels=beta ;;
+    *) channels="stable beta" ;;
+esac
+notes_url=-
+[ -z "$notes" ] || notes_url="$public/$prefix/RELEASE-NOTES.md"
+published=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for channel in $channels; do
+    current=-
+    code=$(curl --silent --show-error --location --retry 3 --output "$check_dir/current-$channel.json" \
+        --write-out '%{http_code}' "$public/server/$channel.json?v=$stamp")
+    case "$code" in
+        200) current="$check_dir/current-$channel.json" ;;
+        404) ;;
+        *) die "$public/server/$channel.json answered $code: the published manifest could not be read" ;;
+    esac
+    status=0
+    python3 "$here/channel-manifest.py" "$tag" "$RELEASE_PAGE_URL" "$notes_url" "$published" "$current" \
+        > "$check_dir/$channel.json" || status=$?
+    case "$status" in
+        0) ;;
+        3) echo "server/$channel.json names a newer version: left as it is"; continue ;;
+        *) die "the $channel manifest could not be written" ;;
+    esac
+    aws s3 cp "$check_dir/$channel.json" "s3://$R2_BUCKET/server/$channel.json" \
+        --endpoint-url "$endpoint" \
+        --content-type "application/json" \
+        --cache-control "no-cache" \
+        --only-show-errors
+    curl --fail --silent --show-error --location --retry 3 \
+        --output "$check_dir/served-$channel.json" "$public/server/$channel.json?v=$stamp-read"
+    cmp -s "$check_dir/$channel.json" "$check_dir/served-$channel.json" ||
+        die "$public/server/$channel.json is not the manifest uploaded"
+    echo "$public/server/$channel.json now names ${tag#v}"
+done
