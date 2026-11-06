@@ -15,7 +15,7 @@
 # is the only download host. docs/guides/releasing.md says what to create.
 #
 #   R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY  an R2 API token, Object Read & Write
-#   R2_ACCOUNT_ID                           the Cloudflare account; the S3 endpoint
+#   R2_ACCOUNT_ID                           the Cloudflare account id, or its S3 endpoint
 #   R2_BUCKET                               the bucket, shared with the desktop app
 #   R2_PUBLIC_URL                           default https://download.waveflow.app
 #
@@ -84,7 +84,16 @@ export AWS_DEFAULT_REGION=auto
 # whichever version the runner has.
 export AWS_REQUEST_CHECKSUM_CALCULATION=when_required
 export AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
-endpoint="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+# The account id, or the S3 endpoint the dashboard shows right beside it,
+# https://<id>.r2.cloudflarestorage.com: the secret has been set to the second
+# once already, and the upload then failed on DNS with nothing saying why.
+account=${R2_ACCOUNT_ID#https://}
+account=${account%%.*}
+case "$account" in
+    *[!0-9a-f]* | "") die "R2_ACCOUNT_ID is neither an account id nor https://<id>.r2.cloudflarestorage.com" ;;
+esac
+[ "${#account}" -eq 32 ] || die "R2_ACCOUNT_ID is neither an account id nor https://<id>.r2.cloudflarestorage.com"
+endpoint="https://$account.r2.cloudflarestorage.com"
 
 for name in $files; do
     case "$name" in
