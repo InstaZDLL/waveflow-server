@@ -173,12 +173,12 @@ Three things differ from GitHub on purpose:
    r2=https://download.waveflow.app/server/releases
    for tag in v2.1.3 v2.1.4; do
      work="$(mktemp -d)/$tag"
-     git worktree add --detach "$work" "$tag"
+     git worktree add --detach "$work" "$tag" || break
      mkdir "$work/release-assets"
      (cd "$work/release-assets" &&
        curl -fsSO "$r2/$tag/SHA256SUMS" &&
        awk '{print $2}' SHA256SUMS | xargs -I{} curl -fsSO "$r2/$tag/{}" &&
-       sha256sum -c SHA256SUMS --quiet) || break
+       sha256sum -c SHA256SUMS --quiet) &&
      (cd "$work" &&
        code=$(curl -sS -o notes.md -w '%{http_code}' "$r2/$tag/RELEASE-NOTES.md") &&
        case "$code" in
@@ -188,8 +188,11 @@ Three things differ from GitHub on purpose:
                 > notes.md || [ $? -eq 10 ] ;;
          *) echo "$tag: RELEASE-NOTES.md answered $code; stopping" >&2; false ;;
        esac &&
-       python3 "$tools/gitlab-release.py" "$tag" notes.md release-assets "$r2/$tag") || break
+       python3 "$tools/gitlab-release.py" "$tag" notes.md release-assets "$r2/$tag")
+     status=$?
+     # Removed whatever happened, so a stop leaves no worktree behind.
      git worktree remove --force "$work"
+     [ "$status" -eq 0 ] || { echo "stopped at $tag" >&2; break; }
    done
    ```
 
