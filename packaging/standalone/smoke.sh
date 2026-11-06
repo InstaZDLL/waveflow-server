@@ -96,7 +96,15 @@ found=$(cd "$folder/LICENSES" && listing *)
 # shellcheck disable=SC2086 # The notices are a list.
 wanted=$(listing COPYING FFmpeg.txt LAME.txt Opus.txt SOURCE.txt libwebp.txt $notices)
 [ "$found" = "$wanted" ] || fail "LICENSES holds $found, not $wanted"
-for said in "github.com/InstaZDLL/WaveFlow/tree/" "crates.io" "webapp/bun.lock" "FFmpeg configure line"; do
+# The core's line, whole: the revision read here from Cargo.lock, not from the
+# archive, at the address pack.sh was told to use (GitHub's by default, GitLab's
+# in .gitlab-ci.yml). A wrong revision or a lost prefix fails here.
+root=$(cd "$(dirname "$0")/../.." && pwd)
+core_revision=$(sed -n 's|^source = "git+https://github.com/InstaZDLL/WaveFlow?rev=\([0-9a-f]\{40\}\)#.*|\1|p' "$root/Cargo.lock" | head -n 1)
+[ -n "$core_revision" ] || fail "Cargo.lock names no waveflow-core revision"
+core_line="  waveflow-core   ${WAVEFLOW_CORE_TREE:-https://github.com/InstaZDLL/WaveFlow/tree}/$core_revision"
+grep -qxF "$core_line" "$folder/LICENSES/SOURCE.txt" || fail "SOURCE.txt does not say: $core_line"
+for said in "crates.io" "webapp/bun.lock" "FFmpeg configure line"; do
     grep -q "$said" "$folder/LICENSES/SOURCE.txt" || fail "SOURCE.txt does not name $said"
 done
 

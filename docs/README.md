@@ -14,6 +14,7 @@ What a client author or an operator reads first.
 | [Subsonic and OpenSubsonic guide](guides/subsonic-api-guide.md) | Clients of the `/rest` façade: authentication, the methods served, the extensions, and where WaveFlow differs from the reference server. |
 | [Running a WaveFlow Server](guides/operations.md) | Operators: the first account, backups and the instance key, reverse proxies, the optional features, scanning, older Subsonic clients and the probes. |
 | [What leaves the server](guides/privacy.md) | Operators: every outbound request the server can make, and what it sends. |
+| [Releasing, the R2 mirror and the GitLab standby](guides/releasing.md) | The maintainer: where a release goes, the second copy on GitLab and R2, and the day GitHub stops answering. |
 
 ## Compatibility
 

@@ -366,7 +366,7 @@ write_source() {
         echo "Target:   $TARGET"
         echo "Compiler: $($CC --version 2>/dev/null | head -n 1)"
         if [ -n "${BUILD_COMMIT:-}" ]; then
-            echo "Script:   https://github.com/${GITHUB_REPOSITORY:-InstaZDLL/waveflow-server}/blob/$BUILD_COMMIT/packaging/ffmpeg/build.sh"
+            echo "Script:   ${WAVEFLOW_SOURCE_BLOB:-https://github.com/${GITHUB_REPOSITORY:-InstaZDLL/waveflow-server}/blob}/$BUILD_COMMIT/packaging/ffmpeg/build.sh"
         fi
         echo
         echo "Components (licence):"
