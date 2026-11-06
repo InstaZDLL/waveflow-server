@@ -115,8 +115,10 @@ out first, whether or not it breaks a compile.
   than ten bytes where a DSF says its tag stands, for one — it passed a file
   with no tag there, and the reader may find one. This has been so since
   2.1.1, and no check of a file by its path closes it. It takes write access
-  to the library folder and a change that lands between the two reads; an
-  upload is received whole, hashed and moved into place before it is read.
+  to the library folder and a change that lands between the two reads. An
+  upload opens no such window by itself, being received whole, hashed and
+  moved into place before it is read, but nothing keeps a file from being
+  changed in the folder afterwards, by someone who can write there.
   Once the file is whole, every later read of it meets the guard again, the
   scan at the next start included. Read from the code, not measured.
 
