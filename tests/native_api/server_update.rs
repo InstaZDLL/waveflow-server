@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use waveflow_server::config::{Config, UpdateCheckPolicy};
+use waveflow_server::remote::update_check::{running_version, Channel};
 
 use super::*;
 
@@ -196,10 +197,29 @@ impl Instance {
 
 const NEWER: &str = "99.0.0";
 
+/// The manifest this build reads: `beta.json` when `Cargo.toml` names a
+/// pre-release, `stable.json` otherwise. The tests serve it rather than name
+/// one, so they hold on a release candidate as on a release.
+fn channel() -> Channel {
+    Channel::of(&running_version())
+}
+
+fn own_manifest() -> String {
+    format!("{}.json", channel().as_str())
+}
+
+/// The manifest this build must not read.
+fn other_manifest() -> &'static str {
+    match channel() {
+        Channel::Stable => "beta.json",
+        Channel::Beta => "stable.json",
+    }
+}
+
 #[tokio::test]
 async fn nothing_is_sent_until_an_administrator_answers() {
     let (host, base_url) = Host::start().await;
-    host.serve_version("stable.json", NEWER);
+    host.serve_version(&own_manifest(), NEWER);
     let instance = Instance::new(UpdateCheckPolicy::Ask, &base_url).await;
 
     assert!(!instance.check().await, "no request before an answer");
@@ -216,8 +236,9 @@ async fn nothing_is_sent_until_an_administrator_answers() {
 #[tokio::test]
 async fn a_yes_checks_and_reports_a_newer_version() {
     let (host, base_url) = Host::start().await;
-    host.serve_version("stable.json", NEWER);
-    host.serve_version("beta.json", "100.0.0-rc.1");
+    host.serve_version(&own_manifest(), NEWER);
+    // A version the test would see if the other channel were read.
+    host.serve_version(other_manifest(), "100.0.0");
     let instance = Instance::new(UpdateCheckPolicy::Ask, &base_url).await;
 
     let (code, answered) = instance.answer(true).await;
@@ -226,10 +247,10 @@ async fn a_yes_checks_and_reports_a_newer_version() {
     assert_eq!(answered["enabled"], true);
 
     assert!(instance.check().await);
-    // A stable server reads stable.json, and only it.
+    // A server reads its own channel's manifest, and only it.
     assert_eq!(host.requests(), 1);
     let status = instance.status().await;
-    assert_eq!(status["channel"], "stable");
+    assert_eq!(status["channel"], channel().as_str());
     assert_eq!(status["latest"]["version"], NEWER);
     assert_eq!(status["latest"]["tag"], format!("v{NEWER}"));
     assert_eq!(status["update_available"], true);
@@ -242,7 +263,7 @@ async fn the_running_version_or_an_older_one_is_not_an_update() {
     let (host, base_url) = Host::start().await;
     let instance = Instance::new(UpdateCheckPolicy::On, &base_url).await;
     for version in [env!("CARGO_PKG_VERSION"), "2.0.0"] {
-        host.serve_version("stable.json", version);
+        host.serve_version(&own_manifest(), version);
         assert!(instance.check().await);
         let status = instance.status().await;
         assert_eq!(status["latest"]["version"], version);
@@ -253,7 +274,7 @@ async fn the_running_version_or_an_older_one_is_not_an_update() {
 #[tokio::test]
 async fn a_no_stops_the_check_and_hides_what_was_read() {
     let (host, base_url) = Host::start().await;
-    host.serve_version("stable.json", NEWER);
+    host.serve_version(&own_manifest(), NEWER);
     let instance = Instance::new(UpdateCheckPolicy::Ask, &base_url).await;
     instance.answer(true).await;
     assert!(instance.check().await);
@@ -273,7 +294,7 @@ async fn a_no_stops_the_check_and_hides_what_was_read() {
 #[tokio::test]
 async fn the_environment_decides_under_on_and_off() {
     let (host, base_url) = Host::start().await;
-    host.serve_version("stable.json", NEWER);
+    host.serve_version(&own_manifest(), NEWER);
 
     let on = Instance::new(UpdateCheckPolicy::On, &base_url).await;
     assert!(on.check().await, "on needs no answer");
@@ -334,7 +355,7 @@ async fn a_bad_answer_is_kept_as_a_verdict() {
         ("unreadable", StatusCode::OK, "x".repeat(3 * 1024 * 1024)),
     ];
     for (verdict, status, body) in cases {
-        host.serve("stable.json", status, body);
+        host.serve(&own_manifest(), status, body);
         assert!(instance.check().await);
         let reported = instance.status().await;
         assert_eq!(reported["failure"], verdict);
@@ -343,11 +364,11 @@ async fn a_bad_answer_is_kept_as_a_verdict() {
     }
 
     // A good answer clears the verdict; a later failure keeps what it read.
-    host.serve_version("stable.json", NEWER);
+    host.serve_version(&own_manifest(), NEWER);
     assert!(instance.check().await);
     assert_eq!(instance.status().await["failure"], serde_json::Value::Null);
     host.serve(
-        "stable.json",
+        &own_manifest(),
         StatusCode::SERVICE_UNAVAILABLE,
         String::new(),
     );
@@ -368,7 +389,7 @@ async fn an_unreachable_host_is_a_verdict() {
 #[tokio::test]
 async fn a_host_that_never_answers_is_given_up_on() {
     let (host, base_url) = Host::start().await;
-    host.serve_version("stable.json", NEWER);
+    host.serve_version(&own_manifest(), NEWER);
     host.stalled.store(true, Ordering::SeqCst);
     let instance = Instance::with_timeout(
         UpdateCheckPolicy::On,

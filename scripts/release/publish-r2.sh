@@ -161,6 +161,9 @@ fi
 echo "$public/$prefix/ serves all $(echo "$files" | wc -w | tr -d ' ') files, checked against SHA256SUMS"
 
 # The channel manifests, after the files they point to are known to be served.
+# Each read is bounded, as the whole of it: a manifest is a few hundred bytes,
+# and a host answering slowly would otherwise hold the lock every later tag
+# waits on until the job's own limit.
 # A pre-release moves beta only; a stable release moves both, so a server on a
 # pre-release hears of the stable version that follows it.
 here=$(cd "$(dirname "$0")" && pwd)
@@ -173,7 +176,8 @@ notes_url=-
 published=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 for channel in $channels; do
     current=-
-    code=$(curl --silent --show-error --location --retry 3 --output "$check_dir/current-$channel.json" \
+    code=$(curl --silent --show-error --location --retry 3 --connect-timeout 10 --max-time 30 \
+        --output "$check_dir/current-$channel.json" \
         --write-out '%{http_code}' "$public/server/$channel.json?v=$stamp")
     case "$code" in
         200) current="$check_dir/current-$channel.json" ;;
@@ -193,7 +197,7 @@ for channel in $channels; do
         --content-type "application/json" \
         --cache-control "no-cache" \
         --only-show-errors
-    curl --fail --silent --show-error --location --retry 3 \
+    curl --fail --silent --show-error --location --retry 3 --connect-timeout 10 --max-time 30 \
         --output "$check_dir/served-$channel.json" "$public/server/$channel.json?v=$stamp-read"
     cmp -s "$check_dir/$channel.json" "$check_dir/served-$channel.json" ||
         die "$public/server/$channel.json is not the manifest uploaded"
