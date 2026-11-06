@@ -27,7 +27,7 @@ Everything a release is, kept where the GitHub account's fate does not reach:
 | What | Where | Kept current by |
 | --- | --- | --- |
 | The code and every signed tag | [`gitlab.com/waveflow-groupe/waveflow-server`](https://gitlab.com/waveflow-groupe/waveflow-server), private | [`mirror-gitlab.yml`](../../.github/workflows/mirror-gitlab.yml), on every push to `main` and every tag |
-| waveflow-core, the one git dependency | `gitlab.com/waveflow-groupe/WaveFlow-projet` (displayed as WaveFlow), the desktop app's backup | the desktop repository |
+| waveflow-core, the one git dependency | `gitlab.com/waveflow-groupe/WaveFlow`, the desktop app's backup | the desktop repository |
 | The archives, the FFmpeg sources, `SHA256SUMS` | `https://download.waveflow.app/server/releases/<tag>/`, the R2 bucket `waveflow-releases` | `release.yml`'s `mirror` job |
 | The release pages | the GitLab project's releases, linking to R2 | `mirror`, when `GITLAB_API_TOKEN` is set (see below) |
 | The image | Docker Hub, `instazdll/waveflow-server`: a separate account | the release itself |
@@ -126,7 +126,7 @@ Three things differ from GitHub on purpose:
    are on GitLab under the same names: say so where those readers look — the
    GitLab release pages, the README and the website — with the two GitLab
    addresses (`…/waveflow-server/-/tree/<tag>`,
-   `…/WaveFlow-projet/-/tree/<revision>`).
+   `…/WaveFlow/-/tree/<revision>`).
 4. **Turn CI/CD on** (Settings → General → Visibility → CI/CD), on the server's
    project.
 5. **Set the variables** (Settings → CI/CD → Variables), **protected**, masked

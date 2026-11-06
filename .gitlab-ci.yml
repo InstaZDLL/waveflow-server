@@ -61,12 +61,12 @@ variables:
   DOCKERHUB_IMAGE: docker.io/instazdll/waveflow-server
   # Where waveflow-core is fetched from instead of GitHub.
   CORE_UPSTREAM: https://github.com/InstaZDLL/WaveFlow
-  CORE_MIRROR_PATH: gitlab.com/waveflow-groupe/WaveFlow-projet.git
+  CORE_MIRROR_PATH: gitlab.com/waveflow-groupe/WaveFlow.git
   # What SOURCE.txt in each archive links (AGPL §6(d)): these projects, which
   # are public once GitLab is the home.
   WAVEFLOW_SOURCE_TREE: $CI_PROJECT_URL/-/tree
   WAVEFLOW_SOURCE_BLOB: $CI_PROJECT_URL/-/blob
-  WAVEFLOW_CORE_TREE: https://gitlab.com/waveflow-groupe/WaveFlow-projet/-/tree
+  WAVEFLOW_CORE_TREE: https://gitlab.com/waveflow-groupe/WaveFlow/-/tree
   LINUX_ARM64_RUNNER_TAG: saas-linux-small-arm64
   MACOS_ARM64_RUNNER_TAG: saas-macos-medium-m1
   MACOS_X86_64_RUNNER_TAG: macos-x86_64
