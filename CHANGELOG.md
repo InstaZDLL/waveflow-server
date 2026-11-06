@@ -117,6 +117,18 @@ out first, whether or not it breaks a compile.
   tag reaches the `id3` crate unchecked. It takes a read that fails for the
   guard and succeeds a moment later; no such file was built or measured. Read
   from the code in review of this release, not yet fixed.
+- **A file that changes between the guard and the reader is not covered.**
+  The guard reads a file, then lofty or the DSD reader opens it again by its
+  path. A file that grows or is rewritten between the two, such as one still
+  being copied into a scanned folder, is parsed as it then is, not as the
+  guard saw it. Where the guard met the end of the file ahead of a tag — fewer
+  than ten bytes where a DSF says its tag stands, for one — it passed a file
+  with no tag there, and the reader may find one. This has been so since
+  2.1.1, and no check of a file by its path closes it. It takes write access
+  to the library folder and a change that lands between the two reads; an
+  upload is received whole, hashed and moved into place before it is read.
+  Once the file is whole, every later read of it meets the guard again, the
+  scan at the next start included. Read from the code, not measured.
 
 ## [2.1.1] — 2026-11-05
 
