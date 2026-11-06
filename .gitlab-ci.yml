@@ -79,11 +79,6 @@ variables:
 
 # ---------------------------------------------------------------- templates
 
-.ci-rules:
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
-
 .release-rules:
   rules:
     - if: $CI_COMMIT_TAG
@@ -143,6 +138,8 @@ variables:
         - "webapp/**/*"
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+    # The pipeline run by hand on main, the first step of a switch.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"
 
 # ------------------------------------------------- checks (ci-rust.yml)
 
@@ -202,6 +199,7 @@ webapp:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: ["webapp/**/*", scripts/check-webapp-layout.sh, .gitlab-ci.yml]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"
   script:
     - sh scripts/check-webapp-layout.sh
     - cd webapp
@@ -244,6 +242,7 @@ webapp:
         - "assets/scalar/**/*"
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"
 
 # Built, booted with no configuration, its HEALTHCHECK waited for, and the
 # FFmpeg-bound test targets run inside it against the FFmpeg it ships. With
@@ -700,8 +699,10 @@ publish:
     - apk add --no-cache aws-cli coreutils curl python3
     - test "$(sh scripts/release/publish-r2.sh --check)" = configured || { echo "the four R2_* variables are required"; exit 1; }
     - sh scripts/release/publish-r2.sh release-assets "$CI_COMMIT_TAG"
+    # A project variable set empty would otherwise blank the global default.
+    - export R2_PUBLIC_URL="${R2_PUBLIC_URL:-https://download.waveflow.app}"
     - base="${R2_PUBLIC_URL%/}/server/releases/$CI_COMMIT_TAG"
     - status=0
     - sh scripts/release/release-notes.sh "$CI_COMMIT_TAG" "$base" "$CI_REGISTRY_IMAGE" "${DOCKERHUB_IMAGE#docker.io/}" > notes.md || status=$?
-    - test "$status" -eq 0 || test "$status" -eq 2
+    - test "$status" -eq 0 || test "$status" -eq 10
     - python3 scripts/release/gitlab-release.py "$CI_COMMIT_TAG" notes.md release-assets "$base"

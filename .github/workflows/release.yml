@@ -318,6 +318,16 @@ jobs:
           ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
 
+      # The release scripts come from the commit this workflow runs from, not
+      # from the tag: a retried tag older than scripts/release/ has none, and a
+      # missing script must not read as a release without notes.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .release-tools
+          sparse-checkout: scripts/release
+          persist-credentials: false
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: standalone-release
@@ -348,16 +358,16 @@ jobs:
 
           # Written notes come first, when the tag carries them; the downloads
           # and the pull commands follow, so a reader who scrolls past the prose
-          # still finds them. Without notes (the script exits 2), the generated
+          # still finds them. Without notes (the script exits 10), the generated
           # list is all the page has. The script is shared with .gitlab-ci.yml,
           # which points the same table at the R2 copy.
           status=0
-          sh scripts/release/release-notes.sh "$TAG" \
+          sh .release-tools/scripts/release/release-notes.sh "$TAG" \
             "https://github.com/$GH_REPO/releases/download/$TAG" \
             "$IMAGE" "${HUB_IMAGE#docker.io/}" > notes.md || status=$?
           case "$status" in
             0) ;;
-            2) generate="--generate-notes" ;;
+            10) generate="--generate-notes" ;;
             *) exit "$status" ;;
           esac
 
@@ -400,23 +410,26 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+    # Each secret is given to the steps that use it, not to the whole job.
     env:
-      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-      R2_BUCKET: ${{ secrets.R2_BUCKET }}
       R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL || 'https://download.waveflow.app' }}
-      GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
-      GITLAB_PROJECT: ${{ vars.GITLAB_PROJECT || 'waveflow-groupe/waveflow-server' }}
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      # Nothing of the tag is read here: only the scripts of this workflow's
+      # commit, which a retried tag older than them would not carry.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: scripts/release
           persist-credentials: false
 
       - id: r2
         name: Check the R2 secrets
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           state="$(sh scripts/release/publish-r2.sh --check)"
           echo "state=$state" >> "$GITHUB_OUTPUT"
@@ -432,6 +445,11 @@ jobs:
 
       - name: Copy the files to R2
         if: steps.r2.outputs.state == 'configured'
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: sh scripts/release/publish-r2.sh release-assets "$TAG"
 
       # The page as GitHub shows it, generated list included, with its download
@@ -442,6 +460,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
+          GITLAB_PROJECT: ${{ vars.GITLAB_PROJECT || 'waveflow-groupe/waveflow-server' }}
         run: |
           if [ -z "$GITLAB_API_TOKEN" ]; then
             echo "::notice::GITLAB_API_TOKEN is not set: the GitLab release of $TAG is skipped"

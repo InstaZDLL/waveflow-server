@@ -111,6 +111,11 @@ for name in $files; do
     curl --fail --silent --show-error --location --retry 3 \
         --output "$check_dir/$name" "$public/$prefix/$name?v=$stamp"
 done
-(cd "$check_dir" && sha256sum -c SHA256SUMS --quiet) ||
-    die "the files served at $public/$prefix/ do not match SHA256SUMS"
+# Against the local SHA256SUMS, not the one served: a domain answering another
+# release's set, consistent with itself, would pass a check against its own.
+cmp -s "$dir/SHA256SUMS" "$check_dir/SHA256SUMS" ||
+    die "$public/$prefix/SHA256SUMS is not the one uploaded"
+cp "$dir/SHA256SUMS" "$check_dir/SHA256SUMS.uploaded"
+(cd "$check_dir" && sha256sum -c SHA256SUMS.uploaded --quiet) ||
+    die "the files served at $public/$prefix/ do not match the uploaded SHA256SUMS"
 echo "$public/$prefix/ serves all $(echo "$files" | wc -w | tr -d ' ') files, checked against SHA256SUMS"

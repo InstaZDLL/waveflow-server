@@ -10,10 +10,12 @@
 # Docker Hub's, without `docker.io/`. The FFmpeg sources' name is read from
 # release-assets/, where both pipelines put what they attach.
 #
-# Exits 2, with the page written, when the tag has no notes: the caller then
+# Exits 10, with the page written, when the tag has no notes: the caller then
 # asks its platform to append the list of merged changes, as GitHub does with
 # `--generate-notes`. A pre-release has the list either way; release.yml
-# decides that.
+# decides that. Not 1 or 2, which a shell returns on its own for a script it
+# could not run: dash exits 2 when the file is missing, and that must never
+# read as "no notes".
 
 set -eu
 
@@ -37,7 +39,7 @@ if [ -s "$notes_file" ]; then
     cat "$notes_file"
     printf '\n'
 else
-    status=2
+    status=10
 fi
 
 sources=$(basename release-assets/ffmpeg-*-sources.tar.gz)

@@ -42,7 +42,9 @@ def api():
     token = os.environ.get("GITLAB_API_TOKEN")
     if token:
         project = os.environ.get("GITLAB_PROJECT") or os.environ.get("CI_PROJECT_ID")
-        header = ("PRIVATE-TOKEN", token)
+        # Bearer rather than PRIVATE-TOKEN: GitLab takes a personal or project
+        # token that way too, and an OAuth token (glab's) only that way.
+        header = ("Authorization", f"Bearer {token}")
     else:
         project = os.environ.get("CI_PROJECT_ID")
         header = ("JOB-TOKEN", os.environ.get("CI_JOB_TOKEN", ""))
