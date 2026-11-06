@@ -40,8 +40,11 @@ out first, whether or not it breaks a compile.
   shipped — 2.1.1 refuses those files, measured on its tag; it was found in
   review of #431, in the walk that pull request first proposed. A seeded sweep
   of 100,000 malformed WAV and 100,000 malformed AIFF layouts now runs with
-  the tests, reading each through lofty and through the guard: no file whose
-  tag lofty parses may pass.
+  the tests. Each layout is built twice around one tag chunk: lofty reads the
+  twin whose tag it refuses with an error of its own, which shows it handed
+  that chunk to its ID3v2 parser, and the guard's chunk walk (`check_chunks`,
+  not the scan of the file's head) reads the twin that nests chapter frames.
+  No layout whose tag lofty parses may pass the walk.
 
 ### Fixed
 
@@ -101,6 +104,19 @@ out first, whether or not it breaks a compile.
   and an interrupted read is retried. Read from the code in review of the
   2.1.2 release, raised by CodeRabbit on #432; outside the tests, no file was
   made to fail a read on demand.
+
+### Known issues
+
+- **A DSF or DFF file whose header cannot be read still passes the guard.**
+  The refusal of a failed read covers the scan of a file's head, the walk of a
+  WAV or an AIFF, and the read of any tag once it is located, in a DSD file
+  too. It does not cover the short reads that locate the tag of a DSD file: the
+  four bytes naming the container, the offset a DSF gives its tag, and the
+  length and the chunk headers of a DFF. A failure of one of those still passes
+  the file, as in 2.1.1, and if the DSD reader's own read then succeeds, the
+  tag reaches the `id3` crate unchecked. It takes a read that fails for the
+  guard and succeeds a moment later; no such file was built or measured. Read
+  from the code in review of this release, not yet fixed.
 
 ## [2.1.1] — 2026-11-05
 
