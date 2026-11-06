@@ -143,10 +143,10 @@ pub fn check_file(path: &Path) -> Result<(), Refusal> {
 }
 
 /// [`check_file`] over a reader, from where it stands, which is where it is left.
+/// A reader that cannot tell where it stands has had nothing checked, and the
+/// parser opens the file for itself, so that too is [`Refusal::ReadFailed`].
 pub fn check_reader<R: Read + Seek>(reader: &mut R) -> Result<(), Refusal> {
-    let Ok(start) = reader.stream_position() else {
-        return Ok(());
-    };
+    let start = reader.stream_position().map_err(|_| Refusal::ReadFailed)?;
     let mut budget = MAX_SCAN_BYTES;
     let verdict = check_tags_from(reader, start, &mut budget);
     if reader.seek(SeekFrom::Start(start)).is_err() {
@@ -163,19 +163,27 @@ pub fn check_reader<R: Read + Seek>(reader: &mut R) -> Result<(), Refusal> {
 /// head scan of [`check_file`] would find it, so the blob is located the same
 /// way the reader does and checked on its own. A container this cannot make
 /// sense of passes: the reader will meet the same bytes and read nothing from
-/// them.
+/// them. A file that ends before a header the walk needs passes for the same
+/// reason. A read of such a header that fails does not: the reader's own read
+/// of the same bytes may succeed, so it is refused as [`Refusal::ReadFailed`],
+/// like a failed read anywhere else.
 pub fn check_dsd(path: &Path) -> Result<(), Refusal> {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return Ok(());
-    };
+    match std::fs::File::open(path) {
+        Ok(mut file) => check_dsd_reader(&mut file),
+        Err(_) => Ok(()),
+    }
+}
+
+/// [`check_dsd`] over a reader, from its first byte.
+fn check_dsd_reader<R: Read + Seek>(file: &mut R) -> Result<(), Refusal> {
     let mut magic = [0_u8; 4];
-    if file.read_exact(&mut magic).is_err() {
+    if !read_header(file, 0, &mut magic)? {
         return Ok(());
     }
     let mut budget = MAX_SCAN_BYTES;
     match &magic {
-        b"DSD " => check_dsf_blob(&mut file, &mut budget),
-        b"FRM8" => check_dff_blobs(&mut file, &mut budget),
+        b"DSD " => check_dsf_blob(file, &mut budget),
+        b"FRM8" => check_dff_blobs(file, &mut budget),
         _ => Ok(()),
     }
 }
@@ -183,7 +191,7 @@ pub fn check_dsd(path: &Path) -> Result<(), Refusal> {
 /// The ID3 blob a `DSF` names at byte twenty, read to the file's end and checked.
 fn check_dsf_blob<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), Refusal> {
     let mut offset = [0_u8; 8];
-    if file.seek(SeekFrom::Start(20)).is_err() || file.read_exact(&mut offset).is_err() {
+    if !read_header(file, 20, &mut offset)? {
         return Ok(());
     }
     let offset = u64::from_le_bytes(offset);
@@ -195,9 +203,11 @@ fn check_dsf_blob<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), 
 
 /// Every `ID3 ` chunk of a `DFF` `FRM8` form, checked where it sits.
 fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(), Refusal> {
-    let Ok(end) = file.seek(SeekFrom::End(0)) else {
-        return Ok(());
-    };
+    // A walk that cannot learn how long the file is cannot walk it, while the
+    // DSD reader walks it all the same: refused, not passed unwalked.
+    let end = file
+        .seek(SeekFrom::End(0))
+        .map_err(|_| Refusal::ReadFailed)?;
     // `FRM8` <8-byte size> "DSD " then the form's chunks.
     let mut at = 16_u64;
     let mut chunks = 0;
@@ -210,7 +220,7 @@ fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(),
             return Err(Refusal::OverBudget);
         }
         let mut header = [0_u8; 12];
-        if file.seek(SeekFrom::Start(at)).is_err() || file.read_exact(&mut header).is_err() {
+        if !read_header(file, at, &mut header)? {
             return Ok(());
         }
         let size = u64::from_be_bytes([
@@ -227,6 +237,21 @@ fn check_dff_blobs<R: Read + Seek>(file: &mut R, budget: &mut u64) -> Result<(),
         at = if size % 2 == 1 { next + 1 } else { next };
     }
     Ok(())
+}
+
+/// Fills `buffer` with the header standing at `at`, which the walk of a DSD
+/// file cannot go on without. `false` when the file ends before the header is
+/// whole: there is no such header then, for the DSD reader either. A read that
+/// fails is another matter — the reader's own read of those bytes may succeed
+/// and lead it to a tag this walk never located — so it is refused. An
+/// interrupted read is retried by [`read_at`].
+fn read_header<R: Read + Seek>(
+    reader: &mut R,
+    at: u64,
+    buffer: &mut [u8],
+) -> Result<bool, Refusal> {
+    let read = read_at(reader, at, buffer).map_err(|_| Refusal::ReadFailed)?;
+    Ok(read == buffer.len())
 }
 
 /// What [`read_declared`] found at a position.

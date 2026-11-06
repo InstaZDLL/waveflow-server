@@ -322,6 +322,22 @@ fn a_wav_whose_length_cannot_be_read_is_refused() {
     assert_eq!(check_reader(&mut reader), Err(Refusal::ReadFailed));
 }
 
+/// The same for a `DFF`, whose chunks are walked up to the length of the file:
+/// a walk that cannot learn that length is refused rather than passed unwalked,
+/// since the DSD reader walks the chunks all the same. The control, read
+/// whole, is refused for the nesting.
+#[test]
+fn a_dff_whose_length_cannot_be_read_is_refused() {
+    let file = dff(&tag(&nested(4, &[b"CHAP"], 64)));
+    assert_eq!(
+        check_dsd_reader(&mut Cursor::new(file.clone())),
+        Err(Refusal::Nested),
+        "the control"
+    );
+    let mut reader = NoSeekToEnd(Cursor::new(file));
+    assert_eq!(check_dsd_reader(&mut reader), Err(Refusal::ReadFailed));
+}
+
 /// The two refusals read differently, since one of them found no nesting.
 #[test]
 fn an_exhausted_budget_does_not_claim_a_nesting() {
