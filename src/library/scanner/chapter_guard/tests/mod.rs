@@ -2,6 +2,7 @@ use std::io::Cursor;
 
 use super::*;
 
+mod differential;
 mod large_files;
 mod lofty_walk;
 
