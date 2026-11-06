@@ -18,7 +18,8 @@ Run in two places, with two ways in:
   access token needs a paid tier on GitLab.com, so on the Free tier this is
   left unset and the step skipped; the releases are rebuilt from the tags at
   the switch (docs/guides/releasing.md). GITLAB_API_URL defaults to
-  https://gitlab.com/api/v4;
+  https://gitlab.com/api/v4, and GITLAB_TAG_WAIT (600) is how many seconds
+  to wait for the tag to arrive;
 - by hand, with the same two variables, to recreate a release the backup
   lacks.
 
@@ -32,6 +33,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -79,14 +81,23 @@ def main():
     quoted = urllib.parse.quote(tag, safe="")
 
     # A tag pipeline has its tag by definition, and a job token may not read
-    # the repository API; only the mirror from GitHub has to ask.
+    # the repository API; only the mirror from GitHub has to ask. It asks for a
+    # while: the tag reaches GitLab through mirror-gitlab.yml, a separate run
+    # that may still be queued when the release gets here, and giving up at the
+    # first 404 would leave the release without its page for good.
     if os.environ.get("GITLAB_API_TOKEN"):
-        try:
-            call("GET", f"/repository/tags/{quoted}")
-        except urllib.error.HTTPError as err:
-            if err.code == 404:
-                sys.exit(f"{tag} is not on GitLab yet: push the tag first (mirror-gitlab.yml does)")
-            raise
+        deadline = time.monotonic() + int(os.environ.get("GITLAB_TAG_WAIT", "600"))
+        while True:
+            try:
+                call("GET", f"/repository/tags/{quoted}")
+                break
+            except urllib.error.HTTPError as err:
+                if err.code != 404:
+                    raise
+            if time.monotonic() >= deadline:
+                sys.exit(f"{tag} is still not on GitLab: push the tag first (mirror-gitlab.yml does)")
+            print(f"{tag} is not on GitLab yet; asking again in 30 s", flush=True)
+            time.sleep(30)
 
     links = [
         {
