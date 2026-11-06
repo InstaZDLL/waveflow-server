@@ -455,6 +455,43 @@ fn a_list_info_of_more_items_than_the_walk_follows_is_refused() {
     assert_eq!(check_file_bytes(&riff), Err(Refusal::OverBudget));
 }
 
+/// The items of every `LIST INFO` are read against the budget of the whole
+/// file, not one of their own: ten lists, each well within a budget of 200
+/// bytes, are refused once their item headers together are past it. The control, one
+/// list under the same budget, passes.
+#[test]
+fn the_items_of_many_lists_share_the_files_budget() {
+    let riff_of_lists = |lists: usize| {
+        let mut body = b"WAVE".to_vec();
+        for _ in 0..lists {
+            body.extend_from_slice(b"LIST");
+            body.extend_from_slice(&28_u32.to_le_bytes());
+            body.extend_from_slice(b"INFO");
+            for _ in 0..3 {
+                body.extend_from_slice(b"INAM\0\0\0\0");
+            }
+        }
+        let mut riff = b"RIFF".to_vec();
+        riff.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        riff.extend_from_slice(&body);
+        riff
+    };
+    // A list costs its header, its type and three item headers: 36 bytes, so
+    // ten cost 360. Walked on budgets of their own, the items would leave the
+    // file only the ten list headers to pay, 80 bytes, and pass.
+    let walk = |lists: usize| {
+        let mut budget = 200_u64;
+        check_chunks(
+            &mut Cursor::new(riff_of_lists(lists)),
+            0,
+            false,
+            &mut budget,
+        )
+    };
+    assert_eq!(walk(1), Ok(()), "the control");
+    assert_eq!(walk(10), Err(Refusal::OverBudget));
+}
+
 /// The read of a tag body stops at the cap, so a header declaring a huge size
 /// cannot allocate past the caller's budget before it is refused.
 #[test]
