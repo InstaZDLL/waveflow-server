@@ -30,11 +30,14 @@
 
 set -eu
 
+# Prints its arguments on stderr and stops the script with status 1.
 die() {
     echo "$*" >&2
     exit 1
 }
 
+# Prints `configured` when the four R2_* variables are all set and `absent`
+# when none is; dies naming the missing ones when only some are.
 check() {
     set_vars=
     missing=
