@@ -114,7 +114,8 @@ out first, whether or not it breaks a compile.
   guard saw it. Where the guard met the end of the file ahead of a tag — fewer
   than ten bytes where a DSF says its tag stands, for one — it passed a file
   with no tag there, and the reader may find one. This has been so since
-  2.1.1, and no check of a file by its path closes it. It takes write access
+  2.1.1: the guard and the reader each open the file and read it at their own
+  moment, so a change between the two cannot be ruled out. It takes write access
   to the library folder and a change that lands between the two reads. An
   upload opens no such window by itself, being received whole, hashed and
   moved into place before it is read, but nothing keeps a file from being
