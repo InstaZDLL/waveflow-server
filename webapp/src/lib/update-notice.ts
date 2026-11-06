@@ -47,6 +47,7 @@ export function readDismissedVersion(): string | null {
   }
 }
 
+/** Stops announcing `version` in this browser; a newer one is announced again. */
 export function dismissVersion(version: string): void {
   try {
     window.localStorage.setItem(DISMISSED_KEY, version);

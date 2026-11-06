@@ -19,6 +19,7 @@ struct Host {
 }
 
 impl Host {
+    /// Serves the host on a loopback port and returns it with its address.
     async fn start() -> (Self, String) {
         let host = Self::default();
         let served = host.clone();
@@ -49,6 +50,7 @@ impl Host {
         (host, format!("http://{address}"))
     }
 
+    /// Answers `file` with this status and body from now on.
     fn serve(&self, file: &str, status: StatusCode, body: String) {
         self.answers
             .lock()
@@ -56,6 +58,7 @@ impl Host {
             .insert(file.to_owned(), (status, body));
     }
 
+    /// Answers `file` with a coherent manifest naming `version`.
     fn serve_version(&self, file: &str, version: &str) {
         self.serve(
             file,
@@ -71,6 +74,7 @@ impl Host {
         );
     }
 
+    /// How many requests the host has received, whatever they asked for.
     fn requests(&self) -> usize {
         self.requests.load(Ordering::SeqCst)
     }
@@ -87,10 +91,12 @@ struct Instance {
 }
 
 impl Instance {
+    /// An instance with the check's default timeout.
     async fn new(policy: UpdateCheckPolicy, base_url: &str) -> Self {
         Self::with_timeout(policy, base_url, std::time::Duration::from_secs(5)).await
     }
 
+    /// An instance whose check gives up after `timeout`.
     async fn with_timeout(
         policy: UpdateCheckPolicy,
         base_url: &str,
@@ -144,6 +150,7 @@ impl Instance {
         }
     }
 
+    /// One request to the route, as the token's account, and its decoded answer.
     async fn call(
         &self,
         method: Method,
@@ -175,12 +182,14 @@ impl Instance {
         (status, value)
     }
 
+    /// What the route tells the administrator, asserted to be a 200.
     async fn status(&self) -> serde_json::Value {
         let (status, body) = self.call(Method::GET, &self.admin_token, None).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         body
     }
 
+    /// The administrator's answer to the question, as the web client sends it.
     async fn answer(&self, enabled: bool) -> (StatusCode, serde_json::Value) {
         self.call(
             Method::PUT,
@@ -190,6 +199,7 @@ impl Instance {
         .await
     }
 
+    /// One check, as the background task runs it; whether a request was made.
     async fn check(&self) -> bool {
         self.state.services.check_for_update().await.unwrap()
     }
@@ -204,6 +214,7 @@ fn channel() -> Channel {
     Channel::of(&running_version())
 }
 
+/// The file name of [`channel`]'s manifest.
 fn own_manifest() -> String {
     format!("{}.json", channel().as_str())
 }
@@ -216,6 +227,7 @@ fn other_manifest() -> &'static str {
     }
 }
 
+/// Under `ask`, no request leaves before an administrator's yes.
 #[tokio::test]
 async fn nothing_is_sent_until_an_administrator_answers() {
     let (host, base_url) = Host::start().await;
@@ -233,6 +245,7 @@ async fn nothing_is_sent_until_an_administrator_answers() {
     assert_eq!(status["current"], env!("CARGO_PKG_VERSION"));
 }
 
+/// A yes is stored, and the check reads its own channel and reports the version.
 #[tokio::test]
 async fn a_yes_checks_and_reports_a_newer_version() {
     let (host, base_url) = Host::start().await;
@@ -258,6 +271,7 @@ async fn a_yes_checks_and_reports_a_newer_version() {
     assert!(status["checked_at"].as_i64().is_some());
 }
 
+/// Only a newer version is an update.
 #[tokio::test]
 async fn the_running_version_or_an_older_one_is_not_an_update() {
     let (host, base_url) = Host::start().await;
@@ -271,6 +285,7 @@ async fn the_running_version_or_an_older_one_is_not_an_update() {
     }
 }
 
+/// A no stops the requests and stops showing what an earlier check read.
 #[tokio::test]
 async fn a_no_stops_the_check_and_hides_what_was_read() {
     let (host, base_url) = Host::start().await;
@@ -291,6 +306,7 @@ async fn a_no_stops_the_check_and_hides_what_was_read() {
     assert_eq!(host.requests(), 1, "nothing sent after the no");
 }
 
+/// `on` and `off` need no answer and refuse one with a 409.
 #[tokio::test]
 async fn the_environment_decides_under_on_and_off() {
     let (host, base_url) = Host::start().await;
@@ -313,6 +329,7 @@ async fn the_environment_decides_under_on_and_off() {
     assert_eq!(host.requests(), 1, "only the instance that is on asked");
 }
 
+/// An account that is not an administrator can neither read nor answer.
 #[tokio::test]
 async fn a_listener_is_refused_both_routes() {
     let (_host, base_url) = Host::start().await;
@@ -336,6 +353,7 @@ async fn a_listener_is_refused_both_routes() {
     );
 }
 
+/// Each kind of bad answer becomes its verdict; a good one clears it.
 #[tokio::test]
 async fn a_bad_answer_is_kept_as_a_verdict() {
     let (host, base_url) = Host::start().await;
@@ -378,6 +396,7 @@ async fn a_bad_answer_is_kept_as_a_verdict() {
     assert_eq!(reported["latest"]["version"], NEWER);
 }
 
+/// A host that cannot be reached is a verdict, not an error.
 #[tokio::test]
 async fn an_unreachable_host_is_a_verdict() {
     // The test configuration's closed loopback port.
@@ -386,6 +405,7 @@ async fn an_unreachable_host_is_a_verdict() {
     assert_eq!(instance.status().await["failure"], "unreachable");
 }
 
+/// A host that never answers is given up on within the check's timeout.
 #[tokio::test]
 async fn a_host_that_never_answers_is_given_up_on() {
     let (host, base_url) = Host::start().await;

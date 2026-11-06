@@ -1,9 +1,11 @@
 use super::*;
 
+/// A version these tests know to be valid.
 fn version(raw: &str) -> semver::Version {
     semver::Version::parse(raw).unwrap()
 }
 
+/// A coherent manifest naming `raw_version`.
 fn manifest(raw_version: &str) -> Manifest {
     Manifest {
         version: raw_version.to_owned(),
@@ -16,6 +18,7 @@ fn manifest(raw_version: &str) -> Manifest {
     }
 }
 
+/// The channel follows the version's pre-release part.
 #[test]
 fn a_pre_release_follows_beta_and_a_release_follows_stable() {
     assert_eq!(Channel::of(&version("2.1.2")), Channel::Stable);
@@ -23,6 +26,7 @@ fn a_pre_release_follows_beta_and_a_release_follows_stable() {
     assert_eq!(Channel::of(&version("2.0.0-beta.1")), Channel::Beta);
 }
 
+/// The order the release script uses, pre-releases and build metadata included.
 #[test]
 fn newer_follows_semantic_versioning_precedence() {
     // The order the release script holds itself to, so the two agree.
@@ -49,6 +53,7 @@ fn newer_follows_semantic_versioning_precedence() {
     assert!(!is_newer(&version("2.1.2+b.2"), &version("2.1.2+b.1")));
 }
 
+/// A manifest the release script writes passes, with notes or without.
 #[test]
 fn a_coherent_manifest_is_accepted() {
     assert_eq!(
@@ -64,6 +69,7 @@ fn a_coherent_manifest_is_accepted() {
     assert!(validate(&without_notes, Channel::Stable).is_ok());
 }
 
+/// Each incoherence, links that are not web addresses included, is refused.
 #[test]
 fn an_incoherent_manifest_is_refused() {
     let mut cases = Vec::new();
@@ -100,6 +106,7 @@ fn an_incoherent_manifest_is_refused() {
     }
 }
 
+/// `Cargo.toml`'s version is one the check can compare.
 #[test]
 fn the_running_version_parses() {
     assert_eq!(running_version().to_string(), env!("CARGO_PKG_VERSION"));

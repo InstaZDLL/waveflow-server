@@ -36,6 +36,7 @@ pub(super) struct UpdateRuntime {
 }
 
 impl UpdateRuntime {
+    /// The runtime for these settings, with nothing known yet.
     pub(super) fn new(settings: UpdateCheckSettings) -> Self {
         // Building sends nothing. A client that cannot be built (no TLS
         // roots) leaves the check unable to run, and says so once.

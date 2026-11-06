@@ -10,6 +10,7 @@ import {
 } from "../../../api/queries";
 import { useI18n } from "../../../state/i18n";
 
+/** The switch of the update check and what it last found; administrators only. */
 export function UpdatesPanel() {
   const { t, locale } = useI18n();
   const queryClient = useQueryClient();
@@ -19,6 +20,7 @@ export function UpdatesPanel() {
 
   if (!status) return null;
 
+  /** Records the administrator's answer and shows the server's state after it. */
   async function turn(enabled: boolean) {
     setBusy(true);
     setFailed(false);

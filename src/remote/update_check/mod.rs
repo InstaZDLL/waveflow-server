@@ -147,6 +147,7 @@ impl UpdateClient {
             .unwrap_or(Err(Failure::Unreachable))
     }
 
+    /// The request and the read, unbounded in time: [`Self::fetch`] bounds them.
     async fn read(&self, channel: Channel) -> Result<(Manifest, semver::Version), Failure> {
         let response = self
             .http

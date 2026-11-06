@@ -65,6 +65,7 @@ function UpdateDialog({ notice, current, onClose, onDismiss }: DialogProps) {
     if (node && !node.open) node.showModal();
   }, []);
 
+  /** Records the answer to the question; a yes asks for the status again soon. */
   async function answer(enabled: boolean) {
     setBusy(true);
     setFailed(false);
