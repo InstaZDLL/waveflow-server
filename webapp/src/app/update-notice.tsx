@@ -5,7 +5,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { currentUser, setUpdateCheck } from "../api";
-import { updateStatusQuery } from "../api/queries";
+import { refreshUpdateStatusSoon, updateStatusQuery } from "../api/queries";
 import {
   dismissVersion,
   readDismissedVersion,
@@ -71,15 +71,7 @@ function UpdateDialog({ notice, current, onClose, onDismiss }: DialogProps) {
     try {
       const status = await setUpdateCheck(enabled);
       queryClient.setQueryData(updateStatusQuery().queryKey, status);
-      // A yes starts a check on the server; ask again once it has had time
-      // to read the manifest, so a version already out shows this session.
-      if (enabled) {
-        window.setTimeout(() => {
-          void queryClient.invalidateQueries({
-            queryKey: updateStatusQuery().queryKey,
-          });
-        }, 15_000);
-      }
+      if (enabled) refreshUpdateStatusSoon(queryClient);
     } catch {
       setFailed(true);
     } finally {

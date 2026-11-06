@@ -1,6 +1,6 @@
 // The running server itself, as distinct from anything it holds.
 
-import { queryOptions } from "@tanstack/react-query";
+import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import {
   ApiError,
   getServerIdentity,
@@ -79,3 +79,19 @@ export const updateStatusQuery = () =>
     retry: false,
     refetchOnWindowFocus: false,
   });
+
+/**
+ * After an administrator turns the check on: the server reads its manifest at
+ * once, in the background, and the `PUT` answers before it has. Asked again a
+ * little later — twice, the second past the check's own timeout — so a version
+ * already out is shown in this session, from the dialog or from Settings alike.
+ */
+export function refreshUpdateStatusSoon(queryClient: QueryClient): void {
+  for (const delay of [5_000, 20_000]) {
+    window.setTimeout(() => {
+      void queryClient.invalidateQueries({
+        queryKey: updateStatusQuery().queryKey,
+      });
+    }, delay);
+  }
+}

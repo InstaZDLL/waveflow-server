@@ -4,7 +4,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { setUpdateCheck } from "../../../api";
-import { updateStatusQuery } from "../../../api/queries";
+import {
+  refreshUpdateStatusSoon,
+  updateStatusQuery,
+} from "../../../api/queries";
 import { useI18n } from "../../../state/i18n";
 
 export function UpdatesPanel() {
@@ -22,6 +25,7 @@ export function UpdatesPanel() {
     try {
       const next = await setUpdateCheck(enabled);
       queryClient.setQueryData(updateStatusQuery().queryKey, next);
+      if (enabled) refreshUpdateStatusSoon(queryClient);
     } catch {
       setFailed(true);
     } finally {

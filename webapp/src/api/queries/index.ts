@@ -70,6 +70,7 @@ export {
   unavailableTracksQuery,
 } from "./maintenance";
 export {
+  refreshUpdateStatusSoon,
   serverIdentityQuery,
   transcodeStatusQuery,
   transcodingProfilesQuery,
