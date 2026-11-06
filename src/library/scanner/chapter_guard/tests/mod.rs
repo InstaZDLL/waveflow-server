@@ -3,6 +3,7 @@ use std::io::Cursor;
 use super::*;
 
 mod differential;
+mod failed_reads;
 mod large_files;
 mod lofty_walk;
 

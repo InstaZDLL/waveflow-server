@@ -79,6 +79,19 @@ out first, whether or not it breaks a compile.
   a WAV or AIFF: the seek to the file's end that measures it, and the header
   and the body of a chunk, whose failure still skipped the check of the tags
   behind it.
+- **The chapter guard refuses a DSD file whose header it fails to read**
+  (#433). The refusal of a failed read (#429) covered the scan of a file's
+  head and the read of a tag once located, but not the short reads that locate
+  the tag of a `DSF` or `DFF` file: the four bytes naming the container, the
+  offset a `DSF` gives its tag, the length and the chunk headers of a `DFF`. A
+  failure of one of those still passed the file, as in 2.1.1, and the DSD
+  reader's own read of the same bytes could then succeed and hand the tag to
+  the `id3` crate unchecked. They are now refused like any other failed read,
+  and so is a reader that cannot tell where it stands. A file that merely ends
+  before such a header still passes, since the DSD reader meets the same end,
+  and an interrupted read is retried. Read from the code in review of the
+  2.1.2 release, raised by CodeRabbit on #432; outside the tests, no file was
+  made to fail a read on demand.
 
 ## [2.1.1] — 2026-11-05
 
