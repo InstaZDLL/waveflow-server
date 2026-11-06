@@ -96,7 +96,8 @@ found=$(cd "$folder/LICENSES" && listing *)
 # shellcheck disable=SC2086 # The notices are a list.
 wanted=$(listing COPYING FFmpeg.txt LAME.txt Opus.txt SOURCE.txt libwebp.txt $notices)
 [ "$found" = "$wanted" ] || fail "LICENSES holds $found, not $wanted"
-for said in "github.com/InstaZDLL/WaveFlow/tree/" "crates.io" "webapp/bun.lock" "FFmpeg configure line"; do
+# The host is GitHub or GitLab depending on where it was built (pack.sh).
+for said in "waveflow-core   https://" "crates.io" "webapp/bun.lock" "FFmpeg configure line"; do
     grep -q "$said" "$folder/LICENSES/SOURCE.txt" || fail "SOURCE.txt does not name $said"
 done
 

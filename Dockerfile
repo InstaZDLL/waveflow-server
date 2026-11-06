@@ -17,7 +17,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 COPY . .
 # After COPY . ., so the built assets win over any stale local dist/.
 COPY --from=web /web/dist ./webapp/dist
-RUN cargo build --locked --release
+# waveflow-core is a git dependency on GitHub. A build that cannot reach it
+# (.gitlab-ci.yml) hands in a git config redirecting that URL, as the optional
+# `gitconfig` secret, so no layer keeps it; cargo then fetches with git itself,
+# the fetcher that reads the redirect. Without the secret this is a plain build.
+RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig \
+    if [ -s /root/.gitconfig ]; then export CARGO_NET_GIT_FETCH_WITH_CLI=true; fi; \
+    cargo build --locked --release
 
 FROM debian:trixie-slim
 # No curl: the healthcheck below is the binary asking itself (#394), and curl

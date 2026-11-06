@@ -1,0 +1,707 @@
+# GitLab CI/CD: the standby twin of .github/workflows/ (ci-rust, ci-web,
+# ci-image, release, standalone, ffmpeg).
+#
+# Nothing runs it while the repository lives on GitHub: the backup at
+# gitlab.com/waveflow-groupe/waveflow-server has CI/CD turned off, and
+# mirror-gitlab.yml pushes to it with `ci.skip`. It is here so that losing the
+# GitHub account costs an afternoon of settings rather than a rewrite of the
+# release at the worst moment. docs/guides/releasing.md#switching-to-gitlab
+# says what to turn on, which variables to set, and what does not come across.
+#
+# What it covers:
+#   - on a merge request and on the default branch: the checks of ci-rust.yml,
+#     ci-web.yml and ci-image.yml;
+#   - on a tag vX.Y.Z[-suffix]: what release.yml does. The image is built per
+#     architecture, pushed by digest to GitLab's registry and Docker Hub, and
+#     joined under the version and `latest` or `beta`; the five standalone
+#     archives are built, signed, smoke-tested and checksummed as standalone.yml
+#     and ffmpeg.yml do; the files go to R2 and a GitLab release links there.
+#
+# The release logic that is not platform glue lives in scripts/release/ and
+# packaging/, which release.yml runs too: the notes, the R2 upload and its
+# read-back, the archives and their smoke test are written once.
+#
+# waveflow-core is a git dependency on github.com/InstaZDLL/WaveFlow, which
+# goes with the account. Every job that compiles redirects that URL to the
+# desktop app's own GitLab project (CORE_MIRROR_PATH) and makes cargo fetch
+# with git, the fetcher that honours the redirect; Cargo.lock is unchanged and
+# still pins the same revision. The image build gets the same redirect as a
+# BuildKit secret, so the job token never lands in a layer.
+#
+# Runners (GitLab.com hosted, checked 2026-11-06,
+# https://docs.gitlab.com/ci/runners/hosted_runners/):
+#   - Linux amd64: saas-linux-medium-amd64 (4 vCPU, 16 GB, 50 GB), every tier.
+#   - Linux arm64: saas-linux-small-arm64 (2 vCPU, 8 GB, 30 GB) on every tier;
+#     medium and up need Premium. Docker-in-Docker there needs an MTU of 1400.
+#   - Windows: saas-windows-medium-amd64, every tier, in beta. PowerShell, no
+#     `image:`; Visual Studio Build Tools, Git and Chocolatey are installed,
+#     Rust and MSYS2 are not.
+#   - macOS: saas-macos-medium-m1 needs Premium, Ultimate or the GitLab for
+#     Open Source program, and is Apple silicon only. The Intel archive needs
+#     a runner of your own on an Intel Mac: set MACOS_X86_64_RUNNER_TAG.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "web"
+  auto_cancel:
+    on_new_commit: interruptible
+
+stages:
+  - check
+  - build
+  - package
+  - publish
+
+variables:
+  # The bucket's public domain. A project variable overrides it.
+  R2_PUBLIC_URL: https://download.waveflow.app
+  DOCKERHUB_IMAGE: docker.io/instazdll/waveflow-server
+  # Where waveflow-core is fetched from instead of GitHub.
+  CORE_UPSTREAM: https://github.com/InstaZDLL/WaveFlow
+  CORE_MIRROR_PATH: gitlab.com/waveflow-groupe/WaveFlow-projet.git
+  # What SOURCE.txt in each archive links (AGPL §6(d)): these projects, which
+  # are public once GitLab is the home.
+  WAVEFLOW_SOURCE_TREE: $CI_PROJECT_URL/-/tree
+  WAVEFLOW_SOURCE_BLOB: $CI_PROJECT_URL/-/blob
+  WAVEFLOW_CORE_TREE: https://gitlab.com/waveflow-groupe/WaveFlow-projet/-/tree
+  LINUX_ARM64_RUNNER_TAG: saas-linux-small-arm64
+  MACOS_ARM64_RUNNER_TAG: saas-macos-medium-m1
+  MACOS_X86_64_RUNNER_TAG: macos-x86_64
+  # The images standalone.yml and ffmpeg.yml pin, by digest.
+  ALPINE_IMAGE: alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+  RUST_ALPINE_IMAGE: rust:1.98-alpine3.24@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f
+  # The compiler of the standalone archives, as standalone.yml pins it.
+  RELEASE_RUST: "1.98"
+  FFMPEG_DOWNLOADS: ffmpeg-downloads
+
+# ---------------------------------------------------------------- templates
+
+.ci-rules:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+
+.release-rules:
+  rules:
+    - if: $CI_COMMIT_TAG
+
+.linux:
+  tags: [saas-linux-medium-amd64]
+
+.windows:
+  tags: [saas-windows-medium-amd64]
+
+# The redirect of waveflow-core, for a POSIX shell. The job token reads the
+# desktop project while it is private, if that project allows this one in its
+# job token allowlist (docs/guides/releasing.md); once it is public the token
+# is simply not needed.
+.core-mirror-sh: &core-mirror-sh
+  - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CORE_MIRROR_PATH}".insteadOf "$CORE_UPSTREAM"
+  - export CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+.core-mirror-pwsh: &core-mirror-pwsh
+  - git config --global "url.https://gitlab-ci-token:$($env:CI_JOB_TOKEN)@$($env:CORE_MIRROR_PATH).insteadOf" $env:CORE_UPSTREAM
+  - $env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
+
+.rust-debian:
+  extends: .linux
+  image: rust:1-trixie
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+    DEBIAN_FRONTEND: noninteractive
+  cache:
+    # The registry only: a target/ of several GB costs more to move than to
+    # rebuild.
+    key:
+      files: [Cargo.lock]
+    paths: [.cargo-home/registry/index, .cargo-home/registry/cache, .cargo-home/git/db]
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends ffmpeg
+    - *core-mirror-sh
+
+.rustup-windows: &rustup-windows
+  - $ProgressPreference = 'SilentlyContinue'
+  - Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+  - .\rustup-init.exe -y --profile minimal --default-toolchain none
+  - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+
+# The paths ci-rust.yml watches.
+.rust-changes:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - Cargo.toml
+        - Cargo.lock
+        - build.rs
+        - scripts/check-rust-layout.sh
+        - "src/**/*"
+        - "migrations-v2/**/*"
+        - "tests/**/*"
+        - "webapp/**/*"
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+
+# ------------------------------------------------- checks (ci-rust.yml)
+
+rust-linux:
+  extends: [.rust-debian, .rust-changes]
+  stage: check
+  interruptible: true
+  timeout: 45m
+  script:
+    - rustup component add clippy rustfmt
+    - sh scripts/check-rust-layout.sh
+    - cargo fmt --all --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+    - cargo check --all-targets --all-features
+    - RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+    - cargo test --all-features
+
+# The declared rust-version, which the image's builder uses: checked, not tested.
+msrv:
+  extends: [.rust-debian, .rust-changes]
+  stage: check
+  interruptible: true
+  timeout: 45m
+  script:
+    - version="$(sed -n '/^\[package\]/,/^\[/ s/^rust-version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+    - test -n "$version" || { echo "Cargo.toml declares no rust-version"; exit 1; }
+    - rustup toolchain install "$version" --profile minimal
+    - cargo +"$version" check --all-targets --all-features
+
+rust-windows:
+  extends: [.windows, .rust-changes]
+  stage: check
+  interruptible: true
+  timeout: 1h
+  script:
+    - *rustup-windows
+    - rustup toolchain install stable --profile minimal --component clippy
+    - *core-mirror-pwsh
+    # As in ci-rust.yml: Chocolatey can exit 0 without installing, so the
+    # binaries are asked for rather than assumed.
+    - choco install ffmpeg --yes --no-progress
+    - $env:Path = "$env:ProgramData\chocolatey\bin;$env:Path"
+    - ffmpeg -version; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - cargo clippy --all-targets --all-features -- -D warnings
+    - cargo check --all-targets --all-features
+    - cargo test --all-features
+
+# -------------------------------------------------- checks (ci-web.yml)
+
+webapp:
+  extends: .linux
+  stage: check
+  image: oven/bun:1
+  interruptible: true
+  timeout: 30m
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: ["webapp/**/*", scripts/check-webapp-layout.sh, .gitlab-ci.yml]
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+  script:
+    - sh scripts/check-webapp-layout.sh
+    - cd webapp
+    - bun install --frozen-lockfile
+    - bun run lint
+    - bun run build
+    - bun run typecheck:node && bun run typecheck:e2e
+    - bun run test
+    - bunx playwright install --with-deps chromium
+    - bun run test:e2e
+
+# ------------------------------------------------ checks (ci-image.yml)
+
+.dind:
+  image: docker:29
+  services:
+    - name: docker:29-dind
+      command: ["--mtu=1400"]
+  variables:
+    DOCKER_TLS_CERTDIR: /certs
+  before_script:
+    - apk add --no-cache git curl
+    # The redirect of waveflow-core, handed to the build as a secret, and kept
+    # out of the build context so no COPY can pick the job token up.
+    - git config --file /tmp/core-gitconfig url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CORE_MIRROR_PATH}".insteadOf "$CORE_UPSTREAM"
+
+.image-changes:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - Dockerfile
+        - .dockerignore
+        - Cargo.toml
+        - Cargo.lock
+        - build.rs
+        - "src/**/*"
+        - "migrations-v2/**/*"
+        - "tests/**/*"
+        - "webapp/**/*"
+        - "assets/scalar/**/*"
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+
+# Built, booted with no configuration, its HEALTHCHECK waited for, and the
+# FFmpeg-bound test targets run inside it against the FFmpeg it ships. With
+# Docker-in-Docker the job's files are not the daemon's, so the tests are
+# compiled and run by a second build rather than through mounted volumes.
+.image-check:
+  extends: [.dind, .image-changes]
+  stage: check
+  interruptible: true
+  timeout: 1h
+  script:
+    - docker build --secret id=gitconfig,src=/tmp/core-gitconfig --tag waveflow-server:ci .
+    - docker run --rm --entrypoint sh waveflow-server:ci -c 'cat /etc/debian_version; "$WAVEFLOW_FFMPEG_PATH" -version | head -1'
+    - docker run --detach --name waveflow --publish 4533:4533 waveflow-server:ci
+    - |
+      ready=""
+      for _ in $(seq 1 60); do
+        if [ "$(docker inspect --format '{{.State.Running}}' waveflow)" != "true" ]; then
+          echo "the container exited before answering /ready"; docker logs --tail 100 waveflow; exit 1
+        fi
+        code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 2 http://docker:4533/ready || true)"
+        if [ "$code" = "200" ]; then ready=yes; break; fi
+        sleep 1
+      done
+      [ -n "$ready" ] || { echo "/ready did not answer 200 within 60 seconds (last: ${code:-none})"; exit 1; }
+    - |
+      for _ in $(seq 1 120); do
+        status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' waveflow)"
+        case "$status" in
+          healthy) echo "the HEALTHCHECK reports healthy"; break ;;
+          ""|unhealthy) echo "HEALTHCHECK: '${status:-none}'"; docker logs --tail 100 waveflow; exit 1 ;;
+        esac
+        sleep 1
+      done
+      [ "$status" = healthy ] || { echo "the HEALTHCHECK still reports '$status'"; exit 1; }
+    - builder="$(sed -n 's/^FROM[[:space:]]\{1,\}\(rust:[^[:space:]]*\).*/\1/p' Dockerfile | head -1)"
+    - test -n "$builder" || { echo "the Dockerfile names no rust builder image"; exit 1; }
+    - |
+      cat > image-tests.Dockerfile <<'DOCKERFILE'
+      ARG BUILDER
+      FROM $BUILDER AS tests
+      RUN apt-get update && apt-get install -y --no-install-recommends jq
+      WORKDIR /work
+      COPY . .
+      RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig \
+          if [ -s /root/.gitconfig ]; then export CARGO_NET_GIT_FETCH_WITH_CLI=true; fi; \
+          cargo test --locked --all-features --no-run --message-format=json \
+            --test media --test quality --test canvas > /artifacts.json \
+          && mkdir /tests \
+          && jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null) | .executable' /artifacts.json \
+             | xargs -I{} cp {} /tests/ \
+          && test "$(ls /tests | wc -l)" -eq 3 \
+          && rm -rf /work/target
+      FROM waveflow-server:ci
+      COPY --from=tests /work /work
+      COPY --from=tests /tests /tests
+      ENV CARGO_MANIFEST_DIR=/work
+      WORKDIR /work
+      RUN for t in /tests/*; do PATH="$(dirname "$WAVEFLOW_FFMPEG_PATH"):$PATH" "$t" || exit 1; done
+      DOCKERFILE
+    # The daemon's own builder, which sees the image just built.
+    - docker build --secret id=gitconfig,src=/tmp/core-gitconfig --build-arg BUILDER="$builder" -f image-tests.Dockerfile .
+
+image-amd64:
+  extends: [.image-check, .linux]
+
+image-arm64:
+  extends: .image-check
+  tags: [$LINUX_ARM64_RUNNER_TAG]
+
+# --------------------------------------------------- release (release.yml)
+
+# Before any build minute: the tag must match the crate, and a stable tag
+# must carry its notes.
+verify:
+  extends: [.release-rules, .linux]
+  stage: check
+  image: $ALPINE_IMAGE
+  script:
+    - version="${CI_COMMIT_TAG#v}"
+    - crate="$(sed -n '/^\[package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+    - test "$version" = "$crate" || { echo "tag $CI_COMMIT_TAG declares $version but Cargo.toml says $crate"; exit 1; }
+    - |
+      case "$version" in
+        *-*) ;;
+        *) test -s "docs/releases/$CI_COMMIT_TAG.md" || { echo "docs/releases/$CI_COMMIT_TAG.md is missing"; exit 1; } ;;
+      esac
+
+# ------------------------------------------------- FFmpeg (ffmpeg.yml)
+
+ffmpeg-sources:
+  extends: [.release-rules, .linux]
+  stage: check
+  image: $ALPINE_IMAGE
+  script:
+    - apk add --no-cache curl xz
+    - sh packaging/ffmpeg/build.sh sources dist
+  artifacts:
+    paths: [dist/, ffmpeg-downloads/]
+    expire_in: 1 week
+
+.ffmpeg-alpine:
+  extends: .release-rules
+  stage: build
+  image: $ALPINE_IMAGE
+  needs: [verify, ffmpeg-sources]
+  variables:
+    WORK_DIR: /tmp/ffmpeg-work
+    BUILD_COMMIT: $CI_COMMIT_SHA
+  script:
+    - packages="build-base pkgconf curl xz linux-headers"
+    - if [ "$(uname -m)" = x86_64 ]; then packages="$packages nasm"; fi
+    - apk add --no-cache $packages
+    - sh packaging/ffmpeg/build.sh build out
+  artifacts:
+    paths: [out/]
+    expire_in: 1 week
+
+ffmpeg-linux-x86_64:
+  extends: [.ffmpeg-alpine, .linux]
+
+ffmpeg-linux-arm64:
+  extends: .ffmpeg-alpine
+  tags: [$LINUX_ARM64_RUNNER_TAG]
+
+.ffmpeg-macos:
+  extends: .release-rules
+  stage: build
+  needs: [verify, ffmpeg-sources]
+  variables:
+    BUILD_COMMIT: $CI_COMMIT_SHA
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+  script:
+    - brew install nasm pkgconf
+    - sh packaging/ffmpeg/build.sh build out
+  artifacts:
+    paths: [out/]
+    expire_in: 1 week
+
+ffmpeg-macos-arm64:
+  extends: .ffmpeg-macos
+  tags: [$MACOS_ARM64_RUNNER_TAG]
+  # Read by GitLab's hosted macOS runners only.
+  image: macos-15-xcode-16
+  variables:
+    MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+ffmpeg-macos-x86_64:
+  extends: .ffmpeg-macos
+  tags: [$MACOS_X86_64_RUNNER_TAG]
+  variables:
+    MACOSX_DEPLOYMENT_TARGET: "10.15"
+
+# MinGW-w64 in MSYS2's UCRT64 environment, as ffmpeg.yml builds it. MSYS2 is
+# not on the hosted image, so it comes from Chocolatey.
+ffmpeg-windows-x86_64:
+  extends: [.release-rules, .windows]
+  stage: build
+  needs: [verify, ffmpeg-sources]
+  timeout: 2h
+  variables:
+    BUILD_COMMIT: $CI_COMMIT_SHA
+  script:
+    - choco install msys2 --yes --no-progress --params "/NoUpdate /InstallDir:C:\msys64"
+    - $env:MSYSTEM = 'UCRT64'
+    - $env:CHERE_INVOKING = '1'
+    - C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --needed make diffutils curl tar xz mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-pkgconf'
+    - C:\msys64\usr\bin\bash.exe -lc 'sh packaging/ffmpeg/build.sh build out'
+    - if ($LASTEXITCODE -ne 0) { exit 1 }
+  artifacts:
+    paths: [out/]
+    expire_in: 1 week
+
+# ------------------------------------------ standalone (standalone.yml)
+
+release-webapp:
+  extends: [.release-rules, .linux]
+  stage: build
+  image: oven/bun:1
+  needs: [verify]
+  script:
+    - cd webapp
+    - bun install --frozen-lockfile
+    - bun run build
+  artifacts:
+    paths: [webapp/dist/]
+    expire_in: 1 week
+
+# Static against musl, in Alpine, so the archive runs on any distribution.
+# The FFmpeg-bound targets run here against the archive's own FFmpeg.
+.standalone-linux:
+  extends: .release-rules
+  stage: package
+  image: $RUST_ALPINE_IMAGE
+  timeout: 2h
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo-home
+  script:
+    - apk add --no-cache build-base git curl tar
+    - *core-mirror-sh
+    - chmod +x out/ffmpeg out/ffprobe
+    - cargo build --locked --release
+    - PATH="$PWD/out:$PATH" cargo test --locked --all-features --no-fail-fast --test media --test quality --test canvas
+    - version="${CI_COMMIT_TAG#v}"
+    - sh packaging/standalone/pack.sh "$TARGET" "$version" "$CI_COMMIT_TAG" target/release/waveflow-server out dist
+    - sh packaging/standalone/smoke.sh dist/waveflow-server-*
+  artifacts:
+    paths: [dist/]
+    expire_in: 1 week
+
+standalone-linux-x86_64:
+  extends: [.standalone-linux, .linux]
+  needs: [release-webapp, ffmpeg-linux-x86_64]
+  variables:
+    TARGET: linux-x86_64
+
+standalone-linux-arm64:
+  extends: .standalone-linux
+  tags: [$LINUX_ARM64_RUNNER_TAG]
+  needs: [release-webapp, ffmpeg-linux-arm64]
+  variables:
+    TARGET: linux-arm64
+
+# Built, tested, signed ad hoc and packed on the Mac. `--identifier` makes the
+# two architectures' signatures alike, as standalone.yml explains.
+.standalone-macos:
+  extends: .release-rules
+  stage: package
+  script:
+    - curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RELEASE_RUST"
+    - export PATH="$HOME/.cargo/bin:$PATH"
+    - *core-mirror-sh
+    - cargo build --locked --release
+    - chmod +x out/ffmpeg out/ffprobe
+    - PATH="$PWD/out:$PATH" cargo test --all-features --no-fail-fast --test media --test quality --test canvas
+    - codesign --force --sign - --identifier app.waveflow.server target/release/waveflow-server
+    - codesign --force --sign - --identifier app.waveflow.server.ffmpeg out/ffmpeg
+    - codesign --force --sign - --identifier app.waveflow.server.ffprobe out/ffprobe
+    - sh packaging/standalone/pack.sh "$TARGET" "${CI_COMMIT_TAG#v}" "$CI_COMMIT_TAG" target/release/waveflow-server out dist
+    - sh packaging/standalone/smoke.sh dist/waveflow-server-*
+    - |
+      extracted="$(mktemp -d)"
+      unzip -q dist/waveflow-server-*.zip -d "$extracted"
+      for tool in waveflow-server ffmpeg ffprobe; do
+        case "$tool" in waveflow-server) wanted=app.waveflow.server ;; *) wanted="app.waveflow.server.$tool" ;; esac
+        file=$(echo "$extracted"/*/"$tool")
+        codesign --verify --strict --verbose=2 "$file"
+        identifier=$(codesign --display --verbose=2 "$file" 2>&1 | sed -n 's/^Identifier=//p')
+        test "$identifier" = "$wanted" || { echo "$tool is signed as '$identifier', not $wanted"; exit 1; }
+      done
+  artifacts:
+    paths: [dist/]
+    expire_in: 1 week
+
+standalone-macos-arm64:
+  extends: .standalone-macos
+  tags: [$MACOS_ARM64_RUNNER_TAG]
+  image: macos-15-xcode-16
+  needs: [release-webapp, ffmpeg-macos-arm64]
+  variables:
+    TARGET: macos-arm64
+    MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+standalone-macos-x86_64:
+  extends: .standalone-macos
+  tags: [$MACOS_X86_64_RUNNER_TAG]
+  needs: [release-webapp, ffmpeg-macos-x86_64]
+  variables:
+    TARGET: macos-x86_64
+    MACOSX_DEPLOYMENT_TARGET: "10.15"
+
+# The Windows server is built in one job and signed in another, so the
+# certificate never reaches a machine where a dependency's build script ran.
+standalone-windows-build:
+  extends: [.release-rules, .windows]
+  stage: package
+  needs: [release-webapp, ffmpeg-windows-x86_64]
+  timeout: 2h
+  script:
+    - *rustup-windows
+    - rustup toolchain install $env:RELEASE_RUST --profile minimal
+    - rustup default $env:RELEASE_RUST
+    - *core-mirror-pwsh
+    - $env:Path = "$env:CI_PROJECT_DIR\out;$env:Path"
+    - cargo test --all-features --no-fail-fast --test media --test quality --test canvas
+    - if ($LASTEXITCODE -ne 0) { exit 1 }
+    - $env:RUSTFLAGS = '-C target-feature=+crt-static'
+    - cargo build --locked --release
+    - if ($LASTEXITCODE -ne 0) { exit 1 }
+  artifacts:
+    paths: [target/release/waveflow-server.exe]
+    expire_in: 1 week
+
+standalone-windows-sign:
+  extends: [.release-rules, .windows]
+  stage: package
+  needs: [standalone-windows-build, ffmpeg-windows-x86_64]
+  # Nothing from the repository runs here.
+  variables:
+    GIT_STRATEGY: none
+  script:
+    - if (-not $env:SIGNTOOL_PFX_BASE64 -or -not $env:SIGNTOOL_PFX_PASSWORD) { Write-Error 'SIGNTOOL_PFX_BASE64 and SIGNTOOL_PFX_PASSWORD are required'; exit 1 }
+    - >-
+      $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+      Sort-Object -Property @{ Expression = { try { [Version]$_.Directory.Parent.Name } catch { [Version]"0.0.0.0" } } } -Descending |
+      Select-Object -First 1
+    - if (-not $signtool) { Write-Error 'signtool.exe not found in the Windows Kits'; exit 1 }
+    - $pfx = Join-Path $env:TEMP 'signing.pfx'
+    - '[IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGNTOOL_PFX_BASE64))'
+    - >-
+      & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /f $pfx /p $env:SIGNTOOL_PFX_PASSWORD
+      target\release\waveflow-server.exe out\ffmpeg.exe out\ffprobe.exe
+    - $status = $LASTEXITCODE
+    - Remove-Item -LiteralPath $pfx -Force
+    - if ($status -ne 0) { Write-Error "signtool exited with $status"; exit 1 }
+  after_script:
+    - Remove-Item -LiteralPath (Join-Path $env:TEMP 'signing.pfx') -Force -ErrorAction SilentlyContinue
+  artifacts:
+    paths: [target/release/waveflow-server.exe, out/]
+    expire_in: 1 week
+
+# Packed and smoke-tested in Git Bash, as on GitHub, then the three signatures
+# read back from the archive: the signer is trusted for this job's machine only,
+# so each file must answer Valid rather than an UnknownError that would also
+# cover a broken signature.
+standalone-windows-x86_64:
+  extends: [.release-rules, .windows]
+  stage: package
+  needs: [standalone-windows-sign]
+  script:
+    - $bash = 'C:\Program Files\Git\bin\bash.exe'
+    - '& $bash packaging/standalone/pack.sh windows-x86_64 $env:CI_COMMIT_TAG.Substring(1) $env:CI_COMMIT_TAG target/release/waveflow-server.exe out dist'
+    - if ($LASTEXITCODE -ne 0) { exit 1 }
+    - '& $bash -c "sh packaging/standalone/smoke.sh dist/waveflow-server-*"'
+    - if ($LASTEXITCODE -ne 0) { exit 1 }
+    - $extracted = Join-Path $env:TEMP 'signatures'
+    - Expand-Archive -Path (Get-Item dist\waveflow-server-*.zip).FullName -DestinationPath $extracted
+    - $files = foreach ($tool in 'waveflow-server.exe', 'ffmpeg.exe', 'ffprobe.exe') { Get-ChildItem -Path $extracted -Recurse -Filter $tool }
+    - $signers = @($files | ForEach-Object { (Get-AuthenticodeSignature -LiteralPath $_.FullName).SignerCertificate })
+    - if ($signers.Count -ne 3) { Write-Error "only $($signers.Count) of the three executables have a signer"; exit 1 }
+    - if (@($signers.Thumbprint | Select-Object -Unique).Count -ne 1) { Write-Error 'the executables have different signers'; exit 1 }
+    - Write-Host "signed by $($signers[0].Subject), thumbprint $($signers[0].Thumbprint)"
+    - $roots = [Security.Cryptography.X509Certificates.X509Store]::new('Root', 'LocalMachine'); $roots.Open('ReadWrite'); $roots.Add($signers[0]); $roots.Close()
+    - >-
+      foreach ($file in $files) { $s = Get-AuthenticodeSignature -LiteralPath $file.FullName;
+      Write-Host "$($file.Name): $($s.Status)";
+      if ($s.Status.ToString() -ne 'Valid') { Write-Error "$($file.Name): $($s.StatusMessage)"; exit 1 };
+      if (-not $s.TimeStamperCertificate) { Write-Error "$($file.Name) has no timestamp"; exit 1 } }
+  artifacts:
+    paths: [dist/]
+    expire_in: 1 week
+
+# Everything the release links, in one place, with the checksums over it.
+release-assets:
+  extends: [.release-rules, .linux]
+  stage: package
+  image: $ALPINE_IMAGE
+  needs:
+    - ffmpeg-sources
+    - standalone-linux-x86_64
+    - standalone-linux-arm64
+    - standalone-macos-arm64
+    - standalone-macos-x86_64
+    - standalone-windows-x86_64
+  script:
+    - apk add --no-cache coreutils
+    - mkdir release-assets
+    - cp dist/waveflow-server-* dist/ffmpeg-*-sources.tar.gz release-assets/
+    - cd release-assets
+    - |
+      for suffix in windows-x86_64.zip macos-arm64.zip macos-x86_64.zip linux-x86_64.tar.gz linux-arm64.tar.gz; do
+        ls waveflow-server-*-"$suffix" > /dev/null
+      done
+    - sha256sum -- * > ../SHA256SUMS && mv ../SHA256SUMS SHA256SUMS
+    - test "$(wc -l < SHA256SUMS)" -eq 6 || { cat SHA256SUMS; echo "expected five archives and the FFmpeg sources"; exit 1; }
+    - cat SHA256SUMS
+  artifacts:
+    paths: [release-assets/]
+    expire_in: 1 month
+
+# --------------------------------------------------- image (release.yml)
+
+# One build per architecture, pushed by digest to both registries at once, so
+# a pull from either resolves to the same digest.
+.image-release:
+  extends: [.release-rules, .dind]
+  stage: build
+  needs: [verify]
+  timeout: 2h
+  script:
+    - test -n "$DOCKERHUB_USERNAME" && test -n "$DOCKERHUB_TOKEN" || { echo "DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are required"; exit 1; }
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+    - echo "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+    # A container builder: the daemon's own cannot push one build under two names.
+    - docker buildx create --use --driver docker-container --driver-opt network=host
+    - >-
+      docker buildx build --platform "$PLATFORM" --secret id=gitconfig,src=/tmp/core-gitconfig
+      --output "type=image,\"name=$CI_REGISTRY_IMAGE,$DOCKERHUB_IMAGE\",push-by-digest=true,name-canonical=true,push=true"
+      --metadata-file metadata.json .
+    - mkdir -p digests
+    - digest="$(sed -n 's/.*"containerimage.digest"[[:space:]]*:[[:space:]]*"sha256:\([0-9a-f]*\)".*/\1/p' metadata.json)"
+    - test -n "$digest" || { cat metadata.json; exit 1; }
+    - touch "digests/$digest"
+  artifacts:
+    paths: [digests/]
+    expire_in: 1 day
+
+image-release-amd64:
+  extends: [.image-release, .linux]
+  variables:
+    PLATFORM: linux/amd64
+
+image-release-arm64:
+  extends: .image-release
+  tags: [$LINUX_ARM64_RUNNER_TAG]
+  variables:
+    PLATFORM: linux/arm64
+
+# ---------------------------------------------------------------- publish
+
+# The manifest list under the version and `latest` (or `beta`) in both
+# registries, and the promise checked: both answer one digest. After the
+# archives, so a tag whose archives failed moves no floating tag.
+image-publish:
+  extends: [.release-rules, .dind, .linux]
+  stage: publish
+  resource_group: floating-tags
+  needs: [image-release-amd64, image-release-arm64, release-assets]
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" --username "$CI_REGISTRY_USER" --password-stdin
+    - echo "$DOCKERHUB_TOKEN" | docker login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+    - version="${CI_COMMIT_TAG#v}"
+    - case "$version" in *-*) extra=beta ;; *) extra=latest ;; esac
+    - refs=""; for d in digests/*; do refs="$refs $CI_REGISTRY_IMAGE@sha256:$(basename "$d")"; done
+    - test -n "$refs" || { echo "no digests were collected"; exit 1; }
+    - >-
+      docker buildx imagetools create
+      --tag "$CI_REGISTRY_IMAGE:$version" --tag "$CI_REGISTRY_IMAGE:$extra"
+      --tag "$DOCKERHUB_IMAGE:$version" --tag "$DOCKERHUB_IMAGE:$extra" $refs
+    - gitlab="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$CI_REGISTRY_IMAGE:$version")"
+    - hub="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$DOCKERHUB_IMAGE:$version")"
+    - echo "gitlab=$gitlab hub=$hub"
+    - test "$gitlab" = "$hub" || { echo "the two registries answer different digests"; exit 1; }
+
+# R2 is the only download host here, so a missing secret fails the release
+# rather than skipping as on GitHub. The GitLab release holds links, not files.
+publish:
+  extends: [.release-rules, .linux]
+  stage: publish
+  image: $ALPINE_IMAGE
+  needs: [release-assets, image-publish]
+  script:
+    # coreutils for sha256sum --quiet, which busybox lacks.
+    - apk add --no-cache aws-cli coreutils curl python3
+    - test "$(sh scripts/release/publish-r2.sh --check)" = configured || { echo "the four R2_* variables are required"; exit 1; }
+    - sh scripts/release/publish-r2.sh release-assets "$CI_COMMIT_TAG"
+    - base="${R2_PUBLIC_URL%/}/server/releases/$CI_COMMIT_TAG"
+    - status=0
+    - sh scripts/release/release-notes.sh "$CI_COMMIT_TAG" "$base" "$CI_REGISTRY_IMAGE" "${DOCKERHUB_IMAGE#docker.io/}" > notes.md || status=$?
+    - test "$status" -eq 0 || test "$status" -eq 2
+    - python3 scripts/release/gitlab-release.py "$CI_COMMIT_TAG" notes.md release-assets "$base"

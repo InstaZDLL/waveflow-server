@@ -29,7 +29,12 @@ out=$6
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-repository=${GITHUB_REPOSITORY:-InstaZDLL/waveflow-server}
+# Where SOURCE.txt sends a reader for the source, the ref appended. GitHub's by
+# default; .gitlab-ci.yml sets both to the GitLab projects, whose tree pages
+# live under `/-/tree/`, so that an archive built there does not point at a
+# host that may be gone (AGPL §6(d)).
+source_tree=${WAVEFLOW_SOURCE_TREE:-https://github.com/${GITHUB_REPOSITORY:-InstaZDLL/waveflow-server}/tree}
+core_tree=${WAVEFLOW_CORE_TREE:-https://github.com/InstaZDLL/WaveFlow/tree}
 
 case "$target" in
     windows-x86_64) platform=windows exe=.exe extension=zip ;;
@@ -79,10 +84,10 @@ License version 3 (COPYING, beside this file).
 The corresponding source of this server, at the versions this archive was
 built from:
 
-  The server      https://github.com/$repository/tree/$source_ref
+  The server      $source_tree/$source_ref
                   Its Cargo.lock pins the Rust crates, and its webapp/bun.lock
                   the packages of the web client compiled into the server.
-  waveflow-core   https://github.com/InstaZDLL/WaveFlow/tree/$core_revision
+  waveflow-core   $core_tree/$core_revision
                   The one Rust dependency not published on crates.io.
   Rust crates     https://crates.io, at the versions Cargo.lock pins.
   Web packages    https://www.npmjs.com, at the versions webapp/bun.lock pins.
