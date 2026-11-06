@@ -68,7 +68,10 @@ const DEEP: usize = 200_000;
 /// A WAV of a `LIST` whose body is `info`, padded when odd, then the audio,
 /// with a `JUNK` header written `resume` bytes into the `LIST` body — or past
 /// it — declaring a size that lands on a tag chunk holding `payload` [`DEEP`]
-/// into the audio. Reached only by a walk that goes on from `resume`.
+/// into the audio. Reached only by a walk that goes on from `resume`. A small
+/// `data` chunk follows the tag, so lofty, which never meets the real one on
+/// that path, still finds the audio properties it reads by default: without
+/// one it fails the file after the walk, having parsed the tag all the same.
 fn wav_resuming_at(info: &[u8], resume: usize, payload: &[u8]) -> Vec<u8> {
     let mut chunks = chunk(b"LIST", info, false);
     if info.len() % 2 == 1 {
@@ -79,7 +82,11 @@ fn wav_resuming_at(info: &[u8], resume: usize, payload: &[u8]) -> Vec<u8> {
     let body = 12 + wav_format().len() + 8;
     let audio = body + info.len() + info.len() % 2 + 8;
     let target = audio + DEEP;
-    let island = chunk(b"id3 ", payload, false);
+    let island = [
+        chunk(b"id3 ", payload, false),
+        chunk(b"data", &[0; 16], false),
+    ]
+    .concat();
     file[target..target + island.len()].copy_from_slice(&island);
     let at = body + resume;
     let jump = (target - at - 8) as u32;
@@ -132,6 +139,45 @@ fn a_tag_where_lofty_resumes_from_a_list_info_is_reached() {
     let mut failures = Vec::new();
     for (case, info, resume) in lofty_losing_its_place() {
         let read = title_lofty_reads(wav_resuming_at(&info, resume, &honest), FileType::Wav);
+        if read.as_deref() != Some("found") {
+            failures.push(format!("lofty, {case}: {read:?}"));
+        }
+        let verdict = check_file_bytes(&wav_resuming_at(&info, resume, &hostile));
+        if verdict != Err(Refusal::Nested) {
+            failures.push(format!("the guard, {case}: {verdict:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// The ID3v2 title the server's own call to lofty reads from a WAV of `bytes`:
+/// [`lofty::read_from_path`] on a `.wav` file, with its default options, which
+/// read the audio properties as well as the tags.
+fn title_the_server_reads(bytes: &[u8]) -> Option<String> {
+    use lofty::file::TaggedFileExt;
+    use lofty::prelude::Accessor;
+    let file = tempfile::Builder::new()
+        .suffix(".wav")
+        .tempfile()
+        .expect("temporary WAV");
+    std::fs::write(file.path(), bytes).expect("write temporary WAV");
+    let tagged = lofty::read_from_path(file.path()).ok()?;
+    let tag = tagged.tag(lofty::tag::TagType::Id3v2)?;
+    tag.title().map(|title| title.into_owned())
+}
+
+/// The same cases read the way the server reads them: lofty takes the same
+/// path with the audio properties read too, since reading the `fmt ` and the
+/// `data` whole or in part leaves `Chunks::skip` at the end of each, and the
+/// `LIST INFO` is walked the same way. The guard reads no lofty options, so
+/// its verdict on these files is the one the test above holds.
+#[test]
+fn a_tag_where_lofty_resumes_from_a_list_info_is_read_by_the_server() {
+    let honest = tag(&title(4, "found"));
+    let hostile = tag(&nested(4, &[b"CHAP"], 64));
+    let mut failures = Vec::new();
+    for (case, info, resume) in lofty_losing_its_place() {
+        let read = title_the_server_reads(&wav_resuming_at(&info, resume, &honest));
         if read.as_deref() != Some("found") {
             failures.push(format!("lofty, {case}: {read:?}"));
         }
