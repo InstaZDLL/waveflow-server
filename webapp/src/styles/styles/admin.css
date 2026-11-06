@@ -521,6 +521,14 @@
   overflow-wrap: anywhere;
 }
 
+/* A link that reads as one, out of the prose around it. */
+.update-notice a,
+.updates-panel a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
 .update-actions {
   display: flex;
   flex-wrap: wrap;
