@@ -37,6 +37,7 @@ mod m3u_import;
 mod playlists;
 mod radio;
 mod scrobbling;
+mod server_update;
 mod tokens;
 mod transcoding_profiles;
 mod user_data;

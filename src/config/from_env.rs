@@ -257,6 +257,7 @@ impl Config {
         // Absent is empty; a value that is not UTF-8 refuses to boot, rather
         // than starting with no trusted proxy and counting every client behind
         // it under the proxy's address.
+        let update_check = super::update_check::parse_update_check_settings()?;
         let trusted_proxies = match std::env::var("WAVEFLOW_TRUSTED_PROXIES") {
             Ok(list) => parse_proxy_addresses(&list)?,
             Err(std::env::VarError::NotPresent) => Vec::new(),
@@ -359,6 +360,7 @@ impl Config {
             lyrics,
             podcasts,
             remote_artwork,
+            update_check,
             allowed_origins,
             trusted_proxies,
             setup_token,

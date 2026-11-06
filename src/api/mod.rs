@@ -41,6 +41,7 @@ mod probes;
 mod quality;
 mod radio;
 mod scrobbling;
+mod server_update;
 mod setup;
 mod shares;
 mod smart_playlists;
@@ -72,6 +73,7 @@ pub use probes::*;
 pub use quality::*;
 pub use radio::*;
 pub use scrobbling::*;
+pub use server_update::*;
 pub use setup::*;
 pub use shares::*;
 pub use smart_playlists::*;
@@ -353,6 +355,10 @@ pub fn router(state: AppState) -> Router {
             get(get_radio_station)
                 .put(replace_radio_station)
                 .delete(delete_radio_station),
+        )
+        .route(
+            "/api/v2/server/update",
+            get(get_server_update).put(put_server_update),
         )
         .route(
             "/api/v2/transcoding-profiles",

@@ -157,6 +157,15 @@ impl Config {
                 timeout: Duration::from_secs(10),
                 addresses: crate::remote::portrait::AddressPolicy::AllowLoopback,
             },
+            // Asked, as production defaults, so nothing is sent until a test
+            // answers; and pointed at a closed loopback port, so a test that
+            // turns the check on without naming its own host reaches nothing.
+            update_check: super::UpdateCheckSettings {
+                policy: super::UpdateCheckPolicy::Ask,
+                base_url: "http://127.0.0.1:9".to_owned(),
+                timeout: Duration::from_secs(5),
+                interval: Duration::from_secs(24 * 60 * 60),
+            },
             allowed_origins: Vec::new(),
             trusted_proxies: Vec::new(),
             // Drawn at boot and written to the data directory, as production

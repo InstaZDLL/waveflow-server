@@ -5,6 +5,7 @@ use super::metadata::parse_metadata_providers;
 use super::{limits::validate_canvas, CanvasLimits};
 use super::{limits::validate_uploads, UploadLimits};
 use super::{scrobbling::parse_destinations, DEFAULT_SCROBBLE_DESTINATION};
+use super::{update_check::parse_policy, update_check::validate_base_url, UpdateCheckPolicy};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -772,4 +773,41 @@ fn only_laptop_mode_opens_a_browser() {
     )
     .is_err());
     assert!(!crate::Config::for_data_dir("data".into()).laptop_open_browser);
+}
+
+#[test]
+fn the_update_check_takes_three_policies_and_refuses_the_rest() {
+    for (raw, policy) in [
+        ("ask", UpdateCheckPolicy::Ask),
+        (" ASK ", UpdateCheckPolicy::Ask),
+        ("on", UpdateCheckPolicy::On),
+        ("true", UpdateCheckPolicy::On),
+        ("off", UpdateCheckPolicy::Off),
+        ("0", UpdateCheckPolicy::Off),
+    ] {
+        assert_eq!(parse_policy(raw).unwrap(), policy, "{raw:?}");
+    }
+    for raw in ["", "maybe", "onn", "auto"] {
+        assert!(parse_policy(raw).is_err(), "{raw:?}");
+    }
+}
+
+#[test]
+fn the_update_address_is_https_or_plain_on_loopback_only() {
+    assert_eq!(
+        validate_base_url("https://download.waveflow.app/server/").unwrap(),
+        "https://download.waveflow.app/server"
+    );
+    assert!(validate_base_url("http://127.0.0.1:8080/server").is_ok());
+    assert!(validate_base_url("http://[::1]/server").is_ok());
+    assert!(validate_base_url("http://localhost/server").is_ok());
+    for raw in [
+        "http://download.waveflow.app/server",
+        "http://10.0.0.2/server",
+        "ftp://download.waveflow.app/server",
+        "file:///etc/passwd",
+        "download.waveflow.app/server",
+    ] {
+        assert!(validate_base_url(raw).is_err(), "{raw}");
+    }
 }
