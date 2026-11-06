@@ -29,7 +29,7 @@ Everything a release is, kept where the GitHub account's fate does not reach:
 | The code and every signed tag | [`gitlab.com/waveflow-groupe/waveflow-server`](https://gitlab.com/waveflow-groupe/waveflow-server), private | [`mirror-gitlab.yml`](../../.github/workflows/mirror-gitlab.yml), on every push to `main` and every tag |
 | waveflow-core, the one git dependency | `gitlab.com/waveflow-groupe/WaveFlow`, the desktop app's backup | the desktop repository |
 | The archives, the FFmpeg sources, `SHA256SUMS` | `https://download.waveflow.app/server/releases/<tag>/`, the R2 bucket `waveflow-releases` | `release.yml`'s `mirror` job |
-| The release pages | the GitLab project's releases, linking to R2 | `mirror`, when `GITLAB_API_TOKEN` is set (see below) |
+| The release pages | `RELEASE-NOTES.md` beside the files on R2, as GitHub showed the page when it was mirrored, generated list included; and the GitLab project's releases, linking to R2 | `mirror`; the GitLab page only when `GITLAB_API_TOKEN` is set (see below) |
 | The image | Docker Hub, `instazdll/waveflow-server`: a separate account | the release itself |
 
 The bucket is shared with the desktop app, which owns `releases/<tag>/` and the
@@ -62,8 +62,11 @@ secrets; the account id (R2 overview) and `waveflow-releases` the other two.
 only token scoped to the one project, is a paid feature on GitLab.com, and a
 personal token with the `api` scope would open every project of the account.
 Nothing is lost without it. The release pages are rebuilt from what the mirror
-already holds — the tags, `docs/releases/` and the R2 files — with the
-commands under [Switching to GitLab](#switching-to-gitlab).
+already holds — the page in `RELEASE-NOTES.md`, or failing that the tag's
+`docs/releases/`, and the R2 files — with the commands under
+[Switching to GitLab](#switching-to-gitlab). The R2 copy is the page at the
+time of the release: an edit made on GitHub afterwards reaches it only when
+`mirror` is run again for that tag.
 
 ## The standby pipeline
 
@@ -156,7 +159,9 @@ Three things differ from GitHub on purpose:
    to the end before tagging anything. Run by hand on `main`, it runs every
    check whatever changed.
 8. **Recreate any release page the backup lacks**, with a personal access token
-   (`api` scope, short expiry, revoked afterwards). The scripts are this
+   (`api` scope, short expiry, revoked afterwards). The page is the one kept
+   on R2 when there is one, GitHub's generated list and hand edits included;
+   otherwise it is written again from the tag's notes. The scripts are this
    checkout's, run inside a worktree of each tag, since a tag older than them
    does not carry them, and each tag gets its own empty folder of files:
 
@@ -173,7 +178,8 @@ Three things differ from GitHub on purpose:
        awk '{print $2}' SHA256SUMS | xargs -I{} curl -fsSO "$r2/$tag/{}" &&
        sha256sum -c SHA256SUMS --quiet) || break
      (cd "$work" &&
-       { sh "$tools/release-notes.sh" "$tag" "$r2/$tag" \
+       { curl -fsS -o notes.md "$r2/$tag/RELEASE-NOTES.md" ||
+         sh "$tools/release-notes.sh" "$tag" "$r2/$tag" \
            registry.gitlab.com/waveflow-groupe/waveflow-server instazdll/waveflow-server \
            > notes.md || [ $? -eq 10 ]; } &&
        python3 "$tools/gitlab-release.py" "$tag" notes.md release-assets "$r2/$tag") || break

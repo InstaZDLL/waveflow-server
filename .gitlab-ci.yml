@@ -698,11 +698,11 @@ publish:
     # coreutils for sha256sum --quiet, which busybox lacks.
     - apk add --no-cache aws-cli coreutils curl python3
     - test "$(sh scripts/release/publish-r2.sh --check)" = configured || { echo "the four R2_* variables are required"; exit 1; }
-    - sh scripts/release/publish-r2.sh release-assets "$CI_COMMIT_TAG"
     # A project variable set empty would otherwise blank the global default.
     - export R2_PUBLIC_URL="${R2_PUBLIC_URL:-https://download.waveflow.app}"
     - base="${R2_PUBLIC_URL%/}/server/releases/$CI_COMMIT_TAG"
     - status=0
     - sh scripts/release/release-notes.sh "$CI_COMMIT_TAG" "$base" "$CI_REGISTRY_IMAGE" "${DOCKERHUB_IMAGE#docker.io/}" > notes.md || status=$?
     - test "$status" -eq 0 || test "$status" -eq 10
+    - sh scripts/release/publish-r2.sh release-assets "$CI_COMMIT_TAG" notes.md
     - python3 scripts/release/gitlab-release.py "$CI_COMMIT_TAG" notes.md release-assets "$base"

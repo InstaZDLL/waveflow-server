@@ -443,6 +443,25 @@ jobs:
           name: standalone-release
           path: release-assets
 
+      # The page as GitHub shows it, generated list and later edits included,
+      # with its download links turned to the R2 copy: on the day GitHub is
+      # gone, those are the ones that still answer. Kept on R2 beside the files
+      # and given to GitLab below. Read into a file before `sed` touches it:
+      # this shell has no pipefail, and a failed read would pass as a blank page.
+      - name: Write the release page
+        if: steps.r2.outputs.state == 'configured'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release view "$TAG" --json body --jq .body > github-body.md
+          [ -s github-body.md ] || { echo "::error::the GitHub release of $TAG has no body"; exit 1; }
+          base="${R2_PUBLIC_URL%/}/server/releases/$TAG"
+          {
+            printf '_Mirrored from the GitHub release %s; the downloads are served from %s._\n\n' "$TAG" "${R2_PUBLIC_URL%/}"
+            sed "s|https://github.com/$GH_REPO/releases/download/$TAG|$base|g" github-body.md
+          } > release-notes.md
+
       - name: Copy the files to R2
         if: steps.r2.outputs.state == 'configured'
         env:
@@ -450,16 +469,11 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: sh scripts/release/publish-r2.sh release-assets "$TAG"
+        run: sh scripts/release/publish-r2.sh release-assets "$TAG" release-notes.md
 
-      # The page as GitHub shows it, generated list included, with its download
-      # links turned to the R2 copy: on the day GitHub is gone, those are the
-      # ones that still answer.
       - name: Create the GitLab release
         if: steps.r2.outputs.state == 'configured'
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           GITLAB_API_TOKEN: ${{ secrets.GITLAB_API_TOKEN }}
           GITLAB_PROJECT: ${{ vars.GITLAB_PROJECT || 'waveflow-groupe/waveflow-server' }}
         run: |
@@ -467,10 +481,5 @@ jobs:
             echo "::notice::GITLAB_API_TOKEN is not set: the GitLab release of $TAG is skipped"
             exit 0
           fi
-          base="${R2_PUBLIC_URL%/}/server/releases/$TAG"
-          {
-            printf '_Mirrored from the GitHub release %s; the downloads are served from %s._\n\n' "$TAG" "${R2_PUBLIC_URL%/}"
-            gh release view "$TAG" --json body --jq .body |
-              sed "s|https://github.com/$GH_REPO/releases/download/$TAG|$base|g"
-          } > gitlab-notes.md
-          python3 scripts/release/gitlab-release.py "$TAG" gitlab-notes.md release-assets "$base"
+          python3 scripts/release/gitlab-release.py "$TAG" release-notes.md release-assets \
+            "${R2_PUBLIC_URL%/}/server/releases/$TAG"
