@@ -111,11 +111,25 @@ Three things differ from GitHub on purpose:
 
 ### The day of the switch
 
-1. **Make both projects public** — `waveflow-server` and the desktop's — since
+1. **Stop the mirror before anything is committed on GitLab.** It pushes
+   `main` with `--force`: a GitHub that came back, or a run still queued, would
+   put GitHub's `main` over the first GitLab commits. Remove the deploy key on
+   GitLab (Settings → Repository → Deploy keys, "GitHub Actions mirror"), which
+   works whether GitHub answers or not; if it does, also delete the
+   `GITLAB_DEPLOY_KEY` secret, disable `mirror-gitlab.yml` and cancel its runs.
+2. **Make both projects public** — `waveflow-server` and the desktop's — since
    the archives' source offer and the core dependency point at them.
-2. **Turn CI/CD on** (Settings → General → Visibility → CI/CD), on the server's
+3. **Re-point the source offer of the archives already out.** Those built on
+   GitHub name `github.com/InstaZDLL/waveflow-server/tree/<tag>` and
+   `github.com/InstaZDLL/WaveFlow/tree/<revision>` in their `SOURCE.txt`, and
+   no switch can rewrite a file people downloaded. The same tags and revisions
+   are on GitLab under the same names: say so where those readers look — the
+   GitLab release pages, the README and the website — with the two GitLab
+   addresses (`…/waveflow-server/-/tree/<tag>`,
+   `…/WaveFlow-projet/-/tree/<revision>`).
+4. **Turn CI/CD on** (Settings → General → Visibility → CI/CD), on the server's
    project.
-3. **Set the variables** (Settings → CI/CD → Variables), **protected**, masked
+5. **Set the variables** (Settings → CI/CD → Variables), **protected**, masked
    where GitLab accepts it. The `v*` tags are already protected, so a tag
    pipeline receives them:
 
@@ -127,32 +141,47 @@ Three things differ from GitHub on purpose:
    | `MACOS_X86_64_RUNNER_TAG`, `MACOS_ARM64_RUNNER_TAG`, `LINUX_ARM64_RUNNER_TAG` | only to point at runners of your own |
    | `CORE_MIRROR_PATH`, `WAVEFLOW_CORE_TREE` | only if the desktop project's path changes |
 
-4. **Runners.** Linux amd64 and arm64 and Windows are hosted on every tier.
+6. **Runners.** Linux amd64 and arm64 and Windows are hosted on every tier.
    macOS is not on the Free tier: apply to the GitLab for Open Source program
    (a public AGPL project qualifies; it brings the macOS runners and a lower
    cost factor) or register `gitlab-runner` with the shell executor on a Mac.
-   The hosted Macs are Apple silicon only; the Intel archive needs an Intel Mac
-   of your own, tagged `MACOS_X86_64_RUNNER_TAG`. Compute minutes are the
-   other limit: 400 a month on Free do not cover one release.
-5. **Run a pipeline on `main`** (Build → Pipelines → Run pipeline) and read it
-   to the end before tagging anything.
-6. **Recreate any release page the backup lacks**, with a personal access token
-   (`api` scope, short expiry, revoked afterwards):
+   The hosted Macs are Apple silicon only. The Intel archive needs an Intel Mac
+   of your own: register its runner with the tag `macos-x86_64`, the default of
+   `MACOS_X86_64_RUNNER_TAG`, or set that variable to the tag the runner has.
+   The two must match exactly; until they do, the Intel jobs wait for a runner
+   and the release waits with them, since nothing is published half done.
+   Compute minutes are the other limit: 400 a month on Free do not cover one
+   release.
+7. **Run a pipeline on `main`** (Build → Pipelines → Run pipeline) and read it
+   to the end before tagging anything. Run by hand on `main`, it runs every
+   check whatever changed.
+8. **Recreate any release page the backup lacks**, with a personal access token
+   (`api` scope, short expiry, revoked afterwards). The scripts are this
+   checkout's, run inside a worktree of each tag, since a tag older than them
+   does not carry them, and each tag gets its own empty folder of files:
 
    ```bash
    export GITLAB_PROJECT=waveflow-groupe/waveflow-server GITLAB_API_TOKEN=<token>
-   tag=v2.1.3
-   mkdir -p release-assets && cd release-assets
-   curl -fsSO "https://download.waveflow.app/server/releases/$tag/SHA256SUMS"
-   awk '{print $2}' SHA256SUMS | xargs -I{} curl -fsSO "https://download.waveflow.app/server/releases/$tag/{}"
-   cd .. && git checkout "$tag"
-   sh scripts/release/release-notes.sh "$tag" "https://download.waveflow.app/server/releases/$tag" \
-     registry.gitlab.com/waveflow-groupe/waveflow-server instazdll/waveflow-server > notes.md
-   python3 scripts/release/gitlab-release.py "$tag" notes.md release-assets \
-     "https://download.waveflow.app/server/releases/$tag"
+   tools="$PWD/scripts/release"
+   r2=https://download.waveflow.app/server/releases
+   for tag in v2.1.3 v2.1.4; do
+     work="$(mktemp -d)/$tag"
+     git worktree add --detach "$work" "$tag"
+     mkdir "$work/release-assets"
+     (cd "$work/release-assets" &&
+       curl -fsSO "$r2/$tag/SHA256SUMS" &&
+       awk '{print $2}' SHA256SUMS | xargs -I{} curl -fsSO "$r2/$tag/{}" &&
+       sha256sum -c SHA256SUMS --quiet) || break
+     (cd "$work" &&
+       { sh "$tools/release-notes.sh" "$tag" "$r2/$tag" \
+           registry.gitlab.com/waveflow-groupe/waveflow-server instazdll/waveflow-server \
+           > notes.md || [ $? -eq 10 ]; } &&
+       python3 "$tools/gitlab-release.py" "$tag" notes.md release-assets "$r2/$tag") || break
+     git worktree remove --force "$work"
+   done
    ```
 
-7. **Release by tagging**: bump `Cargo.toml`, write `docs/releases/<tag>.md`,
+9. **Release by tagging**: bump `Cargo.toml`, write `docs/releases/<tag>.md`,
    push a signed tag. The pipeline does the rest.
 
 ### What does not come across
