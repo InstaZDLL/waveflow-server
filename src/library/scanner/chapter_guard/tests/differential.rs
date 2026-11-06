@@ -19,18 +19,23 @@ use super::*;
 struct Dice(u64);
 
 impl Dice {
+    /// The next 64 bits.
     fn roll(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
+    /// A number from zero to `n`, `n` left out.
     fn below(&mut self, n: usize) -> usize {
         ((self.roll() >> 11) % n as u64) as usize
     }
+    /// Whether an event of `percent` in a hundred happens.
     fn chance(&mut self, percent: usize) -> bool {
         self.below(100) < percent
     }
+    /// Up to `max` bytes of an alphabet of zeros, control bytes, letters,
+    /// a space and bytes past the printable range.
     fn bytes(&mut self, max: usize) -> Vec<u8> {
         const ALPHABET: [u8; 10] = [0, 0, 1, b'I', b'a', b'x', b' ', 0xff, b'd', 0x7f];
         let n = self.below(max + 1);
@@ -38,6 +43,8 @@ impl Dice {
             .map(|_| ALPHABET[self.below(ALPHABET.len())])
             .collect()
     }
+    /// The size a header declares for a body of `actual` bytes: mostly the
+    /// truth, otherwise a little more or less, `u32::MAX`, or well past it.
     fn size(&mut self, actual: usize) -> u32 {
         let size = match self.below(20) {
             0..=11 => actual,
@@ -52,6 +59,8 @@ impl Dice {
         };
         size as u32
     }
+    /// The padding behind a body of `len` bytes: zero, a letter or none
+    /// behind an odd one, and now and then a stray byte behind an even one.
     fn pad(&mut self, out: &mut Vec<u8>, len: usize) {
         if len % 2 == 1 {
             match self.below(4) {
@@ -65,9 +74,12 @@ impl Dice {
     }
 }
 
+/// A chunk name that is no FourCC: lofty ends its walk on it.
 const BAD_NAME: &[u8; 4] = &[1, b'x', b'y', b'z'];
+/// The name of an empty chunk, all zeros.
 const NO_NAME: &[u8; 4] = &[0, 0, 0, 0];
 
+/// A chunk header: `name`, then `size` in the byte order of the format.
 fn put(out: &mut Vec<u8>, name: &[u8], size: u32, be: bool) {
     out.extend_from_slice(name);
     out.extend_from_slice(&if be {
@@ -77,6 +89,8 @@ fn put(out: &mut Vec<u8>, name: &[u8], size: u32, be: bool) {
     });
 }
 
+/// The tag chunk holding `tag`, as `ID3 ` or `id3 `, its size now and then
+/// past its body, and its padding.
 fn dice_tag(dice: &mut Dice, out: &mut Vec<u8>, tag: &[u8], be: bool) {
     let size = if dice.chance(85) {
         tag.len()
@@ -89,6 +103,8 @@ fn dice_tag(dice: &mut Dice, out: &mut Vec<u8>, tag: &[u8], be: bool) {
     dice.pad(out, size);
 }
 
+/// One chunk of a name the format knows, or one it rejects, with a body of
+/// a few bytes — a real `fmt ` most of the time — and a size that may lie.
 fn dice_plain(dice: &mut Dice, out: &mut Vec<u8>, be: bool) {
     const WAV: [&[u8; 4]; 11] = [
         b"fmt ", b"fact", b"data", b"JUNK", b"LIST", BAD_NAME, b"a b ", NO_NAME, b"Xdat", b"id3 ",
@@ -117,6 +133,9 @@ fn dice_plain(dice: &mut Dice, out: &mut Vec<u8>, be: bool) {
     dice.pad(out, body.len());
 }
 
+/// A `LIST`, of type `INFO` most of the time, of up to four items — bare
+/// names, bare headers declaring `u32::MAX`, or items whose size may lie —
+/// with `tag` among them when given.
 fn dice_list(dice: &mut Dice, out: &mut Vec<u8>, tag: Option<&[u8]>, be: bool) {
     let mut body = if dice.chance(92) {
         b"INFO".to_vec()
@@ -157,6 +176,9 @@ fn dice_list(dice: &mut Dice, out: &mut Vec<u8>, tag: Option<&[u8]>, be: bool) {
     dice.pad(out, body.len());
 }
 
+/// A run of up to forty lists whose one item runs past their end, followed
+/// by ones, by random bytes or by nothing: what puts lofty's count of what
+/// is left of the file ahead of where it reads.
 fn dice_overruns(dice: &mut Dice, out: &mut Vec<u8>, be: bool) {
     let lists = 1 + dice.below(40);
     let full = dice.chance(70);
@@ -180,6 +202,10 @@ fn dice_overruns(dice: &mut Dice, out: &mut Vec<u8>, be: bool) {
     }
 }
 
+/// The file `seed` names: a `RIFF…WAVE` or `FORM…AIFF` of up to seven
+/// elements — plain chunks, lists, runs of overrunning lists, raw bytes —
+/// with `tag` in one of them. The same seed gives the same layout whatever
+/// the tag, as long as its length is the same.
 fn dice_file(seed: u64, be: bool, tag: &[u8]) -> Vec<u8> {
     let mut dice = Dice(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
     let elements = 1 + dice.below(7);
@@ -303,6 +329,8 @@ struct Probe {
 }
 
 impl Probe {
+    /// The hostile tag, its poison twin, and lofty's answer to the poison in
+    /// each format.
     fn new() -> Self {
         let hostile = tag(&nested(4, &[b"CHAP"], 6));
         assert!(check_tag(&hostile).is_err(), "the guard refuses the tag");
@@ -331,6 +359,8 @@ impl Probe {
         }
     }
 
+    /// What the file of `seed` comes to: whether lofty parses its tag, and
+    /// if so whether the guard refuses the hostile twin.
     fn outcome(&self, seed: u64, big_endian: bool) -> Outcome {
         let kind = if big_endian {
             lofty::file::FileType::Aiff
