@@ -6,6 +6,7 @@ import {
   getServerIdentity,
   getTranscodeStatus,
   getTranscodingProfiles,
+  getUpdateStatus,
 } from "../index";
 
 /**
@@ -60,4 +61,21 @@ export const transcodingProfilesQuery = () =>
   queryOptions({
     queryKey: ["transcoding-profiles"],
     queryFn: getTranscodingProfiles,
+  });
+
+/**
+ * Whether a newer server is out, and whether the check may run (RFC-028).
+ * Administrators only: the shell asks only for one.
+ *
+ * Held for an hour: the server reads its manifest once a day, so asking more
+ * often would only repeat the same answer. Not retried, and not refetched on
+ * focus: a dialog that reappears whenever the tab is focused is a nag.
+ */
+export const updateStatusQuery = () =>
+  queryOptions({
+    queryKey: ["server-update"],
+    queryFn: getUpdateStatus,
+    staleTime: 60 * 60 * 1000,
+    retry: false,
+    refetchOnWindowFocus: false,
   });

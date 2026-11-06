@@ -249,6 +249,8 @@ export {
 } from "./scrobbling";
 export type { ServerIdentity } from "./server";
 export { getServerIdentity } from "./server";
+export type { UpdateManifest, UpdateStatus } from "./server-update";
+export { getUpdateStatus, setUpdateCheck } from "./server-update";
 export type { Share } from "./shares";
 export { createShare, deleteShare, listShares } from "./shares";
 export type {

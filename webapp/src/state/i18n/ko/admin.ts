@@ -147,4 +147,31 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     other: "{count}곡을 복원했어요.",
   },
   "missing.restoreFailed": "복원하지 못했어요. 다시 시도하세요.",
+  // The update check (RFC-028).
+  "update.askTitle": "새 버전을 확인할까요?",
+  "update.askBody":
+    "이 서버는 하루에 한 번 download.waveflow.app에 최신 버전을 물어보고, 새 버전이 나오면 관리자에게 알려 줄 수 있어요. 요청에는 이 서버의 버전 말고는 아무것도 담기지 않아요. 나중에 설정 › 관리에서 바꿀 수 있어요.",
+  "update.askYes": "하루에 한 번 확인",
+  "update.askNo": "확인하지 않음",
+  "update.title": "WaveFlow Server {version}을(를) 사용할 수 있어요",
+  "update.current": "이 서버는 {current} 버전으로 실행 중이에요.",
+  "update.howTo":
+    "Docker라면 새 이미지를 받아 컨테이너를 다시 만드세요. 압축 파일이라면 새 파일을 받아 폴더를 바꾸되, 데이터 폴더는 그대로 두세요.",
+  "update.notes": "릴리스 노트와 다운로드",
+  "update.later": "나중에",
+  "update.dismiss": "이 버전은 다시 표시하지 않기",
+  "update.panel": "업데이트",
+  "update.enabled":
+    "이 서버는 하루에 한 번 download.waveflow.app에서 새 버전을 확인해요.",
+  "update.disabled": "이 서버는 새 버전을 확인하지 않아요.",
+  "update.policyOn": "WAVEFLOW_UPDATE_CHECK=on으로 켜져 있어요.",
+  "update.policyOff": "WAVEFLOW_UPDATE_CHECK=off로 꺼져 있어요.",
+  "update.turnOn": "하루에 한 번 확인",
+  "update.turnOff": "확인 중지",
+  "update.lastChecked": "마지막 확인: {when}.",
+  "update.failed": "지난번 확인에서 버전 목록을 읽지 못했어요.",
+  "update.upToDate": "{current}이(가) 최신 버전이에요.",
+  "update.available": "{version}을(를) 사용할 수 있어요.",
+  "update.saveError": "설정을 저장하지 못했어요.",
+  "update.never": "아직 확인하지 않았어요.",
 };

@@ -73,6 +73,7 @@ export {
   serverIdentityQuery,
   transcodeStatusQuery,
   transcodingProfilesQuery,
+  updateStatusQuery,
 } from "./server";
 export {
   canvasQuery,

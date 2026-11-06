@@ -490,3 +490,54 @@
     justify-content: flex-start;
   }
 }
+
+/* The update dialog (RFC-028): the folder picker's frame, narrower. */
+.update-notice[open] {
+  display: grid;
+  gap: var(--space-4);
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: min(36rem, calc(100dvh - 2rem));
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.update-notice::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.update-notice h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  overflow-wrap: anywhere;
+}
+
+.update-notice p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.updates-panel {
+  display: grid;
+  gap: var(--space-3);
+  align-content: start;
+}
+
+.updates-panel p {
+  margin: 0;
+}
+
+.update-toggle {
+  justify-self: start;
+}
