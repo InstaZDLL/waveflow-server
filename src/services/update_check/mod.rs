@@ -213,7 +213,13 @@ impl DomainServices {
         }
         let this = self.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(update_check::FIRST_CHECK_DELAY).await;
+            // A yes given during the first delay is acted on at once, and its
+            // wake is spent here: left stored, it would end the wait below
+            // the moment the first check returned and send a second request.
+            tokio::select! {
+                () = tokio::time::sleep(update_check::FIRST_CHECK_DELAY) => {}
+                () = this.update.wake.notified() => {}
+            }
             loop {
                 if let Err(error) = this.check_for_update().await {
                     tracing::warn!(error = %error, "update check could not read its setting");
