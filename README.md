@@ -1,12 +1,10 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-logo-horizontal-dark.svg" />
-    <img src="assets/waveflow-logo-horizontal-color.svg" width="320" alt="WaveFlow" />
+    <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-server-logo-horizontal-dark.svg" />
+    <img src="assets/waveflow-server-logo-horizontal-color.svg" width="480" alt="WaveFlow Server" />
   </picture>
 </p>
-
-<h1 align="center">WaveFlow Server</h1>
 
 <p align="center">
   <strong>Your music, everywhere you listen.</strong>
