@@ -58,7 +58,7 @@ macOS (Intel)|macos-x86_64.zip
 Linux (x86_64)|linux-x86_64.tar.gz
 Linux (arm64)|linux-arm64.tar.gz
 ARCHIVES
-printf '\nThe Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch: `README.txt` says what to click past. `SHA256SUMS` holds the checksums of them all, and `%s` the source of the FFmpeg they carry.\n\n' "$sources"
+printf '\nThe Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch: `README.txt` says what to click past. [`SHA256SUMS`](%s/SHA256SUMS) holds the checksums of them all, and [`%s`](%s/%s) the source of the FFmpeg they carry.\n\n' "$base" "$sources" "$base" "$sources"
 printf '## Container image\n\n```bash\ndocker pull %s:%s\n```\n\nThe same image, digest for digest, is on Docker Hub:\n\n```bash\ndocker pull %s:%s\n```\n\nAlso published as `%s` in both, for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system).\n' \
     "$image" "$version" "$hub_image" "$version" "$channel"
 
