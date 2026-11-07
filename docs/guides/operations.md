@@ -601,7 +601,8 @@ always be, as its stream may. **What it logs**: a verdict such as
 
 ## Being told a new version is out
 
-The server can check `download.waveflow.app` once a day for a newer version and
+The server can check `download.waveflow.app` for a newer version, shortly after
+each start and then once a day, and
 tell administrators, in the web client, when one is out
 ([RFC-028](../rfcs/RFC-028-update-check.md); [privacy](privacy.md) says what
 is sent). By default it asks first: the first administrator who signs in after
@@ -637,7 +638,7 @@ podman run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro,z \
-  ghcr.io/instazdll/waveflow-server:2.1.2
+  ghcr.io/instazdll/waveflow-server:2.2.0
 ```
 
 or `- /path/to/music:/music:ro,z` in a compose file. The two compose files in

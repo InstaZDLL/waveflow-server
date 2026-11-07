@@ -10,6 +10,51 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-11-07
+
+### API
+
+- **`GET` and `PUT /api/v2/server/update`** (#435, RFC-028), administrators
+  only, as the other administrative routes: `401` without a credential, `403`
+  for an account or a token without administrative authority. The `GET`
+  reports the update check: its policy, an administrator's stored answer, the
+  running version and its channel, the manifest last read, whether it names a
+  newer version, when the check last ran and why it last failed. The `PUT`
+  records an administrator's answer and is `409` when the environment decided.
+  Nothing else changes shape, and the Subsonic façade is untouched.
+
+### Added
+
+- **The update check** (#435, RFC-028). `WAVEFLOW_UPDATE_CHECK` is `ask` by
+  default: nothing is sent until an administrator agrees, and the answer is
+  kept in a new `instance_update_check` table. Once on, the server reads its
+  channel's manifest on `download.waveflow.app` five seconds after boot, then
+  daily and at once when it is turned on, through the outbound client every
+  request uses, under the 2 MiB ceiling, the whole request bounded by its
+  timeout. A pre-release follows `beta.json`, which every release moves; any
+  other version `stable.json`. A manifest is refused unless coherent — a
+  Semantic Version, its tag, no pre-release on stable, and a page and notes
+  that are `http(s)` addresses — and a failure is kept as a one-word verdict.
+  `WAVEFLOW_UPDATE_URL` names another folder (`https`, or `http` on loopback).
+  The web client asks the first administrator, then announces a newer version
+  with its page and how to update, dismissable per version; Settings ›
+  Administration holds the switch.
+- **Releases keep a second home** (#434). `release.yml`'s `mirror` job copies
+  the archives, the FFmpeg sources, `SHA256SUMS` and the release page to the
+  R2 bucket behind `download.waveflow.app`, under `server/releases/<tag>/`,
+  reads every file back through the public address against `SHA256SUMS`, and
+  writes the channel manifests the update check reads, which never move
+  backwards. `mirror-gitlab.yml` pushes `main` and the tags to a GitLab
+  backup, and `.gitlab-ci.yml` is a standby twin of the workflows, off until a
+  switch; the release logic both run is in `scripts/release/`. The archives of
+  2.1.0-rc.1 to 2.1.2 were copied by hand.
+
+### Changed
+
+- **The `Dockerfile` accepts an optional `gitconfig` build secret**, which
+  the GitLab pipeline uses to fetch `waveflow-core` from its backup; a build
+  without it is unchanged.
+
 ## [2.1.2] — 2026-11-06
 
 ### Security
@@ -534,7 +579,8 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.1.2...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.2.0...main
+[2.2.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.2.0
 [2.1.2]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.2
 [2.1.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.1
 [2.1.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.0

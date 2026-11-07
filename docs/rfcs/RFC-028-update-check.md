@@ -71,8 +71,9 @@ where the manifests are, for a fork that publishes its own.
 
 `GET /api/v2/server/update` and `PUT /api/v2/server/update` answer an
 administrator of the instance, on a credential that carries administrative
-authority, and nobody else: anyone else is refused with the `403` every other
-administrative route answers (`Access::Admin`). Nothing is hidden by it — the
+authority, and nobody else, as every other administrative route does
+(`Access::Admin`): `401` without a credential, `403` for an account or a token
+without administrative authority. Nothing is hidden by it — the
 version a server runs is already public on `/health`. Only an administrator can
 update, and a listener told "a new version is out" can do nothing with it.
 

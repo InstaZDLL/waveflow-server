@@ -426,3 +426,27 @@ async fn a_host_that_never_answers_is_given_up_on() {
     );
     assert_eq!(instance.status().await["failure"], "unreachable");
 }
+
+/// A yes given while the background task still waits out its first delay is
+/// acted on at once, and only once: the wake that answers it must not leave a
+/// second request queued behind the first.
+#[tokio::test]
+async fn a_yes_during_the_first_delay_checks_once_and_at_once() {
+    let (host, base_url) = Host::start().await;
+    host.serve_version(&own_manifest(), NEWER);
+    let instance = Instance::new(UpdateCheckPolicy::Ask, &base_url).await;
+    instance.state.services.spawn_update_checker();
+
+    let (code, _) = instance.answer(true).await;
+    assert_eq!(code, StatusCode::OK);
+    // Well inside the five seconds the task first waits.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while host.requests() == 0 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(host.requests(), 1, "the yes was not acted on at once");
+
+    // Past the first delay: nothing more, the wake was spent.
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    assert_eq!(host.requests(), 1, "a second request followed the first");
+}
