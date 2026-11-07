@@ -1,10 +1,10 @@
 <!-- markdownlint-disable MD033 MD041 -->
-<p align="center">
+<h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-server-logo-horizontal-dark.svg" />
     <img src="assets/waveflow-server-logo-horizontal-color.svg" width="480" alt="WaveFlow Server" />
   </picture>
-</p>
+</h1>
 
 <p align="center">
   <strong>Your music, everywhere you listen.</strong>
@@ -313,6 +313,6 @@ English and French are both welcome.
 
 WaveFlow Server is licensed under [**AGPL-3.0-only**](LICENSE): it runs as a network service, so anyone you serve it to is entitled to its source. The desktop application and `waveflow-core` are GPL-3.0-only.
 
-The WaveFlow logo, its favicons and app icons come unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.
+The WaveFlow logo, its favicons and app icons come unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The lockup at the top of this page is the kit's horizontal one with "server" added, set the same way. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.
 
 The screenshots show albums and artist photos from the maintainer's own library, used for illustration only.
