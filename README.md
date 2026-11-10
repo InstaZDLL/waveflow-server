@@ -1,8 +1,8 @@
 <!-- markdownlint-disable MD033 MD041 -->
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/waveflow-server-logo-horizontal-dark.svg" />
-    <img src="assets/waveflow-server-logo-horizontal-color.svg" width="480" alt="WaveFlow Server" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/assets/waveflow-server-logo-horizontal-dark.svg" />
+    <img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/assets/waveflow-server-logo-horizontal-color.svg" width="480" alt="WaveFlow Server" />
   </picture>
 </h1>
 
@@ -45,7 +45,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/albums.png" width="880" alt="The web player's library: mixes made from your listening above a grid of albums, with the navigation rail on the left" />
+  <img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/albums.png" width="880" alt="The web player's library: mixes made from your listening above a grid of albums, with the navigation rail on the left" />
   <br />
   <sub><b>The web player</b> · your library, with mixes made from what you actually listen to</sub>
 </p>
@@ -123,23 +123,23 @@
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/artist.png" alt="An artist page: a hand-chosen portrait, a banner behind the name, and the artist's albums below" /></td>
-    <td width="50%"><img src="docs/screenshots/now-playing.png" alt="Now playing: the album cover large, the title, and the quality of the stream under it, above the play bar" /></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/artist.png" alt="An artist page: a hand-chosen portrait, a banner behind the name, and the artist's albums below" /></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/now-playing.png" alt="Now playing: the album cover large, the title, and the quality of the stream under it, above the play bar" /></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Artist</b> · a portrait and a banner, chosen or found</sub></td>
     <td align="center"><sub><b>Now playing</b> · with what is actually being streamed</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/album-light.png" alt="An album page in a light theme: cover, title, year and length, the play button and the track list with ratings and favourites" /></td>
-    <td width="50%"><img src="docs/screenshots/statistics-light.png" alt="Listening statistics in a light theme: listens, listening time, a bar chart per day, and the top tracks, artists and albums" /></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/album-light.png" alt="An album page in a light theme: cover, title, year and length, the play button and the track list with ratings and favourites" /></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/statistics-light.png" alt="Listening statistics in a light theme: listens, listening time, a bar chart per day, and the top tracks, artists and albums" /></td>
   </tr>
   <tr>
     <td align="center"><sub><b>Album</b> · in one of the light themes</sub></td>
     <td align="center"><sub><b>Statistics</b> · counted from your own plays</sub></td>
   </tr>
   <tr>
-    <td colspan="2" align="center"><img src="docs/screenshots/quality.png" width="660" alt="The quality page: lossless files measured from their audio, with counts per verdict and, for each track, where its highs stop and what the audio says" /></td>
+    <td colspan="2" align="center"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docs/screenshots/quality.png" width="660" alt="The quality page: lossless files measured from their audio, with counts per verdict and, for each track, where its highs stop and what the audio says" /></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><sub><b>Quality</b> · every lossless file measured, not taken at its word</sub></td>
@@ -302,12 +302,36 @@ FFmpeg and ffprobe must be on `PATH`, since the suite drives a real media servic
 - ✨ **Idea?** → [Feature request](https://github.com/InstaZDLL/waveflow-server/issues/new?template=feature_request.yml)
 - 🔒 **Security?** → [Private disclosure](.github/SECURITY.md), never a public issue.
 
-English and French are both welcome.
+🌍 **Every language is welcome.** Write in the one you are most at ease with — English, Français, 中文, Español, العربية or any other — and we will answer you.
 
-## Related
+## The WaveFlow family
 
-- [**WaveFlow**](https://github.com/InstaZDLL/WaveFlow): the desktop player, which syncs with this server.
-- [**WaveFlow QuickPlay**](https://github.com/InstaZDLL/waveflow-quickplay): a tiny player for the file in front of you.
+WaveFlow Server belongs to a small family of free, open-source apps that share one engine and one look.
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="https://github.com/InstaZDLL/WaveFlow"><img src="https://raw.githubusercontent.com/InstaZDLL/WaveFlow/main/docs/screenshots/home.png" alt="WaveFlow's home: the track to pick up where you left off beside its cover, what plays next, and the suggestion of the day" /></a>
+      <br />
+      <b><a href="https://github.com/InstaZDLL/WaveFlow">🎧 WaveFlow</a></b>
+      <br />
+      <i>Your music, played the way it was made.</i> A desktop player for the files you already own, on Windows, macOS and Linux: gapless, Hi-Res, bit-perfect when you ask for it, with lyrics that follow every word. Point it at this server and its catalogue joins your library; favourites, ratings and playlists follow you from one device to the next.
+      <br />
+      <a href="https://github.com/InstaZDLL/WaveFlow/releases/latest"><b>Download WaveFlow →</b></a>
+    </td>
+    <td width="50%" valign="top">
+      <a href="https://github.com/InstaZDLL/waveflow-quickplay"><img src="https://raw.githubusercontent.com/InstaZDLL/waveflow-quickplay/main/docs/screenshots/player-and-playlist.png" alt="WaveFlow QuickPlay: the compact player with its cover, a synced line and the spectrum, beside its playlist" /></a>
+      <br />
+      <b><a href="https://github.com/InstaZDLL/waveflow-quickplay">⚡ WaveFlow QuickPlay</a></b>
+      <br />
+      <i>Double-click. Just listen.</i> A small native player for the file in front of you: up in under 300 ms from the file manager, with no library to scan. Same decoders as WaveFlow — FLAC, Opus, DSD and the rest — with synced lyrics, the cover and a playlist.
+      <br />
+      <a href="https://github.com/InstaZDLL/waveflow-quickplay/releases/latest"><b>Download QuickPlay →</b></a>
+    </td>
+  </tr>
+</table>
+
+- **[WaveFlow for Android](https://github.com/InstaZDLL/waveflow-android)** — the native mobile client, in development.
 
 ## License
 
@@ -316,3 +340,9 @@ WaveFlow Server is licensed under [**AGPL-3.0-only**](LICENSE): it runs as a net
 The WaveFlow logo, its favicons and app icons come unchanged from the logo kit kept with the [desktop application](https://github.com/InstaZDLL/WaveFlow) under `design/logo/`, whose usage guide governs them. The lockup at the top of this page is the kit's horizontal one with "server" added, set the same way. The wordmark is Inter SemiBold converted to outlines; Inter is under the SIL Open Font License 1.1, which permits its use in a logo.
 
 The screenshots show albums and artist photos from the maintainer's own library, used for illustration only.
+
+### Trademark
+
+The WaveFlow logo (the files under [`assets/`](assets/), and the web client's favicons and app icons) is a trademark of InstaZDLL. The AGPL-3.0 license covers the code and grants no right to use the logo (AGPL-3.0 section 7(e)).
+
+You may use the logo to refer to WaveFlow Server, in an article, a review, a link or a talk, and keep it in a package that ships WaveFlow Server unmodified, built from this repository. A fork or a modified build must use its own logo, and nothing may suggest that it is official or endorsed by the project.
