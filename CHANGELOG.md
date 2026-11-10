@@ -10,6 +10,36 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-11-10
+
+No response changes shape, the Subsonic façade is untouched and the schema is
+2.2.0's.
+
+### Changed
+
+- **waveflow-core is pinned to its `v2.0.0` tag** (#442), instead of the bare
+  revision `102df003`. Two things it changes in a scan, for a file read from
+  now on:
+  - the cover taken from a file's tag is its front cover, not its first
+    picture, so a back cover or a booklet page stored ahead of the front no
+    longer becomes the track's and the album's cover. A file already in the
+    catalogue keeps its cover until the
+    file changes, or until `waveflow-server database rescan-full` has every
+    file read again;
+  - a cover goes to the artwork folder through a partial file and a `rename`,
+    so a write cut short by a crash or a full disk no longer leaves a
+    truncated image under the name later scans reuse.
+
+  The core now also lists WavPack (`wv`) and Monkey's Audio (`ape`). The
+  server leaves them out of the scan and of uploads, as before: the FFmpeg its
+  images and archives ship decodes neither. The standalone packaging accepts
+  a core pinned by tag, and `SOURCE.txt` still names the commit.
+- **Dependencies.** Every Rust dependency at its latest compatible version
+  (#438, #442); the web client on vite 8.3.7, `@vitejs/plugin-react` 6.3.0 and
+  the patch and minor updates of #439 and #440; the workflow actions of #441.
+  The web client is built with bun 1.4.4, pinned in the workflows, the
+  `Dockerfile` and the GitLab pipeline instead of following `latest` or `1`.
+
 ## [2.2.0] — 2026-11-07
 
 ### API

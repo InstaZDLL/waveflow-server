@@ -75,8 +75,9 @@ revision of its survey, and a status line saying what has happened since.
 The notes published with each stable release, one per tag, in
 [`releases/`](releases/): [2.0.0](releases/v2.0.0.md),
 [2.0.1](releases/v2.0.1.md), [2.1.0](releases/v2.1.0.md),
-[2.1.1](releases/v2.1.1.md), [2.1.2](releases/v2.1.2.md) and
-[2.2.0](releases/v2.2.0.md). The release workflow refuses a stable tag that
+[2.1.1](releases/v2.1.1.md), [2.1.2](releases/v2.1.2.md),
+[2.2.0](releases/v2.2.0.md) and [2.2.1](releases/v2.2.1.md). The release
+workflow refuses a stable tag that
 has none. Every change, release by release,
 is in the
 [CHANGELOG](../CHANGELOG.md).
