@@ -415,3 +415,31 @@ async fn links_reach_into_an_allowed_folder_and_nowhere_else() {
         "a library that does not follow links streamed through one"
     );
 }
+
+/// WavPack and Monkey's Audio are in `waveflow-core`'s list since its v2.0.0,
+/// and not in what this server indexes: the FFmpeg the images ship decodes
+/// neither, so an indexed file would be listed and then fail to play. They are
+/// not discovered at all — not counted, not an error — in either case.
+#[tokio::test]
+async fn wavpack_and_monkeys_audio_are_not_indexed_yet() {
+    let (_temp, state, owner, library, _root) = incremental_library("not-yet", |music| {
+        std::fs::create_dir_all(music.join("Album")).unwrap();
+        for (index, path) in [
+            "Album/One.wav",
+            "Album/Two.wv",
+            "Album/Three.ape",
+            "Album/Four.WV",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_test_wav_of_len(&music.join(path), 800 + index * 10);
+        }
+    })
+    .await;
+    let scan = job(&state, owner, scan_once(&state, owner, library).await).await;
+    assert_eq!(available_paths(&state).await, ["Album/One.wav"]);
+    assert_eq!(scan.total_files, 1, "the others are never discovered");
+    assert_eq!(scan.excluded, 0, "an unindexed format is not an exclusion");
+    assert_eq!(scan.errors, 0);
+}

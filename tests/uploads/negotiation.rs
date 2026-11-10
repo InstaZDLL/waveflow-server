@@ -237,6 +237,38 @@ async fn a_format_the_catalogue_cannot_read_is_refused() {
     assert_eq!(open_sessions(&state).await, 1);
 }
 
+/// WavPack and Monkey's Audio, which `waveflow-core` lists and this server
+/// does not index yet, are refused like any format the scanner cannot read:
+/// accepted, a received file would never become a track.
+#[tokio::test]
+async fn wavpack_and_monkeys_audio_are_refused_until_indexed() {
+    let (_temp, config, state) = upload_app(|_| {}).await;
+    let fixture = fixture(&config, &state, "not-yet").await;
+    state
+        .db
+        .set_library_accepts_uploads(fixture.owner, fixture.library, true, now_ms())
+        .await
+        .unwrap();
+
+    let (status, body) = negotiate(
+        &config,
+        &state,
+        &fixture,
+        vec![
+            offer(1, 4096, "wv"),
+            offer(2, 4096, ".APE"),
+            offer(3, 4096, "flac"),
+        ],
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["verdicts"][0]["decision"], "unsupported_format");
+    assert_eq!(body["verdicts"][1]["decision"], "unsupported_format");
+    assert_eq!(body["verdicts"][2]["decision"], "accepted");
+    assert_eq!(open_sessions(&state).await, 1);
+}
+
 /// Above the per-file ceiling, refused before a byte moves.
 #[tokio::test]
 async fn a_file_above_the_ceiling_is_refused() {

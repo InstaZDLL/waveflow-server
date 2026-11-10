@@ -575,11 +575,7 @@ pub(super) fn discover_audio(
             let supported = path
                 .extension()
                 .and_then(|value| value.to_str())
-                .is_some_and(|ext| {
-                    waveflow_core::scanner::AUDIO_EXTENSIONS
-                        .iter()
-                        .any(|candidate| candidate.eq_ignore_ascii_case(ext))
-                });
+                .is_some_and(super::indexes_extension);
             if supported {
                 paths.push((path, name));
             }
