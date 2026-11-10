@@ -233,7 +233,7 @@ On your own network, point your app at `http://your-host:4533` with that usernam
 <details>
 <summary>From source</summary>
 
-Requires **Rust 1.98+** and [bun](https://bun.sh).
+Requires **Rust 1.98+** and [bun](https://bun.sh) 1.4.4.
 
 ```bash
 bun --cwd=webapp install
