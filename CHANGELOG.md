@@ -22,8 +22,8 @@ No response changes shape, the Subsonic façade is untouched and the schema is
   now on:
   - the cover taken from a file's tag is its front cover, not its first
     picture, so a back cover or a booklet page stored ahead of the front no
-    longer becomes the track's and the album's cover; an empty front cover is
-    passed over. A file already in the catalogue keeps its cover until the
+    longer becomes the track's and the album's cover. A file already in the
+    catalogue keeps its cover until the
     file changes, or until `waveflow-server database rescan-full` has every
     file read again;
   - a cover goes to the artwork folder through a partial file and a `rename`,
