@@ -50,10 +50,19 @@ esac
 # rather than leaving SOURCE.txt to say something untrue.
 foreign=$(sed -n 's/^source = "\(.*\)"$/\1/p' "$root/Cargo.lock" | sort -u |
     grep -v '^registry+https://github.com/rust-lang/crates.io-index$' || true)
+# The core is pinned by a release tag (`?tag=v2.0.0#<sha>`) or by a bare
+# revision (`?rev=<sha>#<sha>`). Either way the commit after `#` is what was
+# built, and it is what SOURCE.txt names: a tag can be moved, a commit cannot.
 core_revision=$(echo "$foreign" |
-    sed -n 's|^git+https://github.com/InstaZDLL/WaveFlow?rev=\([0-9a-f]\{40\}\)#\1$|\1|p')
-if [ -z "$core_revision" ] ||
-    [ "$foreign" != "git+https://github.com/InstaZDLL/WaveFlow?rev=$core_revision#$core_revision" ]; then
+    sed -n 's|^git+https://github.com/InstaZDLL/WaveFlow?[a-z]*=[^#]*#\([0-9a-f]\{40\}\)$|\1|p')
+core_pin=$(echo "$foreign" |
+    sed -n 's|^git+https://github.com/InstaZDLL/WaveFlow?\([a-z]*=[^#]*\)#[0-9a-f]\{40\}$|\1|p')
+case $core_pin in
+    "rev=$core_revision" | tag=?*) ;;
+    *) core_pin= ;;
+esac
+if [ -z "$core_revision" ] || [ -z "$core_pin" ] ||
+    [ "$foreign" != "git+https://github.com/InstaZDLL/WaveFlow?$core_pin#$core_revision" ]; then
     die "Cargo.lock names a source beyond crates.io and waveflow-core's revision:
 $foreign
 attach its source to the release and say so in SOURCE.txt (§3 of the plan)"

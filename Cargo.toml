@@ -102,7 +102,7 @@ utoipa = { version = "6", features = ["axum_extras", "uuid"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", rev = "102df0031bef8ba44062e03337807592b3d51102", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", tag = "v2.0.0", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"

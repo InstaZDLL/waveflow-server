@@ -192,7 +192,7 @@ rust-windows:
 webapp:
   extends: .linux
   stage: check
-  image: oven/bun:1
+  image: oven/bun:1.4.4
   interruptible: true
   timeout: 30m
   rules:
@@ -421,7 +421,7 @@ ffmpeg-windows-x86_64:
 release-webapp:
   extends: [.release-rules, .linux]
   stage: build
-  image: oven/bun:1
+  image: oven/bun:1.4.4
   needs: [verify]
   script:
     - cd webapp

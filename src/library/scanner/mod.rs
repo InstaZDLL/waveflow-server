@@ -9,6 +9,26 @@ pub use discovery::IGNORE_FILE;
 pub(crate) use discovery::{normalised_scope, MAX_SCOPE_FOLDERS};
 pub(crate) use extract::extract_file;
 
+/// What `waveflow-core` indexes and this server does not, yet. The core added
+/// WavPack and Monkey's Audio with its own decoders in v2.0.0, but here a file
+/// is decoded by FFmpeg, and the minimal build the images ship
+/// (`packaging/ffmpeg/build.sh`) has neither their decoders nor their
+/// demuxers: indexed, such a file would be listed and then fail to stream,
+/// transcode or be measured. Supporting them is the build, the media types and
+/// the fixtures together, and this list goes when they land.
+const NOT_YET_INDEXED: &[&str] = &["wv", "ape"];
+
+/// Whether the scanner indexes a file of this extension (without its dot, in
+/// any case). The one answer the walk and the upload negotiation share, so a
+/// file is never accepted by one and ignored by the other.
+pub(crate) fn indexes_extension(extension: &str) -> bool {
+    let named = |list: &[&str]| {
+        list.iter()
+            .any(|candidate| candidate.eq_ignore_ascii_case(extension))
+    };
+    named(waveflow_core::scanner::AUDIO_EXTENSIONS) && !named(NOT_YET_INDEXED)
+}
+
 use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use dashmap::DashMap;

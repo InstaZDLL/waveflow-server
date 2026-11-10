@@ -1,5 +1,5 @@
 # The web client is compiled into the server binary, so it must be built first.
-FROM oven/bun:1 AS web
+FROM oven/bun:1.4.4 AS web
 WORKDIR /web
 COPY webapp/package.json webapp/bun.lock ./
 RUN bun install --frozen-lockfile

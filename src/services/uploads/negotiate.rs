@@ -16,10 +16,7 @@ fn clean_hash(value: &str) -> Option<String> {
 /// The extension the file will keep once it is stored, without its dot.
 fn clean_extension(value: &str) -> Option<String> {
     let value = value.trim().trim_start_matches('.').to_ascii_lowercase();
-    waveflow_core::scanner::AUDIO_EXTENSIONS
-        .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(&value))
-        .then_some(value)
+    crate::library::scanner::indexes_extension(&value).then_some(value)
 }
 
 fn refused(full_hash: String, decision: UploadDecision) -> UploadVerdict {
