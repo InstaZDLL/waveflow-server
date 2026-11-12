@@ -10,6 +10,18 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The image starts on a data directory it did not create** (#444). It used
+  to start as its account (uid 4533), and in a folder the host provides,
+  Home Assistant's above all, it stopped on *unable to open database file*.
+  It now starts as root, gives the data directory to that account and runs
+  the server as it, never as root; `docker exec … waveflow-server` steps down
+  the same way. `WAVEFLOW_UID` and `WAVEFLOW_GID` name another account, and
+  `--user` still runs the server as the account given, without the hand-over.
+  The group is now 4533 too, where it was whatever number Debian drew: the
+  first start changes the group of an existing data directory, once.
+
 ## [2.2.1] — 2026-11-10
 
 No response changes shape, the Subsonic façade is untouched and the schema is
