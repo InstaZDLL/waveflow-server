@@ -678,8 +678,10 @@ in such a folder it stopped at once on *unable to open database file*.
 
 - **Each start** changes the owner of whatever under `WAVEFLOW_DATA_DIR` is not
   already the account's, and nothing else: the second start walks the folder
-  and changes nothing. A symbolic link keeps pointing where it did, and the
-  music folder is never touched.
+  and changes nothing. A symbolic link keeps pointing where it did and what it
+  points at keeps its owner; a file with a second name (a hard link) is left
+  as it is, since the server never makes one and it could be a file of root's;
+  the music folder is never touched.
 - **`docker exec waveflow waveflow-server …`** runs as the account too, though
   `docker exec` itself is root: the `waveflow-server` on the image's `PATH`
   steps down before it runs. A scan started from the command line therefore

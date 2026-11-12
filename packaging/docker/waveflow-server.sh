@@ -44,10 +44,19 @@ if [ "${1:-serve}" = serve ]; then
     data="${WAVEFLOW_DATA_DIR:-/data}"
     mkdir -p "$data"
     # Only what is not already the account's, so a boot after the first walks
-    # the directory and changes nothing. `-h` changes a link, never what it
-    # points at, which may be outside the data directory.
+    # the directory and changes nothing.
+    #
+    # Root walks a directory the account can write to, so the walk must not be
+    # a way for that account to own something else:
+    # - `-execdir` runs `chown` from inside each directory on `./name`, so no
+    #   directory on the way can be swapped for a link mid-walk; and `-h`
+    #   changes a link itself, never what it points at;
+    # - a file with a second name is skipped: a hard link to a file of root's,
+    #   left here, would otherwise be handed over at the next start. The
+    #   server never makes one.
     if ! find "$data" \( ! -user "$uid" -o ! -group "$gid" \) \
-        -exec chown -h "$uid:$gid" {} +; then
+        ! \( -type f -links +1 \) \
+        -execdir chown -h "$uid:$gid" {} +; then
         # A share that refuses `chown` (NFS with root squashed, SMB) may still
         # let the account write; the server says so itself if it cannot.
         echo "waveflow-server: could not give $data to $uid:$gid; starting anyway" >&2
