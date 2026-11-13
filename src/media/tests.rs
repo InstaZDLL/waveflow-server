@@ -57,6 +57,24 @@ fn ranges_are_bounded_and_validated() {
     assert_eq!(parse_range("bytes= 2 - 5 ", 10), Some((2, 5)));
 }
 
+/// A FLAC of a few minutes is tens of MiB. Every span runs to where it was
+/// asked to: an open range used to stop 8 MiB after its start, and a player
+/// that reads the end of a 206 as the end of the file stopped there (#444).
+#[test]
+fn ranges_are_not_cut_short_on_a_large_file() {
+    const SIZE: u64 = 64 * 1024 * 1024;
+    assert_eq!(
+        parse_range("bytes=1000000-", SIZE),
+        Some((1_000_000, SIZE - 1))
+    );
+    assert_eq!(parse_range("bytes=0-", SIZE), Some((0, SIZE - 1)));
+    assert_eq!(parse_range("bytes=0-20000000", SIZE), Some((0, 20_000_000)));
+    assert_eq!(
+        parse_range("bytes=-20000000", SIZE),
+        Some((SIZE - 20_000_000, SIZE - 1))
+    );
+}
+
 #[test]
 fn a_range_from_the_first_byte_opens_a_resource() {
     // How a browser opens an audio element, and how iOS probes one.

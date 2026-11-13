@@ -21,6 +21,15 @@ out first, whether or not it breaks a compile.
   `--user` still runs the server as the account given, without the hand-over.
   The group is now 4533 too, where it was whatever number Debian drew: the
   first start changes the group of an existing data directory, once.
+- **A range read runs to the end of the span asked for** (#444). An open
+  range, `bytes=N-`, stopped 8 MiB after its start, on the native stream and
+  on the Subsonic façade alike. HTTP allows it and `Content-Range` said so,
+  but the desktop app took the end of that 206 for the end of the file: a
+  track it streamed from the server stopped about a minute in, sooner for a
+  high-resolution FLAC. The cap dated from when a range was read into memory
+  whole, and has guarded nothing since the body is streamed. A client that
+  already asked again from where the answer stopped sees fewer requests and
+  nothing else.
 
 ## [2.2.1] — 2026-11-10
 

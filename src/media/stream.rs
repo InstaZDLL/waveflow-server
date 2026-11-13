@@ -29,8 +29,6 @@ use super::{
 };
 use crate::{media::replay_gain::ReplayGainMode, storage::catalog::StreamTrack, AppState};
 
-const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
-
 /// `?download=1` on a stream ticket (RFC-012 decision 5).
 ///
 /// Its own extractor rather than a field on [`StreamQuery`], which the
@@ -720,6 +718,16 @@ pub(super) fn asks_for_a_bounded_start(value: &str) -> bool {
     starts_at_the_first_byte(value) && value.trim_end().ends_with(|c: char| c.is_ascii_digit())
 }
 
+/// The span of a file of `size` bytes that a `Range` header asks for, as
+/// inclusive offsets, or `None` when it asks for nothing this can serve.
+///
+/// **The whole span asked for, however long.** An open range (`bytes=N-`) runs
+/// to the end of the file. It used to stop 8 MiB after its start, from the time
+/// a partial answer was read into memory whole; the body has long been streamed
+/// from the file, so the cap guarded nothing. It still truncated every seek:
+/// HTTP allows a shorter answer, and `Content-Range` said where it ended, but a
+/// player that takes the end of a 206 for the end of the file stopped there —
+/// the desktop app's server playback, about a minute into a FLAC (#444).
 pub(super) fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if size == 0 {
         return None;
@@ -733,7 +741,7 @@ pub(super) fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     // cold path accepts must not be refused once the cache exists.
     let (start, end) = (start.trim(), end.trim());
     if start.is_empty() {
-        let suffix = end.parse::<u64>().ok()?.min(size).min(MAX_RANGE_BYTES);
+        let suffix = end.parse::<u64>().ok()?.min(size);
         if suffix == 0 {
             return None;
         }
@@ -751,7 +759,7 @@ pub(super) fn parse_range(value: &str, size: u64) -> Option<(u64, u64)> {
     if requested_end < start {
         return None;
     }
-    Some((start, requested_end.min(start + MAX_RANGE_BYTES - 1)))
+    Some((start, requested_end))
 }
 
 pub(crate) fn validate_bitrate(
