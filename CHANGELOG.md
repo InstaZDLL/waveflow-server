@@ -21,7 +21,8 @@ changes in one way only: a range answer may be longer (see below).
   to start as its account (uid 4533), and in a folder the host provides,
   Home Assistant's above all, it stopped on *unable to open database file*.
   It now starts as root, gives the data directory to that account and runs
-  the server as it, never as root; `docker exec … waveflow-server` steps down
+  the server as it, not as root unless `WAVEFLOW_UID=0` asks for it;
+  `docker exec … waveflow-server` steps down
   the same way. `WAVEFLOW_UID` and `WAVEFLOW_GID` name another account, and
   `--user` still runs the server as the account given, without the hand-over.
   The group is now 4533 too, where it was whatever number Debian drew: the
