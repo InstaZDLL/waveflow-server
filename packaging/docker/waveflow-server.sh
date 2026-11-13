@@ -38,25 +38,62 @@ for id in "$uid" "$gid"; do
     esac
 done
 
+# Every mount point strictly below the directory `$1`, one per line, as the
+# kernel lists them. `mountinfo` writes a space, a tab, a newline and a
+# backslash as `\040`, `\011`, `\012` and `\134`, which `%b` reads back.
+mounts_below() {
+    while read -r _ _ _ _ point _; do
+        point="$(printf '%b' "$point")"
+        case "$point" in
+            "$1"/*) printf '%s\n' "$point" ;;
+        esac
+    done < /proc/self/mountinfo
+}
+
+# Gives the data directory `$1` to the account.
+#
+# Only what is not already the account's, so a boot after the first walks the
+# directory and changes nothing.
+#
+# Root walks a directory the account can write to, so the walk must not be a
+# way for that account to own something else:
+# - `-execdir` runs `chown` from inside each directory on `./name`, so no
+#   directory on the way can be swapped for a link mid-walk; and `-h` changes a
+#   link itself, never what it points at;
+# - a file with a second name is skipped: a hard link to a file of root's, left
+#   here, would otherwise be handed over at the next start. The server never
+#   makes one;
+# - a mount inside the data directory is the operator's, a music folder for
+#   one, and its files belong to the host: it is left as it is, mount point
+#   included. `-xdev` would not do: a folder of the host mounted from the disk
+#   the data directory is on has the same device.
+hand_over() {
+    data="$1"
+    set --
+    # A here-document, not a pipe: a pipe would build the list in a subshell.
+    while IFS= read -r point; do
+        [ -n "$point" ] || continue
+        echo "waveflow-server: leaving $point as it is: a mount inside the data directory" >&2
+        # `-path` reads a pattern: its wildcards are taken literally.
+        pattern="$(printf '%s\n' "$point" | sed 's/[][*?\\]/\\&/g')"
+        set -- "$@" -path "$pattern" -prune -o
+    done <<MOUNTS
+$(mounts_below "$data")
+MOUNTS
+    find "$data" "$@" \( ! -user "$uid" -o ! -group "$gid" \) \
+        ! \( -type f -links +1 \) \
+        -execdir chown -h "$uid:$gid" {} +
+}
+
 # Only when the server itself starts: a command run beside it has no business
 # walking the whole directory, and the server has already handed it over.
 if [ "${1:-serve}" = serve ]; then
     data="${WAVEFLOW_DATA_DIR:-/data}"
     mkdir -p "$data"
-    # Only what is not already the account's, so a boot after the first walks
-    # the directory and changes nothing.
-    #
-    # Root walks a directory the account can write to, so the walk must not be
-    # a way for that account to own something else:
-    # - `-execdir` runs `chown` from inside each directory on `./name`, so no
-    #   directory on the way can be swapped for a link mid-walk; and `-h`
-    #   changes a link itself, never what it points at;
-    # - a file with a second name is skipped: a hard link to a file of root's,
-    #   left here, would otherwise be handed over at the next start. The
-    #   server never makes one.
-    if ! find "$data" \( ! -user "$uid" -o ! -group "$gid" \) \
-        ! \( -type f -links +1 \) \
-        -execdir chown -h "$uid:$gid" {} +; then
+    # The path the kernel lists mounts under, and one `find` starts from even
+    # when the setting names a link to the directory.
+    data="$(realpath "$data")"
+    if ! hand_over "$data"; then
         # A share that refuses `chown` (NFS with root squashed, SMB) may still
         # let the account write; the server says so itself if it cannot.
         echo "waveflow-server: could not give $data to $uid:$gid; starting anyway" >&2

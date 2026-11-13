@@ -682,6 +682,10 @@ in such a folder it stopped at once on *unable to open database file*.
   points at keeps its owner; a file with a second name (a hard link) is left
   as it is, since the server never makes one and it could be a file of root's;
   the music folder is never touched.
+- **A mount inside the data directory** (music mounted on `/data/music`, a
+  volume of its own for the transcode cache) is left as it is, mount point
+  included, and named in the log: its files belong to the host. It has to be
+  writable by the account already if the server writes there.
 - **`docker exec waveflow waveflow-server …`** runs as the account too, though
   `docker exec` itself is root: the `waveflow-server` on the image's `PATH`
   steps down before it runs. A scan started from the command line therefore
