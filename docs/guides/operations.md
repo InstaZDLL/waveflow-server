@@ -638,7 +638,7 @@ podman run -d --name waveflow \
   -p 4533:4533 \
   -v waveflow-data:/data \
   -v /path/to/music:/music:ro,z \
-  ghcr.io/instazdll/waveflow-server:2.2.1
+  ghcr.io/instazdll/waveflow-server:2.2.2
 ```
 
 or `- /path/to/music:/music:ro,z` in a compose file. The two compose files in
@@ -668,7 +668,8 @@ The `waveflow-data` volume is the engine's own and is labelled already.
 
 ## The account the container runs as
 
-The server never runs as root in the image. The container *starts* as root,
+The server does not run as root in the image, unless `WAVEFLOW_UID=0` asks
+for it (see below). The container *starts* as root,
 gives the data directory to the account `waveflow` (uid and gid 4533), and
 only then starts the server, as that account. Nothing needs configuring for a
 named volume, which the image prepares itself; the hand-over is for a data
