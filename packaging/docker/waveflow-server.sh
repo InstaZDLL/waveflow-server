@@ -85,15 +85,38 @@ MOUNTS
         -execdir chown -h "$uid:$gid" {} +
 }
 
+# Whether every directory above `$1` is root's and writable by root alone.
+#
+# The walk starts from a path, and the kernel resolves that path again when it
+# runs. A directory above the data directory that the account could write in
+# would let it swap the data directory for a link to `/etc` just before, and
+# root would hand `/etc` over. `/data`, under `/`, passes.
+root_alone_above() {
+    dir="$(dirname "$1")"
+    while :; do
+        if [ -n "$(find "$dir" -maxdepth 0 \( ! -user 0 -o -perm /022 \) -print)" ]; then
+            return 1
+        fi
+        [ "$dir" = / ] && return 0
+        dir="$(dirname "$dir")"
+    done
+}
+
 # Only when the server itself starts: a command run beside it has no business
 # walking the whole directory, and the server has already handed it over.
 if [ "${1:-serve}" = serve ]; then
     data="${WAVEFLOW_DATA_DIR:-/data}"
     mkdir -p "$data"
-    # The path the kernel lists mounts under, and one `find` starts from even
-    # when the setting names a link to the directory.
-    data="$(realpath "$data")"
-    if ! hand_over "$data"; then
+    # Absolute and without `.`, `..` or doubled slashes, so it compares with the
+    # paths `mountinfo` lists; links are kept, never followed.
+    data="$(realpath --no-symlinks "$data")"
+    if [ "$(realpath "$data")" != "$data" ]; then
+        # A link on the way may be the account's to point anywhere. The server
+        # still starts, as the account, in whatever it can write.
+        echo "waveflow-server: not giving $data to $uid:$gid: its path goes through a link" >&2
+    elif ! root_alone_above "$data"; then
+        echo "waveflow-server: not giving $data to $uid:$gid: a directory above it is not root's alone" >&2
+    elif ! hand_over "$data"; then
         # A share that refuses `chown` (NFS with root squashed, SMB) may still
         # let the account write; the server says so itself if it cannot.
         echo "waveflow-server: could not give $data to $uid:$gid; starting anyway" >&2

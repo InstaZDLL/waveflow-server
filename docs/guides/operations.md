@@ -686,6 +686,11 @@ in such a folder it stopped at once on *unable to open database file*.
   volume of its own for the transcode cache) is left as it is, mount point
   included, and named in the log: its files belong to the host. It has to be
   writable by the account already if the server writes there.
+- **Nothing is handed over through a link.** When `WAVEFLOW_DATA_DIR` goes
+  through a symbolic link, or a directory above it is not root's alone (a data
+  directory set inside another folder the account can write in), the container
+  says so and starts without changing any owner. The default `/data` is
+  neither.
 - **`docker exec waveflow waveflow-server …`** runs as the account too, though
   `docker exec` itself is root: the `waveflow-server` on the image's `PATH`
   steps down before it runs. A scan started from the command line therefore
