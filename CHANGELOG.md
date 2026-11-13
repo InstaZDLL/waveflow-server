@@ -10,9 +10,14 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.2.2] — 2026-11-13
+
+No response changes shape and the schema is 2.2.1's. The Subsonic façade
+changes in one way only: a range answer may be longer (see below).
+
 ### Fixed
 
-- **The image starts on a data directory it did not create** (#444). It used
+- **The image starts on a data directory it did not create** (#444, #445). It used
   to start as its account (uid 4533), and in a folder the host provides,
   Home Assistant's above all, it stopped on *unable to open database file*.
   It now starts as root, gives the data directory to that account and runs
@@ -20,8 +25,12 @@ out first, whether or not it breaks a compile.
   the same way. `WAVEFLOW_UID` and `WAVEFLOW_GID` name another account, and
   `--user` still runs the server as the account given, without the hand-over.
   The group is now 4533 too, where it was whatever number Debian drew: the
-  first start changes the group of an existing data directory, once.
-- **A range read runs to the end of the span asked for** (#444). An open
+  first start changes the group of an existing data directory, once. The
+  hand-over gives the account nothing that was not the data directory's: a
+  mount inside it, a hard link, and the target of a symbolic link keep their
+  owner, and a data directory set to `/`, reached through a link or under a
+  folder that is not root's alone is not handed over at all.
+- **A range read runs to the end of the span asked for** (#444, #446). An open
   range, `bytes=N-`, stopped 8 MiB after its start, on the native stream and
   on the Subsonic façade alike. HTTP allows it and `Content-Range` said so,
   but the desktop app took the end of that 206 for the end of the file: a
