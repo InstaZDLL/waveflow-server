@@ -686,8 +686,8 @@ in such a folder it stopped at once on *unable to open database file*.
   volume of its own for the transcode cache) is left as it is, mount point
   included, and named in the log: its files belong to the host. It has to be
   writable by the account already if the server writes there.
-- **Nothing is handed over through a link.** When `WAVEFLOW_DATA_DIR` goes
-  through a symbolic link, or a directory above it is not root's alone (a data
+- **Nothing is handed over through a link, nor `/`.** When `WAVEFLOW_DATA_DIR`
+  is `/`, goes through a symbolic link, or a directory above it is not root's alone (a data
   directory set inside another folder the account can write in), the container
   says so and starts without changing any owner. The default `/data` is
   neither.

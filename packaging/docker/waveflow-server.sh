@@ -110,7 +110,11 @@ if [ "${1:-serve}" = serve ]; then
     # Absolute and without `.`, `..` or doubled slashes, so it compares with the
     # paths `mountinfo` lists; links are kept, never followed.
     data="$(realpath --no-symlinks "$data")"
-    if [ "$(realpath "$data")" != "$data" ]; then
+    if [ "$data" = / ]; then
+        # Every file of the container would be walked, the mounts too: no
+        # mount is "below /" as `mounts_below` reads it.
+        echo "waveflow-server: not giving / to $uid:$gid: it is not a data directory" >&2
+    elif [ "$(realpath "$data")" != "$data" ]; then
         # A link on the way may be the account's to point anywhere. The server
         # still starts, as the account, in whatever it can write.
         echo "waveflow-server: not giving $data to $uid:$gid: its path goes through a link" >&2
