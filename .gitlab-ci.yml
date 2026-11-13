@@ -240,6 +240,7 @@ webapp:
         - "tests/**/*"
         - "webapp/**/*"
         - "assets/scalar/**/*"
+        - "packaging/docker/**/*"
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"
@@ -278,6 +279,28 @@ webapp:
         sleep 1
       done
       [ "$status" = healthy ] || { echo "the HEALTHCHECK still reports '$status'"; exit 1; }
+    # As Home Assistant starts it (#444): a data directory owned by root. The
+    # file keeps the volume from taking the image's owner back at the mount.
+    - |
+      docker volume create waveflow-foreign
+      docker run --rm --volume waveflow-foreign:/data --entrypoint sh waveflow-server:ci \
+        -c 'chown 0:0 /data && touch /data/left-by-root'
+      docker run --detach --name foreign --volume waveflow-foreign:/data waveflow-server:ci
+      ready=""
+      for _ in $(seq 1 60); do
+        if [ "$(docker inspect --format '{{.State.Running}}' foreign)" != "true" ]; then
+          echo "the container exited on a data directory owned by root"; docker logs --tail 100 foreign; exit 1
+        fi
+        if docker exec foreign waveflow-server health > /dev/null 2>&1; then ready=yes; break; fi
+        sleep 1
+      done
+      [ -n "$ready" ] || { echo "never ready on a data directory owned by root"; docker logs --tail 100 foreign; exit 1; }
+      uid="$(docker exec foreign sh -c "sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' /proc/1/status")"
+      [ "$uid" = 4533 ] || { echo "the server runs as uid '$uid', not 4533"; exit 1; }
+      docker exec --env WAVEFLOW_ACCOUNT_PASSWORD=image-check-only foreign \
+        waveflow-server account create-admin --username probe
+      stray="$(docker exec foreign find /data \( ! -user 4533 -o ! -group 4533 \) -print)"
+      [ -z "$stray" ] || { echo "not owned by 4533:4533:"; echo "$stray"; exit 1; }
     - builder="$(sed -n 's/^FROM[[:space:]]\{1,\}\(rust:[^[:space:]]*\).*/\1/p' Dockerfile | head -1)"
     - test -n "$builder" || { echo "the Dockerfile names no rust builder image"; exit 1; }
     - |
@@ -301,6 +324,9 @@ webapp:
       COPY --from=tests /tests /tests
       ENV CARGO_MANIFEST_DIR=/work
       WORKDIR /work
+      # The image starts as root and drops to its account; the tests run as
+      # that account directly, as the server does.
+      USER waveflow
       RUN for t in /tests/*; do PATH="$(dirname "$WAVEFLOW_FFMPEG_PATH"):$PATH" "$t" || exit 1; done
       DOCKERFILE
     # The daemon's own builder, which sees the image just built.

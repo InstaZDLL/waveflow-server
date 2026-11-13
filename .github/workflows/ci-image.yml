@@ -7,7 +7,7 @@ name: CI (image)
 # tag, where a broken build is a failed release rather than a red check.
 #
 # The paths are everything that goes into the image, not only the files that
-# shape it. `src/**` belongs: the image runs the binary as an unprivileged user
+# shape it. `src/**` belongs: the image runs the binary as an unprivileged account
 # from `/`, on Debian's FFmpeg, with the settings its `ENV` gives it, and a
 # change to the code can break that alone — a file written relative to the
 # working directory, a default that needs configuration, a probe the
@@ -30,6 +30,8 @@ on:
       - "webapp/**"
       # The API reference page is compiled in with `include_bytes!`.
       - "assets/scalar/**"
+      # The entry point the image runs everything through.
+      - "packaging/docker/**"
       - ".github/workflows/ci-image.yml"
   pull_request:
     paths:
@@ -44,6 +46,8 @@ on:
       - "webapp/**"
       # The API reference page is compiled in with `include_bytes!`.
       - "assets/scalar/**"
+      # The entry point the image runs everything through.
+      - "packaging/docker/**"
       - ".github/workflows/ci-image.yml"
 
 permissions:
@@ -153,15 +157,67 @@ jobs:
           echo "::error::the HEALTHCHECK still reports '$status' after 120 seconds"
           exit 1
 
+      # As Home Assistant starts it (#444): on a data directory the image did
+      # not make, owned by root, with a file root left in it. The server must
+      # take it over and run as its own account, and a command run beside it
+      # with `docker exec`, as root, must write nothing root then owns.
+      #
+      # The file is what makes this a test. An empty named volume takes the
+      # owner of the image's `/data` again at every mount, so without it the
+      # `chown` would be undone and 2.2.1, which fails here, would pass.
+      - name: Boot on a data directory owned by root
+        run: |
+          docker volume create waveflow-foreign
+          docker run --rm --volume waveflow-foreign:/data --entrypoint sh "$IMAGE" \
+            -c 'chown 0:0 /data && touch /data/left-by-root'
+          docker run --detach --name foreign --volume waveflow-foreign:/data "$IMAGE"
+
+          ready=""
+          for _ in $(seq 1 60); do
+            if [ "$(docker inspect --format '{{.State.Running}}' foreign)" != "true" ]; then
+              echo "::error::the container exited on a data directory owned by root"
+              docker logs --tail 100 foreign
+              exit 1
+            fi
+            if docker exec foreign waveflow-server health > /dev/null 2>&1; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$ready" ]; then
+            echo "::error::the server never became ready on a data directory owned by root"
+            docker logs --tail 100 foreign
+            exit 1
+          fi
+
+          uid="$(docker exec foreign sh -c "sed -n 's/^Uid:[[:space:]]*\([0-9]*\).*/\1/p' /proc/1/status")"
+          if [ "$uid" != "4533" ]; then
+            echo "::error::the server runs as uid '$uid', not 4533"
+            exit 1
+          fi
+
+          docker exec --env WAVEFLOW_ACCOUNT_PASSWORD=image-check-only foreign \
+            waveflow-server account create-admin --username probe
+          stray="$(docker exec foreign find /data \( ! -user 4533 -o ! -group 4533 \) -print)"
+          if [ -n "$stray" ]; then
+            echo "::error::files in the data directory not owned by 4533:4533:"
+            echo "$stray"
+            exit 1
+          fi
+          echo "the server took over a data directory owned by root"
+
       - name: Show the container on failure
         if: failure()
         run: |
           # A build that failed left no container behind, and nothing to show.
-          if ! docker inspect waveflow > /dev/null 2>&1; then
-            exit 0
-          fi
-          docker inspect --format '{{json .State}}' waveflow
-          docker logs --tail 100 waveflow
+          for name in waveflow foreign; do
+            if ! docker inspect "$name" > /dev/null 2>&1; then
+              continue
+            fi
+            docker inspect --format '{{json .State}}' "$name"
+            docker logs --tail 100 "$name"
+          done
 
       # The targets bound to FFmpeg's behaviour, held to the FFmpeg the image
       # ships rather than Ubuntu's. They are compiled on the image's own
@@ -195,6 +251,7 @@ jobs:
             docker run --rm \
               --volume "$PWD:/work" --workdir /work \
               --env CARGO_MANIFEST_DIR=/work \
+              --user waveflow \
               --entrypoint sh "$IMAGE" \
               -c 'PATH="$(dirname "$WAVEFLOW_FFMPEG_PATH"):$PATH" exec "$0"' "$executable"
             echo "::endgroup::"

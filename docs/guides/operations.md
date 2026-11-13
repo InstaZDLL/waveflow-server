@@ -666,6 +666,47 @@ what the label replaces:
 
 The `waveflow-data` volume is the engine's own and is labelled already.
 
+## The account the container runs as
+
+The server never runs as root in the image. The container *starts* as root,
+gives the data directory to the account `waveflow` (uid and gid 4533), and
+only then starts the server, as that account. Nothing needs configuring for a
+named volume, which the image prepares itself; the hand-over is for a data
+directory the host provides: Home Assistant's add-on folder, a NAS share, a
+bind mount made by root. Up to 2.2.1 the image started as 4533 directly, and
+in such a folder it stopped at once on *unable to open database file*.
+
+- **Each start** changes the owner of whatever under `WAVEFLOW_DATA_DIR` is not
+  already the account's, and nothing else: the second start walks the folder
+  and changes nothing. A symbolic link keeps pointing where it did and what it
+  points at keeps its owner; a file with a second name (a hard link) is left
+  as it is, since the server never makes one and it could be a file of root's;
+  the music folder is never touched.
+- **A mount inside the data directory** (music mounted on `/data/music`, a
+  volume of its own for the transcode cache) is left as it is, mount point
+  included, and named in the log: its files belong to the host. It has to be
+  writable by the account already if the server writes there.
+- **Nothing is handed over through a link, nor `/`.** When `WAVEFLOW_DATA_DIR`
+  is `/`, goes through a symbolic link, or a directory above it is not root's alone (a data
+  directory set inside another folder the account can write in), the container
+  says so and starts without changing any owner. The default `/data` is
+  neither.
+- **`docker exec waveflow waveflow-server …`** runs as the account too, though
+  `docker exec` itself is root: the `waveflow-server` on the image's `PATH`
+  steps down before it runs. A scan started from the command line therefore
+  leaves no file behind that the server could not replace.
+- **Another account.** Where the files must belong to an account of the host,
+  a NAS user for instance, name it with `WAVEFLOW_UID` and `WAVEFLOW_GID`
+  (both 4533 by default). `0` keeps root, which suits rootless Podman: there,
+  the container's root is the user who started it.
+- **`--user`** (or `user:` in a compose file) skips all of this. The server
+  runs as the account given, and the data directory has to be writable by it
+  already.
+
+On a share that refuses `chown`, NFS with root squashed or SMB, the container
+says it could not hand the folder over and starts anyway; if the account
+cannot write there, the server's own error follows.
+
 ## Scanning
 
 A scan reads only what changed. A file whose size and modification time are

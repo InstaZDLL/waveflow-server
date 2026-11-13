@@ -28,11 +28,18 @@ RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig \
 FROM debian:trixie-slim
 # No curl: the healthcheck below is the binary asking itself (#394), and curl
 # brought over a hundred scanner alerts into the image for that one line.
+# The group is named by number too, so a data directory has the same owner in
+# every build of the image.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 4533 --create-home waveflow \
+    && groupadd --system --gid 4533 waveflow \
+    && useradd --system --uid 4533 --gid waveflow --create-home waveflow \
     && mkdir -p /data /music && chown -R waveflow:waveflow /data /music
-COPY --from=builder /build/target/release/waveflow-server /usr/local/bin/waveflow-server
-USER waveflow
+# No `USER`: the image starts as root, gives the data directory to the server's
+# account and runs the server as that account (#444). The script is also the
+# `waveflow-server` on PATH, so `docker exec` runs the CLI as that account too;
+# packaging/docker/waveflow-server.sh says why.
+COPY --from=builder /build/target/release/waveflow-server /usr/local/lib/waveflow-server/waveflow-server
+COPY --chmod=755 packaging/docker/waveflow-server.sh /usr/local/bin/waveflow-server
 ENV WAVEFLOW_DATA_DIR=/data \
     WAVEFLOW_BIND=0.0.0.0:4533 \
     WAVEFLOW_FFMPEG_PATH=/usr/bin/ffmpeg \
@@ -40,6 +47,9 @@ ENV WAVEFLOW_DATA_DIR=/data \
     RUST_LOG=info,waveflow_server=info \
     WAVEFLOW_LOG_FORMAT=json
 VOLUME ["/data", "/music"]
+# The account the server runs as, when the container starts as root.
+ENV WAVEFLOW_UID=4533 \
+    WAVEFLOW_GID=4533
 EXPOSE 4533
 # Asks /ready on WAVEFLOW_BIND, so a changed bind needs no change here.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["waveflow-server", "health"]
