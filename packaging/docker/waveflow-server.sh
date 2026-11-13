@@ -109,12 +109,17 @@ if [ "${1:-serve}" = serve ]; then
     mkdir -p "$data"
     # Absolute and without `.`, `..` or doubled slashes, so it compares with the
     # paths `mountinfo` lists; links are kept, never followed.
-    data="$(realpath --no-symlinks "$data")"
+    written="$data"
+    data="$(realpath --no-symlinks "$written")"
+    # Compared from the path as written: normalising first would drop a
+    # `link/..` without looking at the link, and name a directory the server
+    # never uses (`/srv/link/../data` is `/srv/data` here, `/mnt/data` to it).
+    physical="$(realpath "$written")"
     if [ "$data" = / ]; then
         # Every file of the container would be walked, the mounts too: no
         # mount is "below /" as `mounts_below` reads it.
         echo "waveflow-server: not giving / to $uid:$gid: it is not a data directory" >&2
-    elif [ "$(realpath "$data")" != "$data" ]; then
+    elif [ "$physical" != "$data" ]; then
         # A link on the way may be the account's to point anywhere. The server
         # still starts, as the account, in whatever it can write.
         echo "waveflow-server: not giving $data to $uid:$gid: its path goes through a link" >&2
