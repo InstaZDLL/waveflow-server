@@ -7,7 +7,7 @@ import { Artwork } from "../../../components/artwork/artwork";
 import { CanvasStage } from "../../../components/artwork/canvas";
 import { FileQuality } from "../../../components/track/file-quality";
 import { useI18n } from "../../../state/i18n";
-import { ClipPlayer } from "./clip";
+import { ClipPlayer, useClipOpen } from "./clip";
 import { type LyricSheet, LyricsStrip, useLyricSheet } from "./lyrics";
 
 /**
@@ -49,15 +49,14 @@ export function DetailView({ song }: { song: Song }) {
   const [split, setSplit] = useState(false);
   const next = detailSplit(split, lyrics.state);
   if (next !== split) setSplit(next);
-  // Which track's clip is open, so the next track opens on its cover.
-  const [watching, setWatching] = useState<string | null>(null);
-  const clipOpen = watching === song.id && Boolean(song.clip);
+  const clip = useClipOpen(song.id);
+  const clipOpen = clip.open && Boolean(song.clip);
 
   return (
     <div className={`playing ${next ? "playing-split" : "playing-solo"}`}>
       <div className="playing-track">
         {clipOpen ? (
-          <ClipPlayer song={song} onClose={() => setWatching(null)} />
+          <ClipPlayer song={song} onClose={clip.hide} />
         ) : (
           <CanvasStage trackId={song.id}>
             <Artwork
@@ -76,11 +75,7 @@ export function DetailView({ song }: { song: Song }) {
               here to read along should not have to pass it twice. */}
           <FileQuality song={song} />
           {song.clip && !clipOpen ? (
-            <button
-              type="button"
-              className="clip-open"
-              onClick={() => setWatching(song.id)}
-            >
+            <button type="button" className="clip-open" onClick={clip.show}>
               {t("playing.watchClip")}
             </button>
           ) : null}

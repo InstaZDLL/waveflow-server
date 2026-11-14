@@ -31,6 +31,29 @@ type ClipState =
   | { kind: "failed" };
 
 /**
+ * Whether the clip of the track on screen is open. Closed again whenever the
+ * track changes, so a track that comes back later opens on its cover, not on a
+ * clip it was showing before: the view that holds this is not remounted per
+ * track.
+ */
+export function useClipOpen(trackId: string): {
+  open: boolean;
+  show: () => void;
+  hide: () => void;
+} {
+  const [state, setState] = useState({ trackId, open: false });
+  // Adjusted while rendering, as the detail view adjusts its columns: an
+  // effect would paint one frame of the old track's clip over the new one.
+  const current = state.trackId === trackId ? state : { trackId, open: false };
+  if (current !== state) setState(current);
+  return {
+    open: current.open,
+    show: () => setState({ trackId, open: true }),
+    hide: () => setState({ trackId, open: false }),
+  };
+}
+
+/**
  * The clip in place of the cover, with its own sound and its own length.
  *
  * The track pauses while the clip plays, and takes over at the clip's position
@@ -60,6 +83,10 @@ export function ClipPlayer({
   // has already been tried since the clip last played.
   const restoreAt = useRef<number | null>(null);
   const renewed = useRef(false);
+  // The clip's last known position, kept apart from the element: a renewal
+  // that is refused takes the element away, and closing must still hand the
+  // track the place the clip had reached.
+  const lastAt = useRef<number | null>(null);
   // The latest of these, for the cleanup and the handlers, which outlive the
   // render that made them.
   const latest = useRef({ player, duration: progress.duration, onClose });
@@ -95,7 +122,7 @@ export function ClipPlayer({
 
   function close() {
     const at = resumeAt(
-      video.current ? video.current.currentTime : null,
+      video.current ? video.current.currentTime : lastAt.current,
       latest.current.duration,
     );
     const { player } = latest.current;
@@ -110,7 +137,7 @@ export function ClipPlayer({
       return;
     }
     renewed.current = true;
-    restoreAt.current = video.current?.currentTime ?? null;
+    restoreAt.current = video.current?.currentTime ?? lastAt.current;
     clipUrl(song.id)
       .then((ticket) =>
         setState(
@@ -138,6 +165,16 @@ export function ClipPlayer({
               event.currentTarget.currentTime = restoreAt.current;
               restoreAt.current = null;
             }
+          }}
+          onTimeUpdate={(event) => {
+            lastAt.current = event.currentTarget.currentTime;
+          }}
+          // The other half of one sound at a time: the clip starting — on
+          // opening, or from its own controls after the bar had taken over —
+          // pauses the track.
+          onPlay={() => {
+            const { player } = latest.current;
+            if (player.playing) player.toggle();
           }}
           onPlaying={() => {
             renewed.current = false;
