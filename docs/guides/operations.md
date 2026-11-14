@@ -769,6 +769,42 @@ turns unavailable at the end of the scan, exactly as if the file had been
 deleted, and comes back under the same identity when the rule is removed. The
 scan's `excluded` counter says how many entries were left out.
 
+### Music videos
+
+A track's music video is a video file named like the track, its extension
+aside and case ignored. Put it beside the track, or in a folder called `Clips`
+beside it ([RFC-029](../rfcs/RFC-029-track-music-video.md)):
+
+```text
+Album/
+  01 Song.flac
+  01 Song.mp4          ← this track's clip
+  Clips/
+    02 Other.webm      ← 02 Other.flac's clip
+  02 Other.flac
+```
+
+The rule is the desktop app's, so a library it plays from its own disk and the
+same library on this server show the same clips. The containers are `mp4`,
+`m4v`, `mov`, `webm` and `mkv`, tried in that order when a track has several,
+and the content is checked: an `mp4`, `m4v` or `mov` must hold a moving
+picture. A `webm` or `mkv` is only checked for its header, as on the desktop.
+A video `.mp4` with no track of its name is a track itself, and its own clip.
+
+The scan records the link and serves the file as it is: nothing is transcoded,
+remuxed or written beside it. Clients play it through the native API; the
+Subsonic façade does not offer it.
+
+**A video `.mp4` beside its song is not a track.** An `.mp4` is an audio
+extension, so earlier versions indexed such a clip as a second track whose
+sound was the clip's. The next scan after upgrading leaves it out, and that track
+goes as a deleted file does, with whatever was recorded on it. An audio `.mp4`
+always stays a track.
+
+To keep clips off the server, put them where the scan does not go: a
+`.waveflowignore` line `Clips/` leaves out every `Clips` folder. A `Clips`
+folder the scan cannot read keeps the links it held.
+
 ### Symbolic links
 
 By default a scan does not follow symbolic links. It no longer skips them in

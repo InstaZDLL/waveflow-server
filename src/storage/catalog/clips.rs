@@ -4,9 +4,9 @@
 use sqlx::Row;
 use uuid::Uuid;
 
-use crate::storage::database::Database;
+use crate::{auth::authentication::now_ms, storage::database::Database};
 
-use super::parse_uuid;
+use super::{parse_uuid, record_library_event, LibraryChange};
 
 /// The link a track has to its clip: the file, relative to the library root,
 /// and what the next scan compares to take it as confirmed without opening it.
@@ -83,7 +83,8 @@ impl Database {
     }
 
     /// Writes the links a scan's pass changed: a link set or replaced, or, for
-    /// `None`, removed. `library_id` is read from the track in the writing
+    /// `None`, removed, each with the track's `upsert` on the library's feed.
+    /// `library_id` is read from the track in the writing
     /// transaction, never taken from the caller, as `track_canvas` does it; a
     /// track deleted since the pass read it writes nothing.
     pub async fn apply_track_clips(
@@ -123,9 +124,56 @@ impl Database {
                             .await?;
                     }
                 }
+                // A track now carries its clip, so a link that changes is a
+                // change of the track (RFC-029 decision 8): its `upsert`, with
+                // the payload every other `upsert` has and no origin device,
+                // since the scan made it. In the transaction of the write, so
+                // the feed cannot tell of a link that was rolled back.
+                let track: Option<(String, String)> =
+                    sqlx::query_as("SELECT library_id, full_hash FROM track WHERE id = ?")
+                        .bind(track_id.to_string())
+                        .fetch_optional(&mut *tx)
+                        .await?;
+                if let Some((library_id, full_hash)) = track {
+                    record_library_event(
+                        &mut tx,
+                        LibraryChange {
+                            library_id: parse_uuid(library_id)?,
+                            entity_type: "track",
+                            entity_id: *track_id,
+                            action: "upsert",
+                            payload: serde_json::json!({ "full_hash": full_hash }),
+                            changed_at: now_ms(),
+                            origin_device_id: None,
+                        },
+                    )
+                    .await?;
+                }
             }
             tx.commit().await?;
         }
         Ok(())
+    }
+
+    /// The link a track has, whoever asks: the caller has already settled that
+    /// they may see the track.
+    pub async fn clip_of_track(&self, track_id: Uuid) -> Result<Option<TrackClip>, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT relative_path, format, origin, byte_size, modified_at \
+             FROM track_clip WHERE track_id = ?",
+        )
+        .bind(track_id.to_string())
+        .fetch_optional(self.pool())
+        .await?;
+        row.map(|row| {
+            Ok(TrackClip {
+                relative_path: row.try_get("relative_path")?,
+                format: row.try_get("format")?,
+                origin: origin(&row.try_get::<String, _>("origin")?)?,
+                byte_size: row.try_get("byte_size")?,
+                modified_at: row.try_get("modified_at")?,
+            })
+        })
+        .transpose()
     }
 }

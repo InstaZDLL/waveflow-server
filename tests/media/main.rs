@@ -21,6 +21,7 @@ use waveflow_server::Config;
 mod support;
 use support::*;
 
+mod clips;
 mod shares;
 mod stream_tickets;
 mod streaming;

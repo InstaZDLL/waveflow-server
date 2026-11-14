@@ -37,9 +37,11 @@ macro_rules! song_select {
                 t.replay_gain_album_gain, t.replay_gain_album_peak, t.bpm, \
                 COALESCE(ovr.sort_title, t.sort_title) AS sort_title, \
                 COALESCE(ovr.comment, t.comment) AS comment, t.isrc, t.moods, t.explicit_status, \
-                alb.album_artist_name, alb.album_artist_id \
+                alb.album_artist_name, alb.album_artist_id, \
+                tc.format AS clip_format, tc.byte_size AS clip_byte_size \
          FROM track t JOIN library_member m ON m.library_id=t.library_id \
          LEFT JOIN album alb ON alb.id=t.album_id \
+         LEFT JOIN track_clip tc ON tc.track_id=t.id \
          LEFT JOIN track_override ovr ON ovr.track_id=t.id \
          LEFT JOIN user_star us ON us.user_id=m.user_id AND us.entity_type='track' AND us.entity_id=t.id \
          LEFT JOIN user_rating ur ON ur.user_id=m.user_id AND ur.entity_type='track' AND ur.entity_id=t.id \

@@ -39,18 +39,23 @@ pub enum TicketKind {
     /// ticket naming the owner would open the owner's whole catalogue on the
     /// routes that redeem the other two kinds.
     ShareVisit,
+    /// A track's music video (RFC-029 decision 5): a file of hundreds of
+    /// megabytes beside the track's audio, so neither may open the other.
+    Clip,
 }
 
 impl TicketKind {
     const AUDIO: u8 = 0x01;
     const CANVAS: u8 = 0x02;
     const SHARE_VISIT: u8 = 0x03;
+    const CLIP: u8 = 0x04;
 
     const fn as_byte(self) -> u8 {
         match self {
             Self::Audio => Self::AUDIO,
             Self::Canvas => Self::CANVAS,
             Self::ShareVisit => Self::SHARE_VISIT,
+            Self::Clip => Self::CLIP,
         }
     }
 
@@ -61,6 +66,7 @@ impl TicketKind {
             Self::AUDIO => Some(Self::Audio),
             Self::CANVAS => Some(Self::Canvas),
             Self::SHARE_VISIT => Some(Self::ShareVisit),
+            Self::CLIP => Some(Self::Clip),
             _ => None,
         }
     }

@@ -88,6 +88,9 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         "/api/v2/tracks/{track_id}/canvas",
         "/api/v2/tracks/{track_id}/canvas-ticket",
         "/api/v2/canvas-stream/{ticket}",
+        "/api/v2/tracks/{track_id}/clip",
+        "/api/v2/tracks/{track_id}/clip-ticket",
+        "/api/v2/clip-stream/{ticket}",
     ] {
         assert!(document["paths"][path].is_object(), "missing {path}");
     }
@@ -140,6 +143,7 @@ async fn probes_and_openapi_are_available_without_scan_readiness() {
         ("/api/v2/oauth/token", "post"),
         ("/api/v2/stream/{ticket}", "get"),
         ("/api/v2/canvas-stream/{ticket}", "get"),
+        ("/api/v2/clip-stream/{ticket}", "get"),
     ] {
         assert_eq!(
             document["paths"][path][method]["security"]

@@ -176,6 +176,7 @@ mod attention;
 mod bookmarks;
 mod canvas;
 mod catalog;
+mod clips;
 mod credentials;
 mod credit_decisions;
 mod favorites;
@@ -236,8 +237,9 @@ pub use model::{
     },
     catalog::{
         AlbumDetail, AlbumItem, ArtistDetail, ArtistItem, ArtistRef, ArtistSummary,
-        CatalogOverview, CatalogSearch, CatalogSnapshot, Contributor, DiscTitle, GenreItem,
-        MusicFolderItem, ReleaseGroup, SearchResult, SongItem, StarredCatalog, TrackDetail,
+        CatalogOverview, CatalogSearch, CatalogSnapshot, ClipSummary, Contributor, DiscTitle,
+        GenreItem, MusicFolderItem, ReleaseGroup, SearchResult, SongItem, StarredCatalog,
+        TrackDetail,
     },
     enrichment::{
         ArtistEnrichment, EnrichedBio, EnrichedImage, EnrichedSimilar, EnrichmentSource,
@@ -258,6 +260,7 @@ pub use model::{
 pub use artist_image_search::{ArtistImageCandidate, ARTIST_IMAGE_SEARCH_DEADLINE};
 pub use artist_images::ArtistImageKind;
 pub use attention::{AttentionCategory, AttentionCount, AttentionTrack};
+pub use clips::ClipSource;
 pub use credit_decisions::{
     CreditCandidate, CreditDecisionKind, CreditDecisionRecord, CreditFragment,
 };

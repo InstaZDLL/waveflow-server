@@ -215,6 +215,11 @@ pub struct SongItem {
     pub moods: Vec<String>,
     /// `explicit` or `clean`; the scanner stores nothing else.
     pub explicit_status: Option<String>,
+    /// The track's music video, when the scan found one beside it (RFC-029
+    /// decision 8): enough to offer it without asking, and nothing that names
+    /// the file. `null` when there is none. Played through
+    /// `POST /tracks/{id}/clip-ticket`.
+    pub clip: Option<ClipSummary>,
     /// Where the file sits in its library, relative to the library root.
     ///
     /// Read with every song and serialised with none: listings would carry a
@@ -223,6 +228,15 @@ pub struct SongItem {
     /// library browser (RFC-012 decision 1). The root itself is never sent.
     #[serde(skip)]
     pub relative_path: String,
+}
+
+/// What a track says about its music video.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct ClipSummary {
+    /// `mp4`, `m4v`, `mov`, `webm` or `mkv`: the container as the file is
+    /// named. Whether a player can open it is the player's to say.
+    pub format: String,
+    pub byte_size: i64,
 }
 
 /// One track as `GET /api/v2/tracks/{id}` answers it: the song, and where its

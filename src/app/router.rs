@@ -197,9 +197,10 @@ pub fn app(config: &Config, state: AppState) -> Router {
 /// spellings means already holding the ticket, so it is hardening rather than a
 /// disclosure route, and normalising here would put a second opinion about what
 /// a path means next to the router's.
-pub(super) const CREDENTIAL_BEARING_PREFIXES: [(&str, &str); 4] = [
+pub(super) const CREDENTIAL_BEARING_PREFIXES: [(&str, &str); 5] = [
     ("/api/v2/stream/", "/api/v2/stream/{redacted}"),
     ("/api/v2/canvas-stream/", "/api/v2/canvas-stream/{redacted}"),
+    ("/api/v2/clip-stream/", "/api/v2/clip-stream/{redacted}"),
     ("/share/", "/share/{redacted}"),
     // The Last.fm return. Its `{state}` is a single-use random worth a
     // profile for a quarter of an hour, and the `token` Last.fm appends is
