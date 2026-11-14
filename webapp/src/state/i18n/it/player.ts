@@ -31,6 +31,12 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "playing.viewImmersive": "Immersiva",
   "playing.immersiveTitle": "Vista immersiva",
   "playing.leaveImmersive": "Esci dalla vista immersiva",
+  "playing.watchClip": "Guarda il videoclip",
+  "playing.backToTrack": "Torna al brano",
+  "playing.clipLabel": "Videoclip",
+  "playing.clipGone": "Questo videoclip non è più sul server.",
+  "playing.clipError":
+    "Questo browser non è riuscito a riprodurre il videoclip.",
   "radio.detail": "Radio online, salvate con il tuo account",
   "radio.name": "Nome della stazione",
   "radio.address": "Indirizzo dello stream",

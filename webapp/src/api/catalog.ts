@@ -1,5 +1,6 @@
 import type { ReleaseGroup } from "../lib/discography";
 import { call, collect, request, scoped } from "./client";
+import type { ClipSummary } from "./clip";
 
 export type Album = {
   id: string;
@@ -70,6 +71,12 @@ export type Song = {
   replay_gain_track_peak?: number | null;
   replay_gain_album_gain?: number | null;
   replay_gain_album_peak?: number | null;
+  /**
+   * The track's music video, when the scan found one beside it, or `null`
+   * (RFC-029 decision 8). Optional, so a mock that leaves it out is a track
+   * with no clip.
+   */
+  clip?: ClipSummary | null;
 };
 
 export type AlbumDetail = Album & { songs: Song[] };
