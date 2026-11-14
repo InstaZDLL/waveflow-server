@@ -411,9 +411,14 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
   - **Renew before it breaks.** When the clip resumes after a pause, or seeks,
     and the ticket has expired or expires within a minute, `ClipVideo` first
     mints a fresh one with `POST /tracks/{id}/clip-ticket`. It then points the
-    element at the new URL and restores both the position and the state it
-    held (playing or paused). This is the ordinary case, and it never shows the
-    user an error.
+    element at the new URL and applies the position and the state (playing or
+    paused) **last asked for**. A seek, a pause or a play the user makes while
+    the mint is in flight is kept, and it replaces the one that started the
+    renewal rather than being undone by it. A mint answer that arrives after
+    a newer one was started, or after the visit ended, is dropped: each mint
+    carries the clip session and a sequence number, and only the latest one of
+    the current session is applied. This is the ordinary case, and it never
+    shows the user an error.
   - **Renew after an error only for an expired ticket.** If the element raises
     `error` while the ticket is past or within a minute of `expires_at`, the
     client renews once, as above. If the ticket was still valid, the error is
