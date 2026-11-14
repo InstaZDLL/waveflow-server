@@ -59,6 +59,12 @@ be checked against it.
   a bounded walk of the box headers, so a chapter still in an audiobook is no
   clip); a `webm` or `mkv` must start with the EBML magic. Links are refused:
   what is found enters the webview's asset scope.
+
+  The check is weaker for the second pair, and that is a known limit of the
+  rule: the EBML magic says the file is Matroska, not that it holds a picture,
+  so a WebM carrying audio alone is taken for a clip. The server keeps that
+  behaviour for parity (decision 2) rather than correcting it on its own side;
+  a fix belongs in the core, where both sides receive it together.
 - **The walk** drops an `.mp4` that the rule makes a clip and whose content
   `has_video_track` confirms (`clip_candidates`, `drop_clips`). An `.mp4` with
   no video stays a track whatever its neighbours; a video `.mp4` with no song
@@ -122,8 +128,10 @@ server's own code and the place two rules could drift apart, so it is **held
 to `find_clip` by a test**, the way RFC-016 holds the quality analysis to the
 desktop's: a fixture tree covering the three origins, the case folding, the
 extension order, an audio `.mp4`, a chapter still, a `Clips` folder with a
-track in it, and an `.mp4` with no song — and for every track in it, the
-server's answer equals `find_clip`'s. A core bump that changes the rule fails
+track in it, an `.mp4` with no song, a `Song.mp4` and a `Song.webm` with no
+audio file of that name (decision 4), and a name whose first candidate in
+extension order fails the content check while the next one passes — and for
+every track in it, the server's answer equals `find_clip`'s. A core bump that changes the rule fails
 that test before it changes a catalogue.
 
 If the core later exposes a matcher over a listed folder, the server's copy is
@@ -173,15 +181,46 @@ names the walk saw, and replaces the rows of those tracks: inserted, updated or
 deleted, under the writer gate, in one transaction per batch as the catalogue
 writes are. A track whose link did not change is not written.
 
+**A link is deleted only when the walk saw its clip go.** Inserting or updating
+a link needs only what the walk found; deleting one needs what the walk can say
+it did not find, and that is the question `Walked::saw_missing` already
+answers for a track's file (RFC-018 decision 3). The pass asks it of the clip's
+path, and keeps the link when:
+
+- the walk is `incomplete`;
+- the clip's path is under a folder the walk could not read — an unreadable
+  `Clips/` folder is not an empty one;
+- the clip's path is outside the `scope` of a scoped scan, which did not look
+  there.
+
+Otherwise the link goes. That includes a clip an exclusion now hides: it is no
+longer in what the walk discovered, so it is gone as far as the server is
+concerned, which is decision 1's rule and not an accident of it.
+
 **The content check is not repeated for nothing.** A candidate whose
 `relative_path`, `byte_size` and `modified_at` equal the row's is taken as
 confirmed without opening it, the trade RFC-018 already makes for audio; a full
 scan reads it again.
 
-**The walk lists video files**, as it lists audio files, without indexing
-them: the matcher needs them, and a `.webm` or `.mkv` is not an audio extension
-and is never seen today. The list is `waveflow_core::scanner::clips::VIDEO_EXTENSIONS`,
-not a copy of it.
+**The walk lists video files**, without indexing them: the matcher needs them,
+and a `.webm` or `.mkv` is not an audio extension and is never seen today. The
+list is `waveflow_core::scanner::clips::VIDEO_EXTENSIONS`, not a copy of it.
+
+**Two sets, never merged.** The walk's result holds them apart:
+
+- **the indexable audio files** — what `indexes_extension` accepts. Only this
+  set goes to `drop_clips` and `clip_candidates` (decision 4), to extraction,
+  to the scan's counters, to the detection of vanished files and to
+  relocation;
+- **the video candidates** — every file whose extension is in
+  `VIDEO_EXTENSIONS`, an `.mp4` included whichever set it is also in. Only the
+  clip matcher reads this set.
+
+The reason is in the core's contract, not in tidiness: `clip_candidates`
+assumes its input is the audio list. Given `Song.mp4` and `Song.webm` with no
+audio file of that name, a list that held the `.webm` would make the `.webm`
+the `.mp4`'s song, and drop the `.mp4` — which the desktop keeps as a track,
+because its walk never lists a `.webm`.
 
 **A change in a `Clips` folder rescans its parent.** The watcher scopes a scan
 to the folder a change happened in (RFC-021); a clip dropped into
@@ -191,7 +230,9 @@ A scope whose last component is a `Clips` folder is widened to its parent.
 ## Decision 4 — a video `.mp4` beside its song stops being a track
 
 The walk drops the `.mp4` files the rule makes clips, with `drop_clips` from the
-core and the content confirmed by `has_video_track`, as the desktop's walk does.
+core and the content confirmed by `has_video_track`, as the desktop's walk does
+— over the indexable audio files alone, never over the video candidates
+(decision 3, "two sets").
 What stays a track is what the desktop keeps: an `.mp4` with no video in it,
 whatever its neighbours, and a video `.mp4` with no song of its name — whose
 clip is then itself (`origin = 'itself'`).
@@ -318,8 +359,15 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
   binding's `base_url`, refuses an absolute or protocol-relative answer, and
   hands the URL to `ClipVideo` as a remote source — `remote/canvas.rs`'s shape,
   including "404 is no clip, a transient failure is an error".
-- **Not cached.** A ticket is a permission valid for an hour, not a property of
-  the track; the desktop already treats the canvas's that way.
+- **Not cached, and renewed while the clip is open.** A ticket is a permission
+  valid for an hour, not a property of the track; the desktop already treats
+  the canvas's that way. But a clip, unlike a canvas, can outlive its ticket
+  while it is open: a long pause, then a seek, and the range request that
+  follows meets an expired ticket and a 404. That 404 does not mean the clip is
+  gone. `ClipVideo` then mints a fresh ticket with
+  `POST /tracks/{id}/clip-ticket`, points the element at the new URL and
+  resumes at the position it held. Only a 404 **from the mint** means "no clip
+  any more" and ends the visit; a 404 from the stream never does on its own.
 - **A track present both locally and on the server** (RFC-004's reconciliation)
   plays its local clip when it has one: no network, and the loopback path on
   Linux.
@@ -357,8 +405,8 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
 | # | Pull request | Contents |
 | --- | --- | --- |
 | 0 | `chore(deps): …waveflow-core v2.1.0` | The pin. Its own work, not this RFC's; everything below waits for it. |
-| 1 | `fix(scanner): leave a music video out of the walk` | Decision 4: `drop_clips` in the server's walk, with `has_video_track`. Tests in the `scanner` target: a video `.mp4` beside a song is not a track; an audio one is; a lone video one is. Release notes. |
-| 2 | `feat(library): record a track's music video at the scan` | Decision 3: the migration, the walk listing video files, the in-memory matcher, the link pass per scope, the `Clips` scope widening in the watcher, and decision 2's parity test against `find_clip`. |
+| 1 | `fix(scanner): leave a music video out of the walk` | Decision 4: `drop_clips` in the server's walk, with `has_video_track`. Tests in the `scanner` target: a video `.mp4` beside a song is not a track; an audio one is; a lone video one is; a video `Song.mp4` beside a `Song.webm` and no audio file of that name is. Release notes. |
+| 2 | `feat(library): record a track's music video at the scan` | Decision 3: the migration, the walk's two sets, the in-memory matcher, the link pass per scope, the `Clips` scope widening in the watcher, and decision 2's parity test against `find_clip`. Tests for the deletion rule: a clip removed from the disk loses its link; an unreadable `Clips/` folder keeps it; a clip an exclusion now hides loses it. |
 | 3 | `feat(api): serve a track's music video` | Decisions 5 to 8: `TicketKind::Clip`, the three routes, the redaction entry, the `clip` field, the OpenAPI document; tests in `media` (ranges, MIME, cross-kind refusals, 404 blur, membership and disabled account re-checked at redemption, a clip deleted after the scan) and `subsonic_contract` (nothing changes on the wire). The native guide and the operations guide say where clips go. |
 | 4 | `feat(webapp): play a track's music video` | The embedded client, after the desktop's behaviour: the track pauses, the clip plays in the now-playing view, the track resumes at the clip's position. Optional, and may follow the desktop. |
 | D | WaveFlow: `feat(clip): play a server track's music video` | Decision 9, in the desktop repository, once 3 is released. |
