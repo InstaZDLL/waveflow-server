@@ -375,7 +375,8 @@ fn admit(
 pub(crate) const MAX_SCOPE_FOLDERS: usize = 64;
 
 /// A scope as a scoped walk may use it: folders relative to the root, spelled
-/// with `/`, none of them nested in another, at most [`MAX_SCOPE_FOLDERS`].
+/// with `/`, none of them nested in another, at most [`MAX_SCOPE_FOLDERS`]. A
+/// `Clips` folder stands for the folder above it.
 ///
 /// `None` — the whole library — for anything that is not plainly such a list:
 /// an empty folder (the root itself), a `..`, an absolute path, too many
@@ -397,6 +398,15 @@ pub(crate) fn normalised_scope(scope: &[String]) -> Option<Vec<String>> {
         {
             return None;
         }
+        // A clip in `Album/Clips/` is told from a track only by the song in
+        // `Album/` (RFC-029 decision 3): a walk of the `Clips` folder alone
+        // would index it. Its parent is walked instead, the root when there is
+        // none above it.
+        let folder = match folder.rsplit_once('/') {
+            Some((parent, last)) if is_clips_dir(last) => parent,
+            None if is_clips_dir(folder) => return None,
+            _ => folder,
+        };
         folders.push(folder.to_owned());
     }
     folders.sort();
@@ -416,6 +426,10 @@ pub(crate) fn normalised_scope(scope: &[String]) -> Option<Vec<String>> {
         .cloned()
         .collect();
     (!kept.is_empty() && kept.len() <= MAX_SCOPE_FOLDERS).then_some(kept)
+}
+
+fn is_clips_dir(name: &str) -> bool {
+    waveflow_core::scanner::clips::is_clips_dir_name(std::ffi::OsStr::new(name))
 }
 
 /// Where a scoped walk of `folder` starts, and how deep below the root that
@@ -586,6 +600,7 @@ pub(super) fn discover_audio(
     // found directly: the first name in catalogue order keeps it.
     let mut read = HashSet::new();
     paths.retain(|(path, _)| read.insert(path.clone()));
+    drop_clips(&mut paths);
     let walk = walk.into_inner();
     if walk.skipped_links > LOGGED_LINKS {
         tracing::info!(
@@ -600,6 +615,38 @@ pub(super) fn discover_audio(
         excluded: walk.excluded,
         skipped_links: walk.skipped_links,
     })
+}
+
+/// Takes a track's music video out of the walk (RFC-029 decision 4): an `.mp4`
+/// that the desktop's rule makes the clip of a file of the same name, and
+/// whose content holds a moving picture. `mp4` is an audio extension, rightly,
+/// so such a clip would otherwise be indexed as a second track whose audio is
+/// the clip's soundtrack.
+///
+/// The rule is the core's `drop_clips`, run on the catalogue names, which
+/// are the folders as the library shows them, so it decides here exactly as it
+/// does in the desktop's walk. An `.mp4` with no video stays a track whatever
+/// its neighbours, and so does a video one with no song of its name. Only the
+/// content check reads the disk, and only for a candidate; a file it cannot read
+/// stays a track. A track already indexed from such a file is then not
+/// discovered, and goes the way of any vanished file.
+fn drop_clips(paths: &mut Vec<(PathBuf, String)>) {
+    let mut names: Vec<PathBuf> = paths.iter().map(|(_, name)| PathBuf::from(name)).collect();
+    let files: std::collections::HashMap<PathBuf, &Path> = paths
+        .iter()
+        .map(|(path, name)| (PathBuf::from(name), path.as_path()))
+        .collect();
+    let dropped = waveflow_core::scanner::clips::drop_clips(&mut names, |name| {
+        files
+            .get(name)
+            .is_some_and(|path| waveflow_core::scanner::clips::file_has_video_track(path))
+    });
+    if dropped == 0 {
+        return;
+    }
+    tracing::debug!(count = dropped, "music videos left out of the walk");
+    let kept: HashSet<PathBuf> = names.into_iter().collect();
+    paths.retain(|(_, name)| kept.contains(Path::new(name)));
 }
 
 /// What one walk saw, as relocation needs it: the files it found, what it

@@ -22,6 +22,7 @@ mod exclusions;
 mod incremental;
 mod indexing;
 mod lifecycle;
+mod music_videos;
 mod purges;
 mod scheduling;
 

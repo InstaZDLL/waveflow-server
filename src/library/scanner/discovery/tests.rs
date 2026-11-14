@@ -137,6 +137,18 @@ fn a_scope_is_plain_folders_or_the_whole_library() {
     for whole in [&[""][..], &["a/../b"], &["/etc"], &["a//b"], &["."], &[]] {
         assert_eq!(super::normalised_scope(&folders(whole)), None, "{whole:?}");
     }
+    // A `Clips` folder is its parent (RFC-029 decision 3), whatever its case,
+    // and at the root it is the whole library. A folder only named like one is
+    // not.
+    assert_eq!(
+        super::normalised_scope(&folders(&[
+            "Album/Clips",
+            "Other/clips/",
+            "Live/Clips Live"
+        ])),
+        Some(folders(&["Album", "Live/Clips Live", "Other"])),
+    );
+    assert_eq!(super::normalised_scope(&folders(&["Clips"])), None);
     let many: Vec<String> = (0..=super::MAX_SCOPE_FOLDERS)
         .map(|index| format!("f{index}"))
         .collect();
