@@ -97,11 +97,12 @@ export function ClipPlayer({
     if (latest.current.player.playing) latest.current.player.toggle();
   }, []);
 
-  // Only one of the two sounds at a time: a track started from the bar, the
-  // keyboard or the system controls while the clip is open pauses the clip.
+  // Only one sound at a time: a track started from the bar, the keyboard or the
+  // system controls while the clip is open pauses the clip, and so does a
+  // station or an episode started beside the queue.
   useEffect(() => {
-    if (player.playing) video.current?.pause();
-  }, [player.playing]);
+    if (player.playing || player.asidePlaying) video.current?.pause();
+  }, [player.playing, player.asidePlaying]);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +176,11 @@ export function ClipPlayer({
           onPlay={() => {
             const { player } = latest.current;
             if (player.playing) player.toggle();
+            // A station or an episode plays while the queue is paused, so
+            // the queue's state alone would let it sound over the clip.
+            // Paused, not closed: a station resumes live, an episode where
+            // it stood.
+            if (player.asidePlaying) player.toggleAside();
           }}
           onPlaying={() => {
             renewed.current = false;

@@ -69,11 +69,15 @@ afterEach(() => {
 });
 
 /** A player that only records what the clip asks of it. */
-function fakePlayer(playing: boolean) {
+function fakePlayer(playing: boolean, asidePlaying = false) {
   const player = {
     playing,
+    asidePlaying,
     toggle: vi.fn(() => {
       player.playing = !player.playing;
+    }),
+    toggleAside: vi.fn(() => {
+      player.asidePlaying = !player.asidePlaying;
     }),
     seek: vi.fn(),
   };
@@ -159,6 +163,19 @@ describe("ClipPlayer", () => {
     });
     expect(player.toggle).toHaveBeenCalledTimes(2);
     expect(player.playing).toBe(false);
+  });
+
+  it("pauses a station or an episode playing beside the queue", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    // The queue is paused while an aside plays, so its state says nothing.
+    const player = fakePlayer(false, true);
+    await openClip(player);
+    act(() => {
+      videoElement().dispatchEvent(new Event("play"));
+    });
+    expect(player.toggleAside).toHaveBeenCalledTimes(1);
+    expect(player.asidePlaying).toBe(false);
+    expect(player.toggle).not.toHaveBeenCalled();
   });
 });
 
