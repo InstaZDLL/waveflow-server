@@ -39,6 +39,13 @@ impl MediaService {
         clip: &ClipSource,
         range: Option<&str>,
     ) -> Result<Response, MediaError> {
+        let path = self.resolve_clip(clip).await?;
+        serve_file(&path, range, mime_for_clip(&clip.format)).await
+    }
+
+    /// Where a clip's file is now, under the library's path policy, or the
+    /// 404 a file that is gone or out of bounds shares with every refusal.
+    async fn resolve_clip(&self, clip: &ClipSource) -> Result<std::path::PathBuf, MediaError> {
         let path = secure_track_path(
             &clip.library_root,
             &clip.relative_path,
@@ -55,7 +62,11 @@ impl MediaService {
             );
             MediaError::NotFound
         })?;
-        serve_file(&path, range, mime_for_clip(&clip.format)).await
+        // A path that resolves to something other than a file is no clip.
+        match tokio::fs::metadata(&path).await {
+            Ok(metadata) if metadata.is_file() => Ok(path),
+            _ => Err(MediaError::NotFound),
+        }
     }
 }
 
@@ -120,8 +131,11 @@ pub async fn create_clip_ticket(
     headers: HeaderMap,
 ) -> Result<axum::Json<StreamTicketResponse>, MediaError> {
     let user = bearer_principal(&state, &headers).await?;
-    // Minting proves access now; redeeming re-proves it.
-    authorised_clip(&state, user.id, track_id).await?;
+    // Minting proves access now, and that the file is there: a ticket for a
+    // clip deleted since the scan would only lead a client that renews tickets
+    // after a 404 to renew one forever. Redeeming re-proves both.
+    let clip = authorised_clip(&state, user.id, track_id).await?;
+    state.media.resolve_clip(&clip).await?;
     // The audio's lifetime, for the audio's reason: the element reuses the URL
     // for every range request while seeking, and a clip is seeked into more
     // than a canvas.

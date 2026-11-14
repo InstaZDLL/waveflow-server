@@ -248,11 +248,13 @@ async fn every_refusal_is_the_same_404() {
     not_found(format!("/api/v2/stream/{clip}"), false).await;
     not_found(format!("/api/v2/canvas-stream/{clip}"), false).await;
 
-    // Resolved at every request: a clip deleted since the scan is a 404, and
-    // the ticket minted before it a 404 too.
+    // Resolved at every request: a clip deleted since the scan is a 404, the
+    // ticket minted before it a 404 too, and no new ticket is minted for it,
+    // so a client renewing after a 404 learns the clip is gone.
     std::fs::remove_file(&fixture.clip).unwrap();
     not_found(format!("/api/v2/tracks/{}/clip", fixture.song), true).await;
     not_found(format!("/api/v2/clip-stream/{clip}"), false).await;
+    not_found(format!("/api/v2/tracks/{}/clip-ticket", fixture.song), true).await;
 }
 
 /// Decision 7: whoever may play the track may watch its clip, re-checked at
