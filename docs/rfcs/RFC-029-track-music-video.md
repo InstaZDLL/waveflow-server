@@ -410,11 +410,18 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
     The client keeps it with the URL, and no route is added.
   - **Renew before it breaks.** When the clip resumes after a pause, or seeks,
     and the ticket has expired or expires within a minute, `ClipVideo` first
-    mints a fresh one with `POST /tracks/{id}/clip-ticket`. It then points the
-    element at the new URL and applies the position and the state (playing or
-    paused) **last asked for**. A seek, a pause or a play the user makes while
-    the mint is in flight is kept, and it replaces the one that started the
-    renewal rather than being undone by it. A mint answer that arrives after
+    mints a fresh one with `POST /tracks/{id}/clip-ticket`. When the mint
+    starts, it captures the clip's current position: the seek's target when a
+    seek started the renewal, the position it was paused at when a resume did.
+    It then points the element at the new URL and applies:
+
+    - **the position**: the captured one, unless the user sought while the
+      mint was in flight, in which case the latest seek's target wins;
+    - **the state** (playing or paused): the one **last asked for**, whatever
+      the position.
+
+    A seek, a pause or a play made during the mint is therefore kept: it
+    replaces the one that started the renewal rather than being undone by it. A mint answer that arrives after
     a newer one was started, or after the visit ended, is dropped: each mint
     carries the clip session and a sequence number, and only the latest one of
     the current session is applied. This is the ordinary case, and it never
