@@ -10,8 +10,8 @@
   to 8, the routes, the ticket and the `clip` field),
   [#453](https://github.com/InstaZDLL/waveflow-server/pull/453) (the web
   client, on the playing screen's detail view); the desktop's side (decision
-  9) is its own repository's. The *Status* field above never flips in this project; this line is the one that
-  says what is running.
+  9) is its own repository's. The *Status* field above never flips in this
+  project; this line is the one that says what is running.
 - **Date**: 2026-11-14
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
