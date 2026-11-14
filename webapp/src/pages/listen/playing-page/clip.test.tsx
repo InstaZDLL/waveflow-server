@@ -182,6 +182,28 @@ describe("ClipPlayer", () => {
     expect(player.toggle).not.toHaveBeenCalled();
   });
 
+  it("does not take the track back over a station started meanwhile", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    const onClose = await openClip(player);
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+
+    // A station started from its page while the clip was open.
+    player.asidePlaying = true;
+    clickBack();
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("takes the track back when nothing else started", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openClip(player);
+    clickBack();
+    expect(player.toggle).toHaveBeenCalledTimes(2);
+    expect(player.playing).toBe(true);
+  });
+
   it("pauses the clip when a station or an episode starts beside it", async () => {
     clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
     const pause = vi

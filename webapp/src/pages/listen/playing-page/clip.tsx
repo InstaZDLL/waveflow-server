@@ -128,7 +128,12 @@ export function ClipPlayer({
     );
     const { player } = latest.current;
     if (at !== null) player.seek(at);
-    if (wasPlaying.current && !player.playing) player.toggle();
+    // Not over a station or an episode started while the clip was open:
+    // `toggle` would drop it, and closing a clip must not stop what the
+    // listener chose since.
+    if (wasPlaying.current && !player.playing && !player.asidePlaying) {
+      player.toggle();
+    }
     latest.current.onClose();
   }
 
