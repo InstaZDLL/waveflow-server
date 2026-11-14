@@ -3129,7 +3129,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -3751,8 +3751,8 @@ dependencies = [
 
 [[package]]
 name = "waveflow-core"
-version = "2.0.0"
-source = "git+https://github.com/InstaZDLL/WaveFlow?tag=v2.0.0#567fc858d1fd7e62a39be052be195c6cbdf47a45"
+version = "2.1.0"
+source = "git+https://github.com/InstaZDLL/WaveFlow?tag=v2.1.0#30f21b899f3e5eec84b6eca572e8844155f90812"
 dependencies = [
  "anyhow",
  "ape-decoder",
