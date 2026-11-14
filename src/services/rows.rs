@@ -205,6 +205,13 @@ pub(super) fn song_from_row(row: sqlx::sqlite::SqliteRow) -> Result<SongItem, sq
         isrc: split_tag_values(row.try_get::<Option<String>, _>("isrc")?.as_deref()),
         moods: split_tag_values(row.try_get::<Option<String>, _>("moods")?.as_deref()),
         explicit_status: row.try_get("explicit_status")?,
+        clip: match row.try_get::<Option<String>, _>("clip_format")? {
+            Some(format) => Some(ClipSummary {
+                format,
+                byte_size: row.try_get("clip_byte_size")?,
+            }),
+            None => None,
+        },
         relative_path: relative,
     })
 }

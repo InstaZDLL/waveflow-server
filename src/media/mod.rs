@@ -2,6 +2,7 @@
 
 mod artwork;
 mod canvas;
+mod clip;
 pub mod replay_gain;
 mod stream;
 #[cfg(test)]
@@ -14,6 +15,10 @@ pub use canvas::{
     __path_create_canvas_ticket, __path_delete_canvas, __path_put_canvas, canvas_by_hash,
     canvas_for_track, canvas_with_ticket, create_canvas_ticket, delete_canvas, put_canvas,
     CanvasResponse,
+};
+pub use clip::{
+    __path_clip_for_track, __path_clip_with_ticket, __path_create_clip_ticket, clip_for_track,
+    clip_with_ticket, create_clip_ticket,
 };
 pub use stream::{
     __path_create_stream_ticket, __path_stream_track, __path_stream_with_ticket,
@@ -364,6 +369,15 @@ pub fn router(state: AppState) -> Router {
         // Outside the bearer surface, like the audio one and for the same
         // reason: <video src> cannot send an Authorization header.
         .route("/api/v2/canvas-stream/{ticket}", get(canvas_with_ticket))
+        // A track's music video (RFC-029 decision 5): the canvas's set, minus
+        // a route by hash and minus PUT and DELETE, since the disk decides.
+        .route("/api/v2/tracks/{track_id}/clip", get(clip_for_track))
+        .route(
+            "/api/v2/tracks/{track_id}/clip-ticket",
+            axum::routing::post(create_clip_ticket),
+        )
+        // Outside the bearer surface for the reason the canvas one is.
+        .route("/api/v2/clip-stream/{ticket}", get(clip_with_ticket))
         .route("/api/v2/tracks/{track_id}/stream", get(stream_track))
         .route(
             "/api/v2/tracks/{track_id}/stream-ticket",

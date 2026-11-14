@@ -30,6 +30,7 @@ fn round_trip_returns_the_authorised_triple() {
         TicketKind::Audio,
         TicketKind::Canvas,
         TicketKind::ShareVisit,
+        TicketKind::Clip,
     ] {
         let user = Uuid::new_v4();
         let track = Uuid::new_v4();
@@ -46,7 +47,12 @@ fn the_kinds_do_not_answer_for_each_other() {
     let audio = mint(&secret, TicketKind::Audio, user, track, 1_000).unwrap();
     let canvas = mint(&secret, TicketKind::Canvas, user, track, 1_000).unwrap();
     let visit = mint(&secret, TicketKind::ShareVisit, user, track, 1_000).unwrap();
+    let clip = mint(&secret, TicketKind::Clip, user, track, 1_000).unwrap();
     assert_ne!(audio, canvas, "the kind is inside the sealed payload");
+    assert_eq!(
+        verify(&secret, &clip, 999).map(|(kind, ..)| kind),
+        Some(TicketKind::Clip)
+    );
     assert_eq!(
         verify(&secret, &audio, 999).map(|(kind, ..)| kind),
         Some(TicketKind::Audio)
@@ -69,7 +75,7 @@ fn an_unknown_kind_is_refused_even_under_the_right_key() {
     // Sealed under the real key, correct length, live expiry: the kind byte
     // is the only thing wrong with it. A forged ticket would prove nothing
     // about this contract, since it already fails to decrypt.
-    for byte in [0x00, 0x04, 0xff] {
+    for byte in [0x00, 0x05, 0xff] {
         let ticket = seal(&secret, &payload_with_kind(byte, user, track, 1_000));
         assert_eq!(
             verify(&secret, &ticket, 999),

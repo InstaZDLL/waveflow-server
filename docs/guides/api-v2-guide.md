@@ -822,6 +822,47 @@ The ticket works like the audio one, and neither opens the other. Minting it
 checks the link, so it is also how a client asks whether a track has a canvas:
 a track without one answers `404`.
 
+### A track's music video
+
+A music video is a video file the operator put in the library beside a track,
+named like it ([RFC-029](../rfcs/RFC-029-track-music-video.md)). The scan finds
+it, as the desktop app does for a local track, and records the link. There is no
+route that places or removes one: the disk is the authority, and the operations
+guide says where the files go.
+
+Every track says whether it has one, in its `clip` field: the container and
+the size, or `null`. Nothing names the file. A link that appears, changes or
+goes reaches the change feed as the track's `upsert`, so a client re-reads the
+track.
+
+```json
+"clip": { "format": "mp4", "byte_size": 182734112 }
+```
+
+| Route | Purpose |
+|---|---|
+| `GET /api/v2/tracks/{track_id}/clip` | The clip the track has now, whole or by range |
+| `POST /api/v2/tracks/{track_id}/clip-ticket` | A URL a `<video>` element can play |
+| `GET /api/v2/clip-stream/{ticket}` | What that URL serves |
+
+The file is served as it is, never transcoded: `video/mp4` for `mp4` and
+`m4v`, `video/quicktime` for `mov`, `video/webm` and `video/x-matroska`.
+Whether a player can open the container is the player's to report. A range
+answers `206`, as the audio's does. The ticket's URL is relative, like the
+audio's: prepend the base URL you authenticated against, and refuse an
+absolute or protocol-relative answer. Its lifetime is the audio ticket's, and
+the audio, canvas and clip tickets do not open each other's routes.
+
+Whoever may play the track may watch its clip, re-checked at every request
+and every redemption. A track without a clip, one that is unavailable or not
+yours, a clip deleted from the disk since the scan, and a ticket that is
+expired, forged or of another kind all answer the same `404`. A ticket that
+expires while a clip is paused answers `404` to the next range request: mint a
+new one and resume at the clip's position, and conclude that the track has no
+clip only when minting answers `404` too.
+
+The Subsonic façade says nothing of a clip: a song keeps `isVideo="false"`.
+
 ## User-data mutations and idempotency
 
 User data written through the native API and Subsonic façade uses the same

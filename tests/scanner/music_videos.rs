@@ -240,3 +240,44 @@ async fn a_link_follows_the_disk_from_scan_to_scan() {
         "a deleted clip is forgotten"
     );
 }
+
+/// RFC-029 decision 8: a link that appears or goes is a change of its track,
+/// so the scan puts the track's `upsert` on the library's feed, with no origin
+/// device, even for a track whose audio it skipped. A scan that changes no
+/// link adds nothing.
+#[tokio::test]
+async fn a_link_that_changes_is_an_upsert_of_its_track() {
+    let (_temp, state, owner, library, root) = incremental_library("events", |music| {
+        std::fs::create_dir_all(music.join("Album")).unwrap();
+        write_tagged_flac(&music.join("Album/Song.flac"), "Song", "Album", 800);
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    let track = track_id(&state, "Album/Song.flac").await;
+    let upserts = || {
+        let state = state.clone();
+        let track = track.clone();
+        async move {
+            sqlx::query_as::<_, (i64, i64)>(
+                "SELECT COUNT(*), COUNT(origin_device_id) FROM library_event \
+                 WHERE entity_type = 'track' AND entity_id = ? AND action = 'upsert'",
+            )
+            .bind(track)
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap()
+        }
+    };
+    let (before, _) = upserts().await;
+
+    write_video_mp4(&root.join("Album/Song.mp4"), 805);
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(upserts().await, (before + 1, 0), "the clip appeared");
+
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(upserts().await, (before + 1, 0), "nothing changed");
+
+    std::fs::remove_file(root.join("Album/Song.mp4")).unwrap();
+    scan_once(&state, owner, library).await;
+    assert_eq!(upserts().await, (before + 2, 0), "the clip went");
+}

@@ -10,19 +10,31 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+**A response grows one field.** Every native track (`SongItem`, and through
+it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
+`{ "format", "byte_size" }` or `null`. The Subsonic façade is untouched.
+
 ### Added
 
-- **The scan records each track's music video**
-  ([RFC-029](docs/rfcs/RFC-029-track-music-video.md) decision 3), in a new
-  table, `track_clip`. The clip is the video named like the track, case
-  ignored, beside it or in a `Clips` folder beside it, or the track's own
-  `.mp4` when it holds a moving picture; several candidates are taken in the
-  order `mp4`, `m4v`, `mov`, `webm`, `mkv`, each confirmed by its content.
-  The rule is the desktop's, and a test holds the server's answer to
+- **A track's music video** ([RFC-029](docs/rfcs/RFC-029-track-music-video.md)).
+  The clip is the video named like the track, case ignored, beside it or in
+  a `Clips` folder beside it, or the track's own `.mp4` when it holds a
+  moving picture; several candidates are taken in the order `mp4`, `m4v`,
+  `mov`, `webm`, `mkv`, each confirmed by its content. The rule is the
+  desktop's, and a test holds the server's answer to
   `waveflow_core::scanner::clips::find_clip` over every case it
-  distinguishes. Nothing a client sees changes yet; serving the clip is the
-  next step. A link is dropped only where the scan could see its clip go,
-  so a `Clips` folder that cannot be read keeps its links.
+  distinguishes.
+  - The scan records the link in a new table, `track_clip`, and drops it only
+    where it could see the clip go, so a `Clips` folder that cannot be read
+    keeps its links. A link that changes is the track's `upsert` on the
+    change feed.
+  - `GET /api/v2/tracks/{id}/clip`, `POST /api/v2/tracks/{id}/clip-ticket` and
+    `GET /api/v2/clip-stream/{ticket}` serve the file as it is, whole or by
+    range, never transcoded, to whoever may play the track, re-checked at
+    every request. The ticket is a fourth kind, `0x04`, which opens neither
+    the audio nor a canvas, nor is opened by theirs; no ticket minted before
+    the upgrade stops working. Its path is redacted from traces as the other
+    tickets' are.
 
 ### Fixed
 

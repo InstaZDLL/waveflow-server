@@ -189,7 +189,10 @@ pub const SCALAR_PATH: &str = "/reference";
         media::put_canvas,
         media::delete_canvas,
         media::create_canvas_ticket,
-        media::canvas_with_ticket
+        media::canvas_with_ticket,
+        media::clip_for_track,
+        media::create_clip_ticket,
+        media::clip_with_ticket
     ),
     components(schemas(
         api::ProbeResponse,
@@ -224,6 +227,7 @@ pub const SCALAR_PATH: &str = "/reference";
         services::GenreItem,
         services::LibraryMember,
         services::SongItem,
+        services::ClipSummary,
         services::TrackDetail,
         services::TrackOverrides,
         services::TrackOverrideValues,
@@ -467,6 +471,7 @@ pub(super) const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
     ("/api/v2/oauth/token", "post"),
     ("/api/v2/stream/{ticket}", "get"),
     ("/api/v2/canvas-stream/{ticket}", "get"),
+    ("/api/v2/clip-stream/{ticket}", "get"),
     // The Last.fm return, and the one entry here that is not a ticket. It is
     // reached by a person's browser coming back from another site, with no
     // `Authorization` header and — every cookie of this server being
