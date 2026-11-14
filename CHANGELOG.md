@@ -10,6 +10,25 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A music video beside its song is no longer a second track**
+  ([RFC-029](docs/rfcs/RFC-029-track-music-video.md) decision 4). `mp4` is
+  an audio extension, rightly, so a video named like its song,
+  `Album/Song.mp4` beside `Album/Song.flac` or in `Album/Clips/`, was indexed
+  as a track whose audio was the clip's soundtrack. The scan now leaves it
+  out, by the rule the desktop applies. An `.mp4` is left out only when a song
+  of its name sits beside it and the file really holds a moving picture: an
+  audio `.mp4` always stays a track, and so does a video with no song of its
+  name. A change in a `Clips` folder now scans the folder above it, where
+  the song is.
+
+  **On a server that already indexed such a video**, the next scan finds that
+  track gone, as it would a deleted file: it becomes unavailable, then is
+  purged under the library's rules, and whatever a member had on it goes
+  with it: a favourite, a rating, plays, a playlist entry. It was never a
+  track; it was the clip of one, played without its picture.
+
 ### Changed
 
 - **waveflow-core is pinned to its `v2.1.0` tag**, from `v2.0.0`. Two things
