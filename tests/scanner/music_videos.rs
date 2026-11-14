@@ -136,4 +136,107 @@ async fn a_scan_of_a_clips_folder_walks_its_parent() {
     let record = settled(&state, owner, scan).await;
     assert_eq!(record.status, "completed", "{:?}", record.message);
     assert_eq!(available_paths(&state).await, ["Album/Song.flac"]);
+    assert_eq!(
+        links(&state).await,
+        [link("Album/Song.flac", "Album/Clips/Song.mp4", "clips_dir")],
+        "and links the clip to the song it found there"
+    );
+}
+
+/// Every recorded link as `(track, clip, origin)`, in track order.
+async fn links(state: &waveflow_server::AppState) -> Vec<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT t.relative_path, c.relative_path, c.origin \
+         FROM track_clip c JOIN track t ON t.id = c.track_id \
+         WHERE c.library_id = t.library_id ORDER BY t.relative_path",
+    )
+    .fetch_all(state.db.pool())
+    .await
+    .unwrap()
+}
+
+fn link(track: &str, clip: &str, origin: &str) -> (String, String, String) {
+    (track.to_owned(), clip.to_owned(), origin.to_owned())
+}
+
+/// RFC-029 decision 3: the scan records the clip of each track, by the three
+/// origins of the desktop's rule.
+#[tokio::test]
+async fn a_scan_records_each_track_s_music_video() {
+    let (_temp, state, owner, library, root) = incremental_library("linked", |music| {
+        std::fs::create_dir_all(music.join("Album/Clips")).unwrap();
+        write_tagged_flac(&music.join("Album/Song.flac"), "Song", "Album", 600);
+        write_video_mp4(&music.join("Album/Song.mp4"), 605);
+        write_tagged_flac(&music.join("Album/Two.flac"), "Two", "Album", 610);
+        write_video_mp4(&music.join("Album/Clips/Two.mp4"), 615);
+        write_video_mp4(&music.join("Album/Lone.mp4"), 620);
+        write_tagged_flac(&music.join("Album/Audio.flac"), "Audio", "Album", 630);
+        write_audio_mp4(&music.join("Album/Audio.mp4"), 635);
+    })
+    .await;
+    scan_once(&state, owner, library).await;
+
+    assert_eq!(
+        links(&state).await,
+        [
+            link("Album/Lone.mp4", "Album/Lone.mp4", "itself"),
+            link("Album/Song.flac", "Album/Song.mp4", "sibling"),
+            link("Album/Two.flac", "Album/Clips/Two.mp4", "clips_dir"),
+        ]
+    );
+    let (format, byte_size): (String, i64) = sqlx::query_as(
+        "SELECT format, byte_size FROM track_clip WHERE relative_path = 'Album/Song.mp4'",
+    )
+    .fetch_one(state.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(format, "mp4");
+    assert_eq!(
+        byte_size,
+        std::fs::metadata(root.join("Album/Song.mp4"))
+            .unwrap()
+            .len() as i64
+    );
+}
+
+/// The link follows the disk from scan to scan: a clip added beside a track
+/// the incremental scan skips is recorded, an excluded one is not, and one
+/// deleted is forgotten.
+#[tokio::test]
+async fn a_link_follows_the_disk_from_scan_to_scan() {
+    let (_temp, state, owner, library, root) = incremental_library("follows", |music| {
+        std::fs::create_dir_all(music.join("Album/Clips")).unwrap();
+        write_tagged_flac(&music.join("Album/Song.flac"), "Song", "Album", 700);
+    })
+    .await;
+    scan_once(&state, owner, library.clone()).await;
+    assert!(links(&state).await.is_empty());
+
+    let clip = root.join("Album/Clips/Song.mp4");
+    write_video_mp4(&clip, 705);
+    scan_once(&state, owner, library.clone()).await;
+    let linked = [link("Album/Song.flac", "Album/Clips/Song.mp4", "clips_dir")];
+    assert_eq!(
+        links(&state).await,
+        linked,
+        "added beside a track the scan skipped"
+    );
+
+    std::fs::write(root.join(".waveflowignore"), "Clips/\n").unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    assert!(
+        links(&state).await.is_empty(),
+        "an excluded clip is not seen"
+    );
+
+    std::fs::remove_file(root.join(".waveflowignore")).unwrap();
+    scan_once(&state, owner, library.clone()).await;
+    assert_eq!(links(&state).await, linked);
+
+    std::fs::remove_file(&clip).unwrap();
+    scan_once(&state, owner, library).await;
+    assert!(
+        links(&state).await.is_empty(),
+        "a deleted clip is forgotten"
+    );
 }

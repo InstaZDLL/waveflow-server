@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 mod apply;
 mod availability;
+mod clips;
 mod credits;
 mod derivations;
 mod identity;
@@ -17,6 +18,7 @@ mod tracks;
 
 pub use apply::{ApplyOutcome, ArtworkInput, CatalogApply, CatalogTrackInput};
 pub use availability::SkipFacts;
+pub use clips::{TrackClip, TrackClipFacts};
 pub use identity::{track_pid, ExistingTrack};
 pub use libraries::{LibraryAccess, LibraryRecord, LibraryScanSettings};
 pub use scan_jobs::ScanJobRecord;

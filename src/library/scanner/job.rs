@@ -6,6 +6,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use futures_util::{stream, StreamExt};
 use uuid::Uuid;
 
+use super::clips::WalkedClips;
 use super::discovery::{discover_audio, unclaimed, Discovery, Reach, Walked};
 use super::extract::{scan_file, Scanned};
 use super::{normalised_scope, ScanManager, ScanProgress};
@@ -69,6 +70,7 @@ impl ScanManager {
         }
         let Discovery {
             paths,
+            videos,
             unreadable,
             incomplete,
             excluded,
@@ -100,6 +102,16 @@ impl ScanManager {
             .collect();
         let discovered: HashSet<String> =
             paths.iter().map(|(_, relative)| relative.clone()).collect();
+        // The link pass needs the walk's tracks after the reads have consumed
+        // them, and is told nothing the walk did not see (RFC-029 decision 3).
+        let clips = WalkedClips {
+            tracks: paths.clone(),
+            videos,
+            unreadable: unreadable_folders.clone(),
+            incomplete,
+            scope: scope.clone(),
+            full,
+        };
         self.db
             .start_walked_scan_job(
                 scan_id,
@@ -339,6 +351,7 @@ impl ScanManager {
                 .mark_unseen_unavailable_within(library.id, scan_id, scope.as_deref())
                 .await?
         };
+        self.link_clips(library.id, clips).await?;
         // After availability is settled, not before: the album and artist
         // identifiers are a majority vote over the tracks that are still there,
         // so a file that vanished must stop voting first.

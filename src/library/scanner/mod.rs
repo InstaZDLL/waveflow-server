@@ -1,6 +1,7 @@
 //! Server-authoritative filesystem scanner with SSE-ready progress events.
 
 pub(crate) mod chapter_guard;
+mod clips;
 mod discovery;
 mod extract;
 mod job;
