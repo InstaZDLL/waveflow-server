@@ -181,21 +181,51 @@ names the walk saw, and replaces the rows of those tracks: inserted, updated or
 deleted, under the writer gate, in one transaction per batch as the catalogue
 writes are. A track whose link did not change is not written.
 
-**A link is deleted only when the walk saw its clip go.** Inserting or updating
-a link needs only what the walk found; deleting one needs what the walk can say
-it did not find, and that is the question `Walked::saw_missing` already
-answers for a track's file (RFC-018 decision 3). The pass asks it of the clip's
-path, and keeps the link when:
+**A link changes only on what the walk could see.** The matcher's answer for a
+track is the first confirmed candidate in the rule's order: the track's folder,
+then its `Clips` folder, then the track's own file. That answer says something
+only about the places the walk actually looked. Its blind spots are the ones
+`Walked::saw_missing` already names for a track's file (RFC-018 decision 3). A
+place is **unseen** when:
 
 - the walk is `incomplete`;
-- the clip's path is under a folder the walk could not read — an unreadable
-  `Clips/` folder is not an empty one;
-- the clip's path is outside the `scope` of a scoped scan, which did not look
-  there.
+- the place is under a folder the walk could not read (an unreadable `Clips/`
+  folder is not an empty one);
+- the place is outside the `scope` of a scoped scan, which did not look there.
 
-Otherwise the link goes. That includes a clip an exclusion now hides: it is no
-longer in what the walk discovered, so it is gone as far as the server is
-concerned, which is decision 1's rule and not an accident of it.
+A candidate whose content check could not *read* the file counts as unseen
+too (below).
+
+The pass trusts the matcher's answer only when every place the rule visits
+**before** that answer was seen. When the answer is no clip at all, that means
+every place. Otherwise the existing link is kept exactly as it is, neither
+deleted nor replaced. Two consequences:
+
+- **No fallback past a blind spot.** With `Clips/` unreadable, a track whose own
+  file is a video would otherwise fall to `itself` and lose the `clips_dir`
+  link it had. The desktop's `find_clip` does fall back there, since a folder
+  it cannot list yields nothing. The server does not, because a folder it could
+  not read is not a folder without a clip. This is the one place the two
+  answers may differ, and only on a disk the server cannot read. The parity
+  test (decision 2) runs on a readable tree.
+- **A better candidate the walk did see still wins.** A video dropped beside
+  the track replaces a link into an unreadable `Clips/`. Nothing comes before
+  the track's own folder in the rule's order, so the answer is trusted.
+
+When the answer is trusted, the link follows it, and it goes in two cases:
+
+- **The clip's path is no longer discovered.** That includes a clip an
+  exclusion now hides: as far as the server is concerned it is gone, which is
+  decision 1's rule and not an accident of it.
+- **The file is there and the content check rejects it.** For example, an
+  `.mp4` re-encoded without its picture, or another file renamed onto the
+  clip's name.
+
+A rejection is an answer about the content, and **a read that failed is not**.
+An unreadable file keeps the link, as an unreadable folder does. The two are
+told apart by calling `has_video_track`, which returns `io::Result<bool>`,
+rather than `file_has_video_track`, which folds an error into `false`. The
+EBML check is read the same way.
 
 **The content check is not repeated for nothing.** A candidate whose
 `relative_path`, `byte_size` and `modified_at` equal the row's is taken as
@@ -323,6 +353,12 @@ Whoever may play the track may watch its clip; nothing else.
   forged ticket — one answer.
 - **Re-checked at every redemption**, so a removed member or a disabled account
   loses the clip at once, not at the ticket's expiry.
+- **The mint resolves the file, not only the row.** `POST
+  /tracks/{id}/clip-ticket` runs the clip's path through `secure_track_path`,
+  as the stream route does, and answers 404 when the file is gone. Without
+  that, a clip deleted between two scans would still be minted a ticket from
+  its stale row. A client renewing an expired ticket (decision 9) would then be
+  handed one ticket after another, each answering 404 on its first read.
 - **No setting of its own.** The canvas has `accepts_canvas` because accepting
   one spends the operator's disk. A clip spends nothing the operator did not
   already put there, and decision 1's exclusions are how they keep one off the
@@ -366,8 +402,14 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
   follows meets an expired ticket and a 404. That 404 does not mean the clip is
   gone. `ClipVideo` then mints a fresh ticket with
   `POST /tracks/{id}/clip-ticket`, points the element at the new URL and
-  resumes at the position it held. Only a 404 **from the mint** means "no clip
-  any more" and ends the visit; a 404 from the stream never does on its own.
+  resumes at the position it held. A 404 **from the mint** means "no clip any
+  more" and ends the visit, and the mint answers it for a file deleted since
+  the scan (decision 7), not only for a missing row. The renewal is also
+  bounded on the client: **one renewal per failure**. If the stream answers 404
+  again on the ticket just renewed, before any range has been read with it,
+  the visit ends as if the mint had refused. That covers a file that vanishes
+  between the mint and the read. Renewing and failing therefore cannot go on
+  for ever, whatever the server answers.
 - **A track present both locally and on the server** (RFC-004's reconciliation)
   plays its local clip when it has one: no network, and the loopback path on
   Linux.
@@ -406,8 +448,8 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
 | --- | --- | --- |
 | 0 | `chore(deps): …waveflow-core v2.1.0` | The pin. Its own work, not this RFC's; everything below waits for it. |
 | 1 | `fix(scanner): leave a music video out of the walk` | Decision 4: `drop_clips` in the server's walk, with `has_video_track`. Tests in the `scanner` target: a video `.mp4` beside a song is not a track; an audio one is; a lone video one is; a video `Song.mp4` beside a `Song.webm` and no audio file of that name is. Release notes. |
-| 2 | `feat(library): record a track's music video at the scan` | Decision 3: the migration, the walk's two sets, the in-memory matcher, the link pass per scope, the `Clips` scope widening in the watcher, and decision 2's parity test against `find_clip`. Tests for the deletion rule: a clip removed from the disk loses its link; an unreadable `Clips/` folder keeps it; a clip an exclusion now hides loses it. |
-| 3 | `feat(api): serve a track's music video` | Decisions 5 to 8: `TicketKind::Clip`, the three routes, the redaction entry, the `clip` field, the OpenAPI document; tests in `media` (ranges, MIME, cross-kind refusals, 404 blur, membership and disabled account re-checked at redemption, a clip deleted after the scan) and `subsonic_contract` (nothing changes on the wire). The native guide and the operations guide say where clips go. |
+| 2 | `feat(library): record a track's music video at the scan` | Decision 3: the migration, the walk's two sets, the in-memory matcher, the link pass per scope, the `Clips` scope widening in the watcher, and decision 2's parity test against `find_clip`. Tests for the deletion rule: a clip removed from the disk loses its link; an unreadable `Clips/` folder keeps it, and does not let a track that is itself a video fall to `itself`; a clip an exclusion now hides loses it; a clip whose content now fails the check loses it; a clip that cannot be read keeps it. |
+| 3 | `feat(api): serve a track's music video` | Decisions 5 to 8: `TicketKind::Clip`, the three routes, the redaction entry, the `clip` field, the OpenAPI document; tests in `media` (ranges, MIME, cross-kind refusals, 404 blur, membership and disabled account re-checked at redemption, a clip deleted after the scan refused by the stream and by the mint) and `subsonic_contract` (nothing changes on the wire). The native guide and the operations guide say where clips go. |
 | 4 | `feat(webapp): play a track's music video` | The embedded client, after the desktop's behaviour: the track pauses, the clip plays in the now-playing view, the track resumes at the clip's position. Optional, and may follow the desktop. |
 | D | WaveFlow: `feat(clip): play a server track's music video` | Decision 9, in the desktop repository, once 3 is released. |
 
