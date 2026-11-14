@@ -57,15 +57,20 @@ pub(super) fn scan_file(
 }
 
 /// A file's size and modification time, as `extract_file` records them.
-pub(super) fn file_stamp(path: &Path) -> Option<(i64, i64)> {
-    let metadata = fs::metadata(path).ok()?;
+fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+    fs::metadata(path).ok().map(|metadata| stamp(&metadata))
+}
+
+/// The size and modification time a `stat` already gave, in milliseconds,
+/// `0` for a time the system cannot tell.
+pub(super) fn stamp(metadata: &fs::Metadata) -> (i64, i64) {
     let modified_at = metadata
         .modified()
         .ok()
         .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
         .map(|value| value.as_millis() as i64)
         .unwrap_or(0);
-    Some((metadata.len() as i64, modified_at))
+    (metadata.len() as i64, modified_at)
 }
 
 /// The two lyrics sidecars a scan reads beside an audio file, by size and

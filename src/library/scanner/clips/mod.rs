@@ -23,14 +23,14 @@ use uuid::Uuid;
 use waveflow_core::scanner::clips::{has_video_track, is_clips_dir_name, VIDEO_EXTENSIONS};
 
 use super::discovery::Walked;
-use super::extract::file_stamp;
+use super::extract::stamp;
 use super::ScanManager;
 use crate::storage::catalog::{TrackClip, TrackClipFacts};
 
 #[cfg(test)]
 mod tests;
 
-/// The containers whose content `file_has_video_track` can confirm. The core
+/// The containers whose content `has_video_track` can confirm. The core
 /// keeps its own list private; an `.mp4` or a `.mov` may hold audio alone.
 const ISO_BMFF_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov"];
 
@@ -201,7 +201,9 @@ pub(super) fn confirm(
     if !metadata.is_file() {
         return None;
     }
-    let (byte_size, modified_at) = file_stamp(candidate.path)?;
+    // From the one `stat` above, so a second one cannot fail apart from it,
+    // and stamped as a track is.
+    let (byte_size, modified_at) = stamp(&metadata);
     let link = TrackClip {
         relative_path: candidate.name.to_owned(),
         format,
