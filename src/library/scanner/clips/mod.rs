@@ -20,7 +20,7 @@ use std::{
 };
 
 use uuid::Uuid;
-use waveflow_core::scanner::clips::{file_has_video_track, is_clips_dir_name, VIDEO_EXTENSIONS};
+use waveflow_core::scanner::clips::{has_video_track, is_clips_dir_name, VIDEO_EXTENSIONS};
 
 use super::discovery::Walked;
 use super::extract::file_stamp;
@@ -153,20 +153,32 @@ impl<'a> Videos<'a> {
 }
 
 /// Whether a file holds what its container promises: a moving picture for
-/// the ISO-BMFF ones, the EBML header for the others.
-fn holds_video(path: &Path, format: &str) -> bool {
-    if ISO_BMFF_EXTENSIONS.contains(&format) {
-        return file_has_video_track(path);
+/// the ISO-BMFF ones, the EBML header for the others. A file too short to
+/// hold the header holds no video; a file that cannot be read is an error,
+/// which is not the same answer.
+fn holds_video(path: &Path, format: &str) -> std::io::Result<bool> {
+    let mut file = std::fs::File::open(path)?;
+    let answer = if ISO_BMFF_EXTENSIONS.contains(&format) {
+        has_video_track(&mut file)
+    } else {
+        let mut head = [0u8; 4];
+        file.read_exact(&mut head).map(|()| head == EBML_MAGIC)
+    };
+    match answer {
+        // Truncated: what the file holds was read, and it is not a video.
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        answer => answer,
     }
-    let mut head = [0u8; 4];
-    std::fs::File::open(path)
-        .and_then(|mut file| file.read_exact(&mut head))
-        .is_ok_and(|()| head == EBML_MAGIC)
 }
 
 /// The link a candidate makes once its content is confirmed. A candidate equal
 /// to the link already recorded, path, size and time alike, is taken as
 /// confirmed without opening it, unless the scan reads everything.
+///
+/// A candidate the pass cannot read is passed over, as the core passes it
+/// over, unless it is the clip already recorded: then the recorded link
+/// stands, because a read that failed says nothing about what the file holds,
+/// and a link dropped on an I/O error would come back at the next scan.
 pub(super) fn confirm(
     candidate: Candidate<'_>,
     recorded: Option<&TrackClip>,
@@ -176,7 +188,16 @@ pub(super) fn confirm(
     if !VIDEO_EXTENSIONS.contains(&format.as_str()) {
         return None;
     }
-    let metadata = std::fs::metadata(candidate.path).ok()?;
+    let unreadable = |error: std::io::Error| {
+        tracing::warn!(path = %candidate.name, %error, "a music video could not be read");
+        recorded
+            .filter(|recorded| recorded.relative_path == candidate.name)
+            .cloned()
+    };
+    let metadata = match std::fs::metadata(candidate.path) {
+        Ok(metadata) => metadata,
+        Err(error) => return unreadable(error),
+    };
     if !metadata.is_file() {
         return None;
     }
@@ -194,7 +215,13 @@ pub(super) fn confirm(
                 && recorded.byte_size == link.byte_size
                 && recorded.modified_at == link.modified_at
         });
-    (unchanged || holds_video(candidate.path, &link.format)).then_some(link)
+    if unchanged {
+        return Some(link);
+    }
+    match holds_video(candidate.path, &link.format) {
+        Ok(video) => video.then_some(link),
+        Err(error) => unreadable(error),
+    }
 }
 
 /// What one walk saw that the link pass needs.

@@ -265,3 +265,43 @@ fn a_link_goes_only_when_the_walk_saw_its_clip_go() {
         "the walk could not say what it missed"
     );
 }
+
+/// A clip the pass cannot read keeps its recorded link: the failed read says
+/// nothing about the file. A file read whole that holds no video loses it, and
+/// a file too short for its header is such a file, not a failed read.
+#[test]
+fn a_clip_that_cannot_be_read_keeps_its_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let candidate = |path, name| Candidate {
+        path,
+        name,
+        origin: "sibling",
+    };
+    let recorded = TrackClip {
+        origin: "sibling",
+        ..link("A/Song.webm")
+    };
+
+    let missing = temp.path().join("Song.webm");
+    let cannot_read = candidate(&missing, "A/Song.webm");
+    assert_eq!(
+        confirm(cannot_read, Some(&recorded), true),
+        Some(recorded.clone())
+    );
+    assert_eq!(
+        confirm(cannot_read, None, true),
+        None,
+        "nothing recorded to keep"
+    );
+    let other = link("A/Clips/Song.mp4");
+    assert_eq!(
+        confirm(cannot_read, Some(&other), true),
+        None,
+        "another clip's link"
+    );
+
+    let short = temp.path().join("Short.webm");
+    std::fs::write(&short, [0x1a, 0x45]).unwrap();
+    let truncated = candidate(&short, "A/Song.webm");
+    assert_eq!(confirm(truncated, Some(&recorded), true), None);
+}
