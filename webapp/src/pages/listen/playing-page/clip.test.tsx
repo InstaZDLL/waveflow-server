@@ -73,6 +73,8 @@ function fakePlayer(playing: boolean, asidePlaying = false) {
   const player = {
     playing,
     asidePlaying,
+    /** What plays beside the queue: set while one is loaded, playing or not. */
+    aside: (asidePlaying ? { kind: "station" } : null) as object | null,
     toggle: vi.fn(() => {
       player.playing = !player.playing;
     }),
@@ -189,10 +191,28 @@ describe("ClipPlayer", () => {
     expect(player.toggle).toHaveBeenCalledTimes(1);
 
     // A station started from its page while the clip was open.
+    player.aside = { kind: "station" };
     player.asidePlaying = true;
     clickBack();
     expect(player.toggle).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("leaves a station the clip paused in the bar when it closes", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openClip(player);
+
+    // A station started meanwhile, then paused by the clip playing again: it
+    // no longer sounds, but it is still the listener's choice in the bar.
+    player.aside = { kind: "station" };
+    player.asidePlaying = true;
+    act(() => {
+      videoElement().dispatchEvent(new Event("play"));
+    });
+    expect(player.asidePlaying).toBe(false);
+    clickBack();
+    expect(player.toggle).toHaveBeenCalledTimes(1);
   });
 
   it("takes the track back when nothing else started", async () => {

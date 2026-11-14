@@ -128,10 +128,12 @@ export function ClipPlayer({
     );
     const { player } = latest.current;
     if (at !== null) player.seek(at);
-    // Not over a station or an episode started while the clip was open:
-    // `toggle` would drop it, and closing a clip must not stop what the
-    // listener chose since.
-    if (wasPlaying.current && !player.playing && !player.asidePlaying) {
+    // Not over a station or an episode started while the clip was open, playing
+    // or paused since by the clip itself: `toggle` would drop it from the bar,
+    // and closing a clip must not take away what the listener chose since. A
+    // track that was playing when the clip opened had no aside beside it, so
+    // one here was started meanwhile.
+    if (wasPlaying.current && !player.playing && !player.aside) {
       player.toggle();
     }
     latest.current.onClose();
