@@ -10,6 +10,27 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Changed
+
+- **waveflow-core is pinned to its `v2.1.0` tag**, from `v2.0.0`. Two things
+  it changes in a scan, for a file read from now on:
+  - an empty picture is passed over in the fallback too: a file with no
+    front cover whose first picture holds no bytes now takes the next
+    picture, where it used to have no cover at all;
+  - a cover's format is read from its bytes (JPEG, PNG, WebP) before the
+    MIME type its tag declares, so a WebP thumbnail declared `image/jpeg`,
+    or not declared at all, is stored as `.webp` where it was stored as
+    `.jpg` or as `.bin`, the latter never served. A cover already in the
+    catalogue keeps the format its row was written with, even through
+    `database rescan-full`: the row is addressed by the content's hash and
+    is not rewritten.
+
+  The rest of the release is the desktop's or is not called by the server:
+  the artist identity by MusicBrainz id, the tag workshop, and
+  `scanner::clips`, which RFC-029 will use. `canonical_name`, the audio
+  extensions, the text decoder and lofty are unchanged, so no derived
+  identifier moves.
+
 ## [2.2.2] — 2026-11-13
 
 No response changes shape and the schema is 2.2.1's. The Subsonic façade
