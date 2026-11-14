@@ -3,7 +3,9 @@
 - **Status**: Proposed
 - **Implemented by**: [#449](https://github.com/InstaZDLL/waveflow-server/pull/449)
   (the core pin), [#450](https://github.com/InstaZDLL/waveflow-server/pull/450)
-  (decision 4, with decision 3's `Clips` scope); the rest is not yet. The
+  (decision 4, with decision 3's `Clips` scope),
+  [#451](https://github.com/InstaZDLL/waveflow-server/pull/451) (decisions 2
+  and 3, the link the scan records); the rest is not yet. The
   *Status* field above never flips in this project; this line is the one that
   says what is running.
 - **Date**: 2026-11-14
