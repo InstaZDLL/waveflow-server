@@ -31,6 +31,12 @@ export const player: Record<keyof typeof en, TranslationValue> = {
   "playing.viewImmersive": "没入モード",
   "playing.immersiveTitle": "没入モード",
   "playing.leaveImmersive": "没入モードを終了",
+  "playing.watchClip": "ミュージックビデオを見る",
+  "playing.backToTrack": "曲に戻る",
+  "playing.clipLabel": "ミュージックビデオ",
+  "playing.clipGone": "このミュージックビデオはサーバー上にありません。",
+  "playing.clipError":
+    "このブラウザではミュージックビデオを再生できませんでした。",
   "radio.detail": "アカウントに保存したインターネットラジオ局",
   "radio.name": "ステーション名",
   "radio.address": "ストリームのアドレス",

@@ -35,6 +35,11 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
     the audio nor a canvas, nor is opened by theirs; no ticket minted before
     the upgrade stops working. Its path is redacted from traces as the other
     tickets' are.
+  - The web client plays it. On the playing screen, **Watch the clip** shows
+    the video in place of the cover, with its own sound: the track pauses,
+    and takes over at the clip's position when the clip closes or ends,
+    playing on if it was playing. A ticket that expires while the clip is
+    paused is renewed once, at the same position.
 
 ### Fixed
 

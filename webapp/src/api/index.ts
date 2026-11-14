@@ -87,6 +87,8 @@ export {
   SETUP_TOKEN_REJECTED,
   setupRequired,
 } from "./client";
+export type { ClipSummary } from "./clip";
+export { clipUrl } from "./clip";
 export type {
   ListeningStats,
   Mix,

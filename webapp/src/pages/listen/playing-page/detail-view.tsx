@@ -7,6 +7,7 @@ import { Artwork } from "../../../components/artwork/artwork";
 import { CanvasStage } from "../../../components/artwork/canvas";
 import { FileQuality } from "../../../components/track/file-quality";
 import { useI18n } from "../../../state/i18n";
+import { ClipPlayer, useClipOpen } from "./clip";
 import { type LyricSheet, LyricsStrip, useLyricSheet } from "./lyrics";
 
 /**
@@ -48,17 +49,23 @@ export function DetailView({ song }: { song: Song }) {
   const [split, setSplit] = useState(false);
   const next = detailSplit(split, lyrics.state);
   if (next !== split) setSplit(next);
+  const clip = useClipOpen(song.id);
+  const clipOpen = clip.open && Boolean(song.clip);
 
   return (
     <div className={`playing ${next ? "playing-split" : "playing-solo"}`}>
       <div className="playing-track">
-        <CanvasStage trackId={song.id}>
-          <Artwork
-            artworkId={song.artwork_hash}
-            title={song.title}
-            className="cover large"
-          />
-        </CanvasStage>
+        {clipOpen ? (
+          <ClipPlayer song={song} onClose={clip.hide} />
+        ) : (
+          <CanvasStage trackId={song.id}>
+            <Artwork
+              artworkId={song.artwork_hash}
+              title={song.title}
+              className="cover large"
+            />
+          </CanvasStage>
+        )}
         <div className="playing-detail">
           <span className="eyebrow">{song.album ?? t("common.album")}</span>
           <h2>{song.title}</h2>
@@ -67,6 +74,11 @@ export function DetailView({ song }: { song: Song }) {
               with the track and not with the lyrics, and a listener who came
               here to read along should not have to pass it twice. */}
           <FileQuality song={song} />
+          {song.clip && !clipOpen ? (
+            <button type="button" className="clip-open" onClick={clip.show}>
+              {t("playing.watchClip")}
+            </button>
+          ) : null}
           {/* Without a column, the strip says here that there is nothing to
               read, or that it is still asking. */}
           {next ? null : <LyricsStrip lyrics={lyrics} />}
