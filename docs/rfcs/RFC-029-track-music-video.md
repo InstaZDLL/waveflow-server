@@ -5,7 +5,8 @@
   (the core pin), [#450](https://github.com/InstaZDLL/waveflow-server/pull/450)
   (decision 4, with decision 3's `Clips` scope),
   [#451](https://github.com/InstaZDLL/waveflow-server/pull/451) (decisions 2
-  and 3, the link the scan records), the pull request after it (decisions 5
+  and 3, the link the scan records),
+  [#452](https://github.com/InstaZDLL/waveflow-server/pull/452) (decisions 5
   to 8, the routes, the ticket and the `clip` field); the web client is not
   yet. The
   *Status* field above never flips in this project; this line is the one that
