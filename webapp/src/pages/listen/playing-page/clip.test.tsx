@@ -86,21 +86,25 @@ function fakePlayer(playing: boolean, asidePlaying = false) {
 
 const song = { id: "track", title: "Song" } as Song;
 
+/** Renders the clip under `player`; called again, it publishes a new player. */
+function renderClip(
+  player: ReturnType<typeof fakePlayer>,
+  onClose: () => void,
+) {
+  root.render(
+    <I18nProvider>
+      <PlayerContext.Provider value={player as unknown as PlayerState}>
+        <PlayerProgressContext.Provider value={{ position: 5, duration: 200 }}>
+          <ClipPlayer song={song} onClose={onClose} />
+        </PlayerProgressContext.Provider>
+      </PlayerContext.Provider>
+    </I18nProvider>,
+  );
+}
+
 async function openClip(player: ReturnType<typeof fakePlayer>) {
   const onClose = vi.fn();
-  await act(async () =>
-    root.render(
-      <I18nProvider>
-        <PlayerContext.Provider value={player as unknown as PlayerState}>
-          <PlayerProgressContext.Provider
-            value={{ position: 5, duration: 200 }}
-          >
-            <ClipPlayer song={song} onClose={onClose} />
-          </PlayerProgressContext.Provider>
-        </PlayerContext.Provider>
-      </I18nProvider>,
-    ),
-  );
+  await act(async () => renderClip(player, onClose));
   return onClose;
 }
 
@@ -176,6 +180,21 @@ describe("ClipPlayer", () => {
     expect(player.toggleAside).toHaveBeenCalledTimes(1);
     expect(player.asidePlaying).toBe(false);
     expect(player.toggle).not.toHaveBeenCalled();
+  });
+
+  it("pauses the clip when a station or an episode starts beside it", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const pause = vi
+      .spyOn(HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+    const player = fakePlayer(false, false);
+    const onClose = await openClip(player);
+    expect(pause).not.toHaveBeenCalled();
+
+    // The provider publishes a new value: a station started from its page.
+    act(() => renderClip({ ...player, asidePlaying: true }, onClose));
+    expect(pause).toHaveBeenCalledTimes(1);
+    pause.mockRestore();
   });
 });
 
