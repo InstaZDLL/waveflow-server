@@ -149,6 +149,10 @@ pub(super) struct Unreadable {
 /// folders it could not read, relative to the root.
 pub(super) struct Discovery {
     pub(super) paths: Vec<(PathBuf, String)>,
+    /// The video files, named the same way and in the same order: never
+    /// indexed, only matched against the tracks (RFC-029 decision 3). An
+    /// `.mp4` is in both lists, since a video one may be a track.
+    pub(super) videos: Vec<(PathBuf, String)>,
     pub(super) unreadable: Vec<Unreadable>,
     /// An error named no path inside the root, so the walk cannot say which
     /// tracks it missed: none may be marked missing.
@@ -533,6 +537,7 @@ pub(super) fn discover_audio(
             .collect(),
     };
     let mut paths = Vec::new();
+    let mut videos = Vec::new();
     let mut incomplete = false;
     for (start, base) in starts {
         let entries = WalkDir::new(&start)
@@ -590,6 +595,9 @@ pub(super) fn discover_audio(
                 .extension()
                 .and_then(|value| value.to_str())
                 .is_some_and(super::indexes_extension);
+            if waveflow_core::scanner::clips::is_video_extension(&path) {
+                videos.push((path.clone(), name.clone()));
+            }
             if supported {
                 paths.push((path, name));
             }
@@ -601,6 +609,9 @@ pub(super) fn discover_audio(
     let mut read = HashSet::new();
     paths.retain(|(path, _)| read.insert(path.clone()));
     drop_clips(&mut paths);
+    videos.sort_by(|left, right| left.1.cmp(&right.1));
+    let mut read = HashSet::new();
+    videos.retain(|(path, _)| read.insert(path.clone()));
     let walk = walk.into_inner();
     if walk.skipped_links > LOGGED_LINKS {
         tracing::info!(
@@ -610,6 +621,7 @@ pub(super) fn discover_audio(
     }
     Ok(Discovery {
         paths,
+        videos,
         unreadable: walk.unreadable,
         incomplete: incomplete || walk.incomplete,
         excluded: walk.excluded,
@@ -674,7 +686,7 @@ impl Walked<'_> {
     /// track there is never one it saw missing — which is what keeps a scoped
     /// scan from moving the identity of a track it never looked for onto a
     /// file it found.
-    fn saw_missing(&self, relative_path: &str) -> bool {
+    pub(super) fn saw_missing(&self, relative_path: &str) -> bool {
         !self.incomplete
             && self
                 .scope

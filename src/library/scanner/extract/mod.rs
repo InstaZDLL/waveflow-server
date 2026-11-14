@@ -57,7 +57,7 @@ pub(super) fn scan_file(
 }
 
 /// A file's size and modification time, as `extract_file` records them.
-fn file_stamp(path: &Path) -> Option<(i64, i64)> {
+pub(super) fn file_stamp(path: &Path) -> Option<(i64, i64)> {
     let metadata = fs::metadata(path).ok()?;
     let modified_at = metadata
         .modified()

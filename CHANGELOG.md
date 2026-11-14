@@ -10,6 +10,20 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+### Added
+
+- **The scan records each track's music video**
+  ([RFC-029](docs/rfcs/RFC-029-track-music-video.md) decision 3), in a new
+  table, `track_clip`. The clip is the video named like the track, case
+  ignored, beside it or in a `Clips` folder beside it, or the track's own
+  `.mp4` when it holds a moving picture; several candidates are taken in the
+  order `mp4`, `m4v`, `mov`, `webm`, `mkv`, each confirmed by its content.
+  The rule is the desktop's, and a test holds the server's answer to
+  `waveflow_core::scanner::clips::find_clip` over every case it
+  distinguishes. Nothing a client sees changes yet; serving the clip is the
+  next step. A link is dropped only where the scan could see its clip go,
+  so a `Clips` folder that cannot be read keeps its links.
+
 ### Fixed
 
 - **A music video beside its song is no longer a second track**
