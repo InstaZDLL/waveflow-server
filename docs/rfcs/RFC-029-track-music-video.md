@@ -399,17 +399,33 @@ In `InstaZDLL/WaveFlow`, once the server ships decision 5:
   valid for an hour, not a property of the track; the desktop already treats
   the canvas's that way. But a clip, unlike a canvas, can outlive its ticket
   while it is open: a long pause, then a seek, and the range request that
-  follows meets an expired ticket and a 404. That 404 does not mean the clip is
-  gone. `ClipVideo` then mints a fresh ticket with
-  `POST /tracks/{id}/clip-ticket`, points the element at the new URL and
-  resumes at the position it held. A 404 **from the mint** means "no clip any
-  more" and ends the visit, and the mint answers it for a file deleted since
-  the scan (decision 7), not only for a missing row. The renewal is also
-  bounded on the client: **one renewal per failure**. If the stream answers 404
-  again on the ticket just renewed, before any range has been read with it,
-  the visit ends as if the mint had refused. That covers a file that vanishes
-  between the mint and the read. Renewing and failing therefore cannot go on
-  for ever, whatever the server answers.
+  follows meets an expired ticket. The renewal is decided by **the ticket's
+  expiry, never by an HTTP status**. A `<video>` element does not expose the
+  status of its requests: its `error` event carries a `MediaError` whose code
+  is generic. A 404 at load often surfaces as `MEDIA_ERR_SRC_NOT_SUPPORTED`,
+  the same code as a container the webview cannot read. Only the mint's answer
+  is observable, since it is a `fetch`. So:
+
+  - **Keep `expires_at`.** The mint already answers it (`StreamTicketResponse`).
+    The client keeps it with the URL, and no route is added.
+  - **Renew before it breaks.** When the clip resumes after a pause, or seeks,
+    and the ticket has expired or expires within a minute, `ClipVideo` first
+    mints a fresh one with `POST /tracks/{id}/clip-ticket`. It then points the
+    element at the new URL and restores both the position and the state it
+    held (playing or paused). This is the ordinary case, and it never shows the
+    user an error.
+  - **Renew after an error only for an expired ticket.** If the element raises
+    `error` while the ticket is past or within a minute of `expires_at`, the
+    client renews once, as above. If the ticket was still valid, the error is
+    not an expiry: the clip is reported as one that cannot play, as a local one
+    is, and nothing is renewed. Neither case reads the `MediaError` code.
+  - **One renewal per incident.** If the element errors again on the renewed
+    URL before its first `playing` event, the visit ends. That covers a file
+    that vanishes between the mint and the read. Renewing and failing
+    therefore cannot go on for ever, whatever the server answers.
+  - **A 404 from the mint** means "no clip any more" and ends the visit. The
+    mint answers it for a file deleted since the scan (decision 7), not only
+    for a missing row.
 - **A track present both locally and on the server** (RFC-004's reconciliation)
   plays its local clip when it has one: no network, and the loopback path on
   Linux.
