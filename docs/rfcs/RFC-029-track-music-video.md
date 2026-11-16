@@ -9,9 +9,12 @@
   [#452](https://github.com/InstaZDLL/waveflow-server/pull/452) (decisions 5
   to 8, the routes, the ticket and the `clip` field),
   [#453](https://github.com/InstaZDLL/waveflow-server/pull/453) (the web
-  client, on the playing screen's detail view); the desktop's side (decision
-  9) is its own repository's. The *Status* field above never flips in this
-  project; this line is the one that says what is running.
+  client, on the playing screen's detail view); and, for decision 9 in the
+  desktop's repository, [WaveFlow#1119](https://github.com/InstaZDLL/WaveFlow/pull/1119)
+  (which server tracks have a clip, and the clip ticket with its expiry) and
+  [WaveFlow#1125](https://github.com/InstaZDLL/WaveFlow/pull/1125) (playing
+  the clip, from the linked local file first). The *Status* field above never
+  flips in this project; this line is the one that says what is running.
 - **Date**: 2026-11-14
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md),
