@@ -117,6 +117,25 @@ async fn a_typed_file_cut_short_is_replaced_by_the_bin() {
     assert!(!bin.exists());
 }
 
+/// The size and the signature are not the cover either: a typed file of the
+/// same length, typed WebP by its header, whose bytes differ, is replaced.
+#[tokio::test]
+async fn a_typed_file_with_other_bytes_is_replaced_by_the_bin() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-damaged").await;
+    let dir = &state.artwork_dir;
+    let webp = dir.join(format!("{hash}.webp"));
+    let bin = dir.join(format!("{hash}.bin"));
+    std::fs::rename(&webp, &bin).unwrap();
+    let mut damaged = WEBP.to_vec();
+    *damaged.last_mut().unwrap() ^= 0xff;
+    std::fs::write(&webp, &damaged).unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 1);
+    assert_eq!(std::fs::read(&webp).unwrap(), WEBP, "the whole cover");
+    assert!(!bin.exists());
+}
+
 /// A `bin` the repair could not remove — the process stopped after the row
 /// followed, or the removal failed — is collected by the sweep, which
 /// recognises the name. One whose row still says `bin` is the cover itself.
@@ -146,6 +165,31 @@ async fn the_sweep_collects_a_bin_its_row_no_longer_names() {
     assert_eq!(swept.covers_removed, 1);
     assert!(!bin.exists());
     assert!(dir.join(format!("{hash}.webp")).exists());
+}
+
+/// A `bin` is a leftover only beside a whole copy: when the file its row
+/// names is missing, or holds other bytes, the `bin` is the only whole copy
+/// and the sweep keeps it.
+#[tokio::test]
+async fn the_sweep_keeps_a_bin_whose_typed_copy_is_missing_or_differs() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-sweep-keeps").await;
+    let dir = &state.artwork_dir;
+    let webp = dir.join(format!("{hash}.webp"));
+    let bin = dir.join(format!("{hash}.bin"));
+    std::fs::copy(&webp, &bin).unwrap();
+    age_beyond_the_grace(&bin);
+
+    let mut damaged = WEBP.to_vec();
+    *damaged.last_mut().unwrap() ^= 0xff;
+    std::fs::write(&webp, &damaged).unwrap();
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.covers_removed, 0);
+    assert!(bin.exists(), "the typed file holds other bytes");
+
+    std::fs::remove_file(&webp).unwrap();
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.covers_removed, 0);
+    assert!(bin.exists(), "the typed file is gone");
 }
 
 /// A pass stopped between the rename and the row leaves a row saying `bin`

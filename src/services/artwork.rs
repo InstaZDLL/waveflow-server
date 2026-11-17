@@ -56,7 +56,7 @@
 //! shut. It is narrow, it needs a scan and a sweep to interleave at one
 //! instant, and no test here forces that ordering.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{DomainServices, ServiceError};
 
@@ -109,8 +109,8 @@ enum StoreEntry {
     Thumbnail { hash: String },
     /// `<64 hex>.bin` — what the core wrote for a picture it could not type
     /// before v2.1.0. The cover only while its row still says `bin`; once the
-    /// row names a typed file, a leftover `retype_bin_artwork` could not
-    /// remove.
+    /// row names a typed file holding the same bytes, a leftover
+    /// `retype_bin_artwork` could not remove.
     Bin { hash: String },
     /// Anything else, including a stem that is not a hash.
     Unknown,
@@ -136,18 +136,24 @@ async fn leading_bytes(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     Ok(head)
 }
 
-/// Whether `path` holds a cover of `format` and of `length` bytes: what a file
-/// written whole under that content-addressed name would be.
-async fn same_cover(path: &std::path::Path, format: &str, length: u64) -> bool {
-    let Ok(metadata) = tokio::fs::metadata(path).await else {
+/// Whether two files hold the same bytes, both readable. The names are
+/// content-addressed, but a name is what a writer meant, not what the disk
+/// holds: a file cut short or damaged under its hash would otherwise pass for
+/// the cover and cost the other its only whole copy.
+async fn same_bytes(one: &std::path::Path, other: &std::path::Path) -> bool {
+    let (Ok(a), Ok(b)) = (
+        tokio::fs::metadata(one).await,
+        tokio::fs::metadata(other).await,
+    ) else {
         return false;
     };
-    if metadata.len() != length {
+    if a.len() != b.len() {
         return false;
     }
-    leading_bytes(path).await.is_ok_and(|head| {
-        waveflow_core::artwork::image_format::detect_image_format(&head) == Some(format)
-    })
+    match (tokio::fs::read(one).await, tokio::fs::read(other).await) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 impl DomainServices {
@@ -257,10 +263,10 @@ impl DomainServices {
             Ok(head) => {
                 let format = waveflow_core::artwork::image_format::detect_image_format(&head)?;
                 let typed = self.artwork_dir.join(format!("{hash}.{format}"));
-                let length = tokio::fs::metadata(&bin).await.ok()?.len();
-                // Kept only when it holds the same cover: a typed file that is
-                // empty or cut short must not cost the `bin` its only copy.
-                if same_cover(&typed, format, length).await {
+                // Kept only when it holds the same bytes: a typed file that is
+                // empty, cut short or damaged must not cost the `bin` its only
+                // whole copy.
+                if same_bytes(&bin, &typed).await {
                     return Some(TypedCover {
                         format,
                         leftover: true,
@@ -340,17 +346,13 @@ impl DomainServices {
             ..ArtworkSweep::default()
         };
 
-        let named: HashSet<String> = sqlx::query_scalar("SELECT hash FROM artwork")
-            .fetch_all(self.db.pool())
-            .await?
-            .into_iter()
-            .collect();
-        let named_bin: HashSet<String> =
-            sqlx::query_scalar("SELECT hash FROM artwork WHERE format = 'bin'")
+        let formats: HashMap<String, String> =
+            sqlx::query_as::<_, (String, String)>("SELECT hash, format FROM artwork")
                 .fetch_all(self.db.pool())
                 .await?
                 .into_iter()
                 .collect();
+        let named: HashSet<String> = formats.keys().cloned().collect();
 
         let mut entries = match tokio::fs::read_dir(&self.artwork_dir).await {
             Ok(entries) => entries,
@@ -381,15 +383,29 @@ impl DomainServices {
                         swept.thumbnails_removed += 1;
                     }
                 }
-                // Named only by a row that still says `bin`: a repaired row
-                // reads its typed file, and an unnamed hash nothing reads.
-                StoreEntry::Bin { hash } => {
-                    if named_bin.contains(&hash) {
+                // The cover while its row says `bin`. Once the row names a
+                // typed file, a leftover — but only when that file holds the
+                // same bytes: one missing or damaged leaves the `bin` the only
+                // whole copy, kept for whoever repairs the store. An unnamed
+                // hash nothing reads.
+                StoreEntry::Bin { hash } => match formats.get(&hash).map(String::as_str) {
+                    Some("bin") => {
                         seen.insert(hash);
-                    } else if discard_aged_file(&entry.path()).await {
-                        swept.covers_removed += 1;
                     }
-                }
+                    Some(format) => {
+                        let typed = self.artwork_dir.join(format!("{hash}.{format}"));
+                        if same_bytes(&entry.path(), &typed).await
+                            && discard_aged_file(&entry.path()).await
+                        {
+                            swept.covers_removed += 1;
+                        }
+                    }
+                    None => {
+                        if discard_aged_file(&entry.path()).await {
+                            swept.covers_removed += 1;
+                        }
+                    }
+                },
                 StoreEntry::Unknown => {
                     tracing::warn!(file = %name, "unrecognised file left in the artwork store");
                     swept.unknown += 1;
