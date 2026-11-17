@@ -10,6 +10,12 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-11-17
+
+The schema gains one table, `track_clip`, so going back to 2.2.2 takes a
+restore. A scan drops the tracks that were really a song's music video (see
+*Fixed*).
+
 **A response grows one field.** Every native track (`SongItem`, and through
 it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
 `{ "format", "byte_size" }` or `null`. The Subsonic façade is untouched.
@@ -745,7 +751,10 @@ FFmpeg for transcoding, an OpenSubsonic façade, and a React client compiled int
 the binary. The accepted design is
 [RFC-002](docs/rfcs/RFC-002-waveflow-server-v2.md).
 
-[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.2.0...main
+[Unreleased]: https://github.com/InstaZDLL/waveflow-server/compare/v2.3.0...main
+[2.3.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.3.0
+[2.2.2]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.2.2
+[2.2.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.2.1
 [2.2.0]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.2.0
 [2.1.2]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.2
 [2.1.1]: https://github.com/InstaZDLL/waveflow-server/releases/tag/v2.1.1
