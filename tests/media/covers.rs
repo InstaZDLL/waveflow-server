@@ -7,30 +7,36 @@
 
 use super::*;
 
-/// One frame of a small picture in the container `path` names, by FFmpeg.
-fn write_picture(path: &std::path::Path) {
-    let output = std::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-y"])
-        .args(["-f", "lavfi", "-i", "color=c=red:s=8x8", "-frames:v", "1"])
-        .arg(path)
-        .output()
-        .expect("FFmpeg is required for the cover fixtures");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+/// A 1×1 red GIF89a, whole.
+///
+/// Written out rather than asked of FFmpeg: this target also runs against the
+/// minimal FFmpeg the standalone archives ship (`ffmpeg.yml`), which has no
+/// GIF or BMP encoder and must not gain one for a test. The route serves the
+/// bytes as they are, so any valid file of the format will do.
+const GIF: &[u8] = &[
+    0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44,
+    0x01, 0x00, 0x3b,
+];
+
+/// A 1×1 red BMP, 24 bits per pixel, whole: the 14-byte file header, the
+/// 40-byte info header, and one pixel padded to four bytes.
+const BMP: &[u8] = &[
+    0x42, 0x4d, 0x3a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x00, 0x28, 0x00,
+    0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x13, 0x0b, 0x00, 0x00, 0x13, 0x0b, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x00,
+];
 
 #[tokio::test]
 async fn a_gif_or_bmp_folder_cover_is_served_as_what_it_is() {
     let (_temp, config, state) = test_app().await;
     let (owner, token) = admin_with_api_token(&state, "covers").await;
     let music = config.data_dir.join("covers");
-    for (album, cover) in [("Gif", "cover.gif"), ("Bmp", "cover.bmp")] {
+    for (album, cover, bytes) in [("Gif", "cover.gif", GIF), ("Bmp", "cover.bmp", BMP)] {
         std::fs::create_dir_all(music.join(album)).unwrap();
         write_tagged_flac(&music.join(album).join("Song.flac"), album, album, 440);
-        write_picture(&music.join(album).join(cover));
+        std::fs::write(music.join(album).join(cover), bytes).unwrap();
     }
     let root = std::fs::canonicalize(&music).unwrap();
     let library_id = state
