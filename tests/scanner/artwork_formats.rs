@@ -32,7 +32,28 @@ async fn scanned_webp_cover(name: &str) -> (tempfile::TempDir, waveflow_server::
         .await
         .unwrap();
     assert_eq!(format, "webp", "the scan stores a WebP as one");
+    settle_thumbnails(&state.artwork_dir, &hash).await;
     (temp, state, hash)
+}
+
+/// Waits for the thumbnails the core derives from this cover.
+///
+/// `extract_folder_cover` hands the cover to a detached thread that writes
+/// `<hash>_1x.jpg`, then `<hash>_2x.jpg`, each through a partial file renamed
+/// into place, and a WebP it can decode gets both. Until the second is in
+/// place a partial may sit in the store, and a sweep that ran meanwhile would
+/// count it as a name it does not know — which is what failed on a slower
+/// runner. Once both final names exist, nothing else is being written.
+async fn settle_thumbnails(dir: &std::path::Path, hash: &str) {
+    let small = dir.join(format!("{hash}_1x.jpg"));
+    let medium = dir.join(format!("{hash}_2x.jpg"));
+    for _ in 0..200 {
+        if small.exists() && medium.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the core never wrote the thumbnails of {hash}");
 }
 
 /// Puts the row back the way the old core wrote it.
