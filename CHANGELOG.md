@@ -75,6 +75,16 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
   collects once the row names a whole typed copy. The pass finds nothing to
   do once it has run, and the desktop makes the same repair at its scan.
 
+- **A GIF or BMP cover is served.** The scan takes a `cover.gif` or a
+  `cover.bmp` as an album's folder cover, and stores an embedded picture
+  declared `image/gif` or `image/bmp` under that format, but the routes knew
+  only JPEG, PNG and WebP: such an album had a cover and showed none, natively,
+  through the Subsonic façade and on a share page alike. Both are now served
+  with their own content type, a GIF as it is, animated if it is. The sweep of
+  the store recognises the two names with them, so an unreferenced one is
+  collected rather than reported as unknown every day. TIFF, which the scan
+  also stores, is still not served: almost no browser or client decodes it.
+
 ### Changed
 
 - **waveflow-core is pinned to its `v2.1.0` tag**, from `v2.0.0`. Two things

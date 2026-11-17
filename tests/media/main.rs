@@ -22,6 +22,7 @@ mod support;
 use support::*;
 
 mod clips;
+mod covers;
 mod shares;
 mod stream_tickets;
 mod streaming;
