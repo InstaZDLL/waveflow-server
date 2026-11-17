@@ -109,7 +109,7 @@ enum StoreEntry {
     Thumbnail { hash: String },
     /// `<64 hex>.bin` — what the core wrote for a picture it could not type
     /// before v2.1.0. The cover only while its row still says `bin`; once the
-    /// row names a typed file holding the same bytes, a leftover
+    /// row names a typed copy that is whole by its hash, a leftover
     /// `retype_bin_artwork` could not remove.
     Bin { hash: String },
     /// Anything else, including a stem that is not a hash.
@@ -136,24 +136,17 @@ async fn leading_bytes(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
     Ok(head)
 }
 
-/// Whether two files hold the same bytes, both readable. The names are
-/// content-addressed, but a name is what a writer meant, not what the disk
-/// holds: a file cut short or damaged under its hash would otherwise pass for
-/// the cover and cost the other its only whole copy.
-async fn same_bytes(one: &std::path::Path, other: &std::path::Path) -> bool {
-    let (Ok(a), Ok(b)) = (
-        tokio::fs::metadata(one).await,
-        tokio::fs::metadata(other).await,
-    ) else {
-        return false;
-    };
-    if a.len() != b.len() {
-        return false;
-    }
-    match (tokio::fs::read(one).await, tokio::fs::read(other).await) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => false,
-    }
+/// Whether `path` holds the cover named `hash`, whole: its bytes hash, under
+/// BLAKE3 as `extract_cover` computed it, to the name.
+///
+/// The name is what a writer meant, not what the disk holds, and comparing
+/// two copies says only that they differ, not which one is damaged — the
+/// hash does. A copy that does not match is never trusted to replace or
+/// outlive one that does.
+async fn whole_copy(path: &std::path::Path, hash: &str) -> bool {
+    tokio::fs::read(path)
+        .await
+        .is_ok_and(|bytes| blake3::hash(&bytes).to_hex().as_str() == hash)
 }
 
 impl DomainServices {
@@ -251,29 +244,36 @@ impl DomainServices {
     /// or cannot be read.
     ///
     /// Renamed rather than copied when the typed name is free, which leaves
-    /// nothing behind. When it holds the same cover — a scan under the new
-    /// core wrote the same bytes there — the `bin` is a leftover, removed once
-    /// the row has followed, or by the sweep if that removal never happens.
-    /// When it holds anything else, empty or cut short, the `bin` replaces it.
-    /// And when the `bin` is gone, a pass stopped between the rename and the
-    /// row: the typed file is adopted if its own bytes agree.
+    /// nothing behind. Every copy is judged by its hash ([`whole_copy`]). When
+    /// the typed name holds the cover whole — a scan under the new core wrote
+    /// it there — the `bin` is a leftover, removed once the row has followed,
+    /// or by the sweep if that removal never happens. When it holds anything
+    /// else, the `bin` replaces it, if the `bin` is whole; when neither is,
+    /// both stay and the row is not touched. And when the `bin` is gone, a
+    /// pass stopped between the rename and the row: the typed file is adopted
+    /// if it is whole.
     async fn typed_copy_of_bin(&self, hash: &str) -> Option<TypedCover> {
         let bin = self.artwork_dir.join(format!("{hash}.bin"));
         match leading_bytes(&bin).await {
             Ok(head) => {
                 let format = waveflow_core::artwork::image_format::detect_image_format(&head)?;
                 let typed = self.artwork_dir.join(format!("{hash}.{format}"));
-                // Kept only when it holds the same bytes: a typed file that is
-                // empty, cut short or damaged must not cost the `bin` its only
-                // whole copy.
-                if same_bytes(&bin, &typed).await {
+                // A whole typed copy is the cover, and the `bin` beside it a
+                // leftover, damaged or not.
+                if whole_copy(&typed, hash).await {
                     return Some(TypedCover {
                         format,
                         leftover: true,
                     });
                 }
-                // Free, or holding something else: the `bin`'s bytes take the
-                // name, replacing whatever was there.
+                // Neither copy is whole: nothing here can say which bytes are
+                // the cover, so both stay and the row is left saying `bin`.
+                if !whole_copy(&bin, hash).await {
+                    tracing::warn!(%hash, "no copy of a cover stored as bin matches its hash");
+                    return None;
+                }
+                // The `bin` is whole and the typed name free or holding
+                // something else: the `bin`'s bytes take the name.
                 match tokio::fs::rename(&bin, &typed).await {
                     Ok(()) => Some(TypedCover {
                         format,
@@ -293,6 +293,7 @@ impl DomainServices {
                     };
                     if waveflow_core::artwork::image_format::detect_image_format(&head)
                         == Some(format)
+                        && whole_copy(&typed, hash).await
                     {
                         return Some(TypedCover {
                             format,
@@ -384,8 +385,8 @@ impl DomainServices {
                     }
                 }
                 // The cover while its row says `bin`. Once the row names a
-                // typed file, a leftover — but only when that file holds the
-                // same bytes: one missing or damaged leaves the `bin` the only
+                // typed file, a leftover — but only when that file is whole by
+                // its hash: one missing or damaged may leave the `bin` the only
                 // whole copy, kept for whoever repairs the store. An unnamed
                 // hash nothing reads.
                 StoreEntry::Bin { hash } => match formats.get(&hash).map(String::as_str) {
@@ -394,8 +395,7 @@ impl DomainServices {
                     }
                     Some(format) => {
                         let typed = self.artwork_dir.join(format!("{hash}.{format}"));
-                        if same_bytes(&entry.path(), &typed).await
-                            && discard_aged_file(&entry.path()).await
+                        if whole_copy(&typed, &hash).await && discard_aged_file(&entry.path()).await
                         {
                             swept.covers_removed += 1;
                         }

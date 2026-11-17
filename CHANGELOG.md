@@ -67,11 +67,13 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
   new core nor a full rescan changed that, since an existing row is never
   rewritten. At every boot, before the first sweep of the store, the server
   now reads each cover still stored as `bin`, and one whose bytes are a JPEG,
-  a PNG or a WebP is renamed to match and its row follows. A `bin` that is
-  none of the three is left as it is. The sweep of the store now recognises
+  a PNG or a WebP is renamed to match and its row follows. Every copy is
+  judged by its hash, so a damaged one never replaces or outlives a whole
+  one; a `bin` that is none of the three formats, or of which no copy is
+  whole, is left as it is. The sweep of the store now recognises
   `<hash>.bin`: the cover while its row says `bin`, and a leftover it
-  collects once the row names a typed file holding the same bytes. The pass finds nothing to do once it
-  has run, and the desktop makes the same repair at its scan.
+  collects once the row names a whole typed copy. The pass finds nothing to
+  do once it has run, and the desktop makes the same repair at its scan.
 
 ### Changed
 

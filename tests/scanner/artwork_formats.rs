@@ -136,6 +136,47 @@ async fn a_typed_file_with_other_bytes_is_replaced_by_the_bin() {
     assert!(!bin.exists());
 }
 
+/// The other way round: the `bin` damaged past its header, so typed WebP and
+/// of the right length, beside a whole typed copy. The hash, not the
+/// difference, says which is the cover: the whole copy stays, and the `bin`
+/// goes as a leftover.
+#[tokio::test]
+async fn a_damaged_bin_never_replaces_a_whole_typed_copy() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-damaged-bin").await;
+    let dir = &state.artwork_dir;
+    let webp = dir.join(format!("{hash}.webp"));
+    let bin = dir.join(format!("{hash}.bin"));
+    let mut damaged = WEBP.to_vec();
+    *damaged.last_mut().unwrap() ^= 0xff;
+    std::fs::write(&bin, &damaged).unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 1);
+    assert_eq!(stored_format(&state, &hash).await, "webp");
+    assert_eq!(std::fs::read(&webp).unwrap(), WEBP, "the whole copy stays");
+    assert!(!bin.exists());
+}
+
+/// When no copy matches the hash, nothing here can say which bytes are the
+/// cover: both files stay, and so does the row.
+#[tokio::test]
+async fn no_whole_copy_leaves_both_files_and_the_row() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-no-whole").await;
+    let dir = &state.artwork_dir;
+    let webp = dir.join(format!("{hash}.webp"));
+    let bin = dir.join(format!("{hash}.bin"));
+    let mut damaged = WEBP.to_vec();
+    *damaged.last_mut().unwrap() ^= 0xff;
+    std::fs::write(&bin, &damaged).unwrap();
+    std::fs::write(&webp, &WEBP[..12]).unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 0);
+    assert_eq!(stored_format(&state, &hash).await, "bin");
+    assert_eq!(std::fs::read(&bin).unwrap(), damaged);
+    assert_eq!(std::fs::read(&webp).unwrap(), &WEBP[..12]);
+}
+
 /// A `bin` the repair could not remove — the process stopped after the row
 /// followed, or the removal failed — is collected by the sweep, which
 /// recognises the name. One whose row still says `bin` is the cover itself.
@@ -201,6 +242,20 @@ async fn a_bin_already_renamed_is_adopted_by_the_next_pass() {
 
     assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 1);
     assert_eq!(stored_format(&state, &hash).await, "webp");
+}
+
+/// Only a whole copy is adopted: a typed file damaged past its header is not
+/// the cover, and the row stays saying `bin`.
+#[tokio::test]
+async fn a_damaged_typed_file_is_not_adopted() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-adopt-damaged").await;
+    let mut damaged = WEBP.to_vec();
+    *damaged.last_mut().unwrap() ^= 0xff;
+    std::fs::write(state.artwork_dir.join(format!("{hash}.webp")), &damaged).unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 0);
+    assert_eq!(stored_format(&state, &hash).await, "bin");
 }
 
 /// The pass never invents a format: a `bin` that is no image this server can
