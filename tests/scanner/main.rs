@@ -17,6 +17,7 @@ use waveflow_server::storage::database::LibraryVisibility;
 mod support;
 use support::*;
 
+mod artwork_formats;
 mod artwork_sweep;
 mod exclusions;
 mod incremental;

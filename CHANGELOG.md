@@ -60,6 +60,17 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
   with it: a favourite, a rating, plays, a playlist entry. It was never a
   track; it was the clip of one, played without its picture.
 
+- **A cover stored as `.bin` is served again.** Before waveflow-core v2.1.0,
+  a WebP cover whose tag declared no MIME type lofty knows — what a video
+  thumbnail usually is — was stored as `<hash>.bin` under a row saying
+  `bin`, and no route could serve it: the album showed no cover. Neither the
+  new core nor a full rescan changed that, since an existing row is never
+  rewritten. At every boot, before the first sweep of the store, the server
+  now reads each cover still stored as `bin`, and one whose bytes are a JPEG,
+  a PNG or a WebP is renamed to match and its row follows. A `bin` that is
+  none of the three is left as it is. The pass finds nothing to do once it
+  has run, and the desktop makes the same repair at its scan.
+
 ### Changed
 
 - **waveflow-core is pinned to its `v2.1.0` tag**, from `v2.0.0`. Two things
@@ -71,9 +82,10 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
     MIME type its tag declares, so a WebP thumbnail declared `image/jpeg`,
     or not declared at all, is stored as `.webp` where it was stored as
     `.jpg` or as `.bin`, the latter never served. A cover already in the
-    catalogue keeps the format its row was written with, even through
+    catalogue as `.jpg` keeps that format, even through
     `database rescan-full`: the row is addressed by the content's hash and
-    is not rewritten.
+    is not rewritten, and the cover is served, typed as a JPEG. One stored as
+    `.bin` is repaired at boot (see *Fixed*).
 
   The rest of the release is the desktop's or is not called by the server:
   the artist identity by MusicBrainz id, the tag workshop, and
