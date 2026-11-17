@@ -56,7 +56,7 @@
 //! shut. It is narrow, it needs a scan and a sweep to interleave at one
 //! instant, and no test here forces that ordering.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{DomainServices, ServiceError};
 
@@ -107,8 +107,46 @@ enum StoreEntry {
     Cover { hash: String },
     /// `<64 hex>_1x.jpg` or `<64 hex>_2x.jpg` — derived, named by nothing.
     Thumbnail { hash: String },
+    /// `<64 hex>.bin` — what the core wrote for a picture it could not type
+    /// before v2.1.0. The cover only while its row still says `bin`; once the
+    /// row names a typed copy that is whole by its hash, a leftover
+    /// `retype_bin_artwork` could not remove.
+    Bin { hash: String },
     /// Anything else, including a stem that is not a hash.
     Unknown,
+}
+
+/// Where a `bin` cover's bytes are now, by the format they turned out to be.
+struct TypedCover {
+    format: &'static str,
+    /// The `bin` file is still there beside the typed one, and goes once the
+    /// row names the typed one.
+    leftover: bool,
+}
+
+/// The first bytes of a file, as many as `detect_image_format` asks about.
+async fn leading_bytes(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut head = Vec::with_capacity(12);
+    tokio::fs::File::open(path)
+        .await?
+        .take(12)
+        .read_to_end(&mut head)
+        .await?;
+    Ok(head)
+}
+
+/// Whether `path` holds the cover named `hash`, whole: its bytes hash, under
+/// BLAKE3 as `extract_cover` computed it, to the name.
+///
+/// The name is what a writer meant, not what the disk holds, and comparing
+/// two copies says only that they differ, not which one is damaged — the
+/// hash does. A copy that does not match is never trusted to replace or
+/// outlive one that does.
+async fn whole_copy(path: &std::path::Path, hash: &str) -> bool {
+    tokio::fs::read(path)
+        .await
+        .is_ok_and(|bytes| blake3::hash(&bytes).to_hex().as_str() == hash)
 }
 
 impl DomainServices {
@@ -117,6 +155,13 @@ impl DomainServices {
     pub fn spawn_artwork_sweeper(&self) {
         let services = self.clone();
         tokio::spawn(async move {
+            // Before the first sweep, so the walk that follows already sees
+            // each repaired cover under its new name.
+            match services.retype_bin_artwork().await {
+                Ok(0) => {}
+                Ok(retyped) => tracing::info!(retyped, "covers stored as bin retyped"),
+                Err(error) => tracing::warn!(%error, "could not retype the covers stored as bin"),
+            }
             services.sweep_artwork_now().await;
             let mut ticker = tokio::time::interval(SWEEP_INTERVAL);
             ticker.tick().await;
@@ -125,6 +170,159 @@ impl DomainServices {
                 services.sweep_artwork_now().await;
             }
         });
+    }
+
+    /// Gives every cover stored as `bin` the format its bytes are, and says how
+    /// many rows moved. Public so a test can run it rather than restart.
+    ///
+    /// Before `waveflow-core` v2.1.0, `extract_cover` typed a picture by the
+    /// MIME type its tag declared, and lofty has no variant for WebP: a WebP
+    /// cover, which is what a video thumbnail usually is, was stored as
+    /// `<hash>.bin` under a row saying `bin`. No MIME type answers to that, so
+    /// the cover was never served. The core now reads the bytes, but a row
+    /// that exists is never written again (`ON CONFLICT (hash) DO NOTHING`),
+    /// and an unchanged file is not even read again by an ordinary scan: the
+    /// old rows would stay dark until a full rescan, and then still, since the
+    /// insert would leave them as they were.
+    ///
+    /// So the store is repaired where it stands, at every boot, and the pass
+    /// costs nothing once it has run: it asks only for the rows still saying
+    /// `bin`, and a repaired row no longer does. A `bin` whose bytes are no
+    /// image this server can serve stays as it is — the pass never invents a
+    /// format — and is asked about again at the next boot, which is a read of
+    /// a few bytes per such cover.
+    ///
+    /// The desktop makes the same repair at its scan, from `bin` only: any
+    /// other stored format names a file that exists under that name.
+    pub async fn retype_bin_artwork(&self) -> Result<usize, ServiceError> {
+        let hashes: Vec<String> =
+            sqlx::query_scalar("SELECT hash FROM artwork WHERE format = 'bin'")
+                .fetch_all(self.db.pool())
+                .await?;
+        let mut retyped = 0;
+        for hash in hashes {
+            // The table checks the length only; the hash is joined into a path.
+            if !is_hash(&hash) {
+                continue;
+            }
+            let Some(found) = self.typed_copy_of_bin(&hash).await else {
+                continue;
+            };
+            let moved = {
+                let _writer = self.db.writer_guard().await;
+                let mut tx = self.db.begin_write(&_writer).await?;
+                let moved =
+                    sqlx::query("UPDATE artwork SET format = ? WHERE hash = ? AND format = 'bin'")
+                        .bind(found.format)
+                        .bind(&hash)
+                        .execute(&mut *tx)
+                        .await?
+                        .rows_affected();
+                tx.commit().await?;
+                moved
+            };
+            if moved == 0 {
+                continue;
+            }
+            retyped += 1;
+            // Only once the row names the typed file: before, the `bin` was
+            // still the cover's only name in the database.
+            if found.leftover {
+                let bin = self.artwork_dir.join(format!("{hash}.bin"));
+                if let Err(error) = tokio::fs::remove_file(&bin).await {
+                    if error.kind() != std::io::ErrorKind::NotFound {
+                        tracing::warn!(%error, "cannot remove a retyped cover's bin file");
+                    }
+                }
+            }
+        }
+        Ok(retyped)
+    }
+
+    /// Puts a `bin` cover's bytes under the name of what they are, and says
+    /// which format that is; `None` when they are no image this server serves,
+    /// or cannot be read.
+    ///
+    /// Renamed rather than copied when the typed name is free, which leaves
+    /// nothing behind. Every copy is judged by its hash ([`whole_copy`]). When
+    /// the typed name holds the cover whole — a scan under the new core wrote
+    /// it there — the `bin` is a leftover, removed once the row has followed,
+    /// or by the sweep if that removal never happens. When it holds anything
+    /// else, the `bin` replaces it, if the `bin` is whole; when neither is,
+    /// both stay and the row is not touched. When the `bin`'s header names no
+    /// format, a whole typed copy is still the cover, and the `bin` a
+    /// leftover. And when the `bin` is gone, a pass stopped between the rename
+    /// and the row: the typed file is adopted if it is whole.
+    async fn typed_copy_of_bin(&self, hash: &str) -> Option<TypedCover> {
+        let bin = self.artwork_dir.join(format!("{hash}.bin"));
+        match leading_bytes(&bin).await {
+            Ok(head) => {
+                let Some(format) = waveflow_core::artwork::image_format::detect_image_format(&head)
+                else {
+                    // The `bin`'s own header names nothing — empty, damaged,
+                    // or a format this server does not serve — but a whole
+                    // typed copy beside it is still the cover.
+                    return self.whole_typed_copy(hash).await.map(|format| TypedCover {
+                        format,
+                        leftover: true,
+                    });
+                };
+                let typed = self.artwork_dir.join(format!("{hash}.{format}"));
+                // A whole typed copy is the cover, and the `bin` beside it a
+                // leftover, damaged or not.
+                if whole_copy(&typed, hash).await {
+                    return Some(TypedCover {
+                        format,
+                        leftover: true,
+                    });
+                }
+                // Neither copy is whole: nothing here can say which bytes are
+                // the cover, so both stay and the row is left saying `bin`.
+                if !whole_copy(&bin, hash).await {
+                    tracing::warn!(%hash, "no copy of a cover stored as bin matches its hash");
+                    return None;
+                }
+                // The `bin` is whole and the typed name free or holding
+                // something else: the `bin`'s bytes take the name.
+                match tokio::fs::rename(&bin, &typed).await {
+                    Ok(()) => Some(TypedCover {
+                        format,
+                        leftover: false,
+                    }),
+                    Err(error) => {
+                        tracing::warn!(%error, "cannot rename a cover stored as bin");
+                        None
+                    }
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.whole_typed_copy(hash).await.map(|format| TypedCover {
+                    format,
+                    leftover: false,
+                })
+            }
+            Err(error) => {
+                tracing::warn!(%error, "cannot read a cover stored as bin");
+                None
+            }
+        }
+    }
+
+    /// The format of a typed copy of `hash` that is whole and whose bytes are
+    /// what its name says, if the store holds one.
+    async fn whole_typed_copy(&self, hash: &str) -> Option<&'static str> {
+        for format in ["jpg", "png", "webp"] {
+            let typed = self.artwork_dir.join(format!("{hash}.{format}"));
+            let Ok(head) = leading_bytes(&typed).await else {
+                continue;
+            };
+            if waveflow_core::artwork::image_format::detect_image_format(&head) == Some(format)
+                && whole_copy(&typed, hash).await
+            {
+                return Some(format);
+            }
+        }
+        None
     }
 
     async fn sweep_artwork_now(&self) {
@@ -148,8 +346,10 @@ impl DomainServices {
     /// under the operator's `data/`, and a sweep that deletes what it cannot
     /// name is a sweep nobody should run. A file is a candidate only if it is
     /// `<64 hex>.<format>` for a format [`crate::media::artwork_mime`] admits,
-    /// or one of the two thumbnails derived from such a hash. Everything else is
-    /// counted and left where it is.
+    /// `<64 hex>.bin` as the core wrote before v2.1.0 — a cover while its row
+    /// says `bin`, a leftover once it does not — or one of the two thumbnails
+    /// derived from such a hash. Everything else is counted and left where it
+    /// is.
     pub async fn sweep_artwork_store(&self) -> Result<ArtworkSweep, ServiceError> {
         // The rows first, so the walk below asks a database that no longer
         // names what nothing references. Safe under the writer gate without a
@@ -162,11 +362,13 @@ impl DomainServices {
             ..ArtworkSweep::default()
         };
 
-        let named: HashSet<String> = sqlx::query_scalar("SELECT hash FROM artwork")
-            .fetch_all(self.db.pool())
-            .await?
-            .into_iter()
-            .collect();
+        let formats: HashMap<String, String> =
+            sqlx::query_as::<_, (String, String)>("SELECT hash, format FROM artwork")
+                .fetch_all(self.db.pool())
+                .await?
+                .into_iter()
+                .collect();
+        let named: HashSet<String> = formats.keys().cloned().collect();
 
         let mut entries = match tokio::fs::read_dir(&self.artwork_dir).await {
             Ok(entries) => entries,
@@ -197,6 +399,28 @@ impl DomainServices {
                         swept.thumbnails_removed += 1;
                     }
                 }
+                // The cover while its row says `bin`. Once the row names a
+                // typed file, a leftover — but only when that file is whole by
+                // its hash: one missing or damaged may leave the `bin` the only
+                // whole copy, kept for whoever repairs the store. An unnamed
+                // hash nothing reads.
+                StoreEntry::Bin { hash } => match formats.get(&hash).map(String::as_str) {
+                    Some("bin") => {
+                        seen.insert(hash);
+                    }
+                    Some(format) => {
+                        let typed = self.artwork_dir.join(format!("{hash}.{format}"));
+                        if whole_copy(&typed, &hash).await && discard_aged_file(&entry.path()).await
+                        {
+                            swept.covers_removed += 1;
+                        }
+                    }
+                    None => {
+                        if discard_aged_file(&entry.path()).await {
+                            swept.covers_removed += 1;
+                        }
+                    }
+                },
                 StoreEntry::Unknown => {
                     tracing::warn!(file = %name, "unrecognised file left in the artwork store");
                     swept.unknown += 1;
@@ -304,6 +528,11 @@ fn classify_store_entry(name: &str) -> StoreEntry {
                 };
             }
         }
+    }
+    if extension == "bin" && is_hash(stem) {
+        return StoreEntry::Bin {
+            hash: stem.to_owned(),
+        };
     }
     if crate::media::artwork_mime(extension).is_some() && is_hash(stem) {
         return StoreEntry::Cover {
