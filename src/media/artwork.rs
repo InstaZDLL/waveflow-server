@@ -16,16 +16,27 @@ const ARTWORK_CANONICAL_CACHE: &str = "private, max-age=31536000, immutable";
 /// cover that entity carries *now*, and a rescan can move it.
 const ARTWORK_ALIAS_CACHE: &str = "private, no-cache";
 
-/// Content type for a stored artwork, or `None` for a format we never wrote.
+/// Content type for a stored artwork, or `None` for a format this server does
+/// not serve.
 ///
 /// Shared by the native route and the Subsonic facade: two copies would drift
 /// on the day a format is added, and the client that got
 /// `application/octet-stream` would simply show no cover.
+///
+/// GIF and BMP are here because the scan stores them: `waveflow_core` takes a
+/// `cover.gif` or a `cover.bmp` as an album's folder cover, and types an
+/// embedded picture declared `image/gif` or `image/bmp` by its MIME type.
+/// Left out, such an album had a cover row and no cover at all. A GIF is
+/// served as it is, animated if it is. TIFF, which the core also stores, is
+/// left out on purpose: almost no browser or client decodes it, so serving it
+/// would show nothing either.
 pub fn artwork_mime(format: &str) -> Option<&'static str> {
     match format {
         "jpg" | "jpeg" => Some("image/jpeg"),
         "png" => Some("image/png"),
         "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "bmp" => Some("image/bmp"),
         _ => None,
     }
 }
