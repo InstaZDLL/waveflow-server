@@ -7,6 +7,7 @@
 //! a scan, then the row and the file put back the way the old core left them —
 //! and hold the repair `retype_bin_artwork` makes of it.
 
+use super::artwork_sweep::age_beyond_the_grace;
 use super::*;
 
 /// A 1×1 lossless WebP, whole: `detect_image_format` reads the `RIFF`/`WEBP`
@@ -96,6 +97,55 @@ async fn a_bin_beside_its_typed_copy_goes_once_the_row_follows() {
     assert_eq!(stored_format(&state, &hash).await, "webp");
     assert!(webp.exists());
     assert!(!bin.exists(), "the leftover goes with the repair");
+}
+
+/// A typed file cut short is no copy of the cover: the `bin` is its only
+/// whole copy, so it takes the typed name rather than being removed.
+#[tokio::test]
+async fn a_typed_file_cut_short_is_replaced_by_the_bin() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-truncated").await;
+    let dir = &state.artwork_dir;
+    let webp = dir.join(format!("{hash}.webp"));
+    let bin = dir.join(format!("{hash}.bin"));
+    std::fs::rename(&webp, &bin).unwrap();
+    std::fs::write(&webp, &WEBP[..12]).unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 1);
+    assert_eq!(stored_format(&state, &hash).await, "webp");
+    assert_eq!(std::fs::read(&webp).unwrap(), WEBP, "the whole cover");
+    assert!(!bin.exists());
+}
+
+/// A `bin` the repair could not remove — the process stopped after the row
+/// followed, or the removal failed — is collected by the sweep, which
+/// recognises the name. One whose row still says `bin` is the cover itself.
+#[tokio::test]
+async fn the_sweep_collects_a_bin_its_row_no_longer_names() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-sweep").await;
+    let dir = &state.artwork_dir;
+    let bin = dir.join(format!("{hash}.bin"));
+    std::fs::copy(dir.join(format!("{hash}.webp")), &bin).unwrap();
+    age_beyond_the_grace(&bin);
+
+    // The row still says `bin`: the file is the cover, and nothing is wrong.
+    row_says_bin(&state, &hash).await;
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.covers_removed, 0);
+    assert_eq!(swept.unknown, 0, "the sweep knows the name");
+    assert_eq!(swept.dead_links, 0, "the row's file is there");
+    assert!(bin.exists());
+
+    // The row names the typed file: the `bin` is a leftover.
+    sqlx::query("UPDATE artwork SET format = 'webp' WHERE hash = ?")
+        .bind(&hash)
+        .execute(state.db.pool())
+        .await
+        .unwrap();
+    let swept = state.services.sweep_artwork_store().await.unwrap();
+    assert_eq!(swept.covers_removed, 1);
+    assert!(!bin.exists());
+    assert!(dir.join(format!("{hash}.webp")).exists());
 }
 
 /// A pass stopped between the rename and the row leaves a row saying `bin`

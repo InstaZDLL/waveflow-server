@@ -8,7 +8,7 @@ use super::*;
 /// what stands in for the lock it cannot take over `waveflow_core`'s writer. A
 /// test that wants to see a removal has to age the file rather than wait an
 /// hour for it.
-fn age_beyond_the_grace(path: &std::path::Path) {
+pub(super) fn age_beyond_the_grace(path: &std::path::Path) {
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60);
     let file = std::fs::File::options().write(true).open(path).unwrap();
     file.set_times(std::fs::FileTimes::new().set_modified(old))

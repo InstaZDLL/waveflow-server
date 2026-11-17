@@ -68,7 +68,9 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
   rewritten. At every boot, before the first sweep of the store, the server
   now reads each cover still stored as `bin`, and one whose bytes are a JPEG,
   a PNG or a WebP is renamed to match and its row follows. A `bin` that is
-  none of the three is left as it is. The pass finds nothing to do once it
+  none of the three is left as it is. The sweep of the store now recognises
+  `<hash>.bin`: the cover while its row says `bin`, and a leftover it
+  collects once the row names the typed file. The pass finds nothing to do once it
   has run, and the desktop makes the same repair at its scan.
 
 ### Changed

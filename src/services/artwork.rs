@@ -107,6 +107,11 @@ enum StoreEntry {
     Cover { hash: String },
     /// `<64 hex>_1x.jpg` or `<64 hex>_2x.jpg` — derived, named by nothing.
     Thumbnail { hash: String },
+    /// `<64 hex>.bin` — what the core wrote for a picture it could not type
+    /// before v2.1.0. The cover only while its row still says `bin`; once the
+    /// row names a typed file, a leftover `retype_bin_artwork` could not
+    /// remove.
+    Bin { hash: String },
     /// Anything else, including a stem that is not a hash.
     Unknown,
 }
@@ -129,6 +134,20 @@ async fn leading_bytes(path: &std::path::Path) -> std::io::Result<Vec<u8>> {
         .read_to_end(&mut head)
         .await?;
     Ok(head)
+}
+
+/// Whether `path` holds a cover of `format` and of `length` bytes: what a file
+/// written whole under that content-addressed name would be.
+async fn same_cover(path: &std::path::Path, format: &str, length: u64) -> bool {
+    let Ok(metadata) = tokio::fs::metadata(path).await else {
+        return false;
+    };
+    if metadata.len() != length {
+        return false;
+    }
+    leading_bytes(path).await.is_ok_and(|head| {
+        waveflow_core::artwork::image_format::detect_image_format(&head) == Some(format)
+    })
 }
 
 impl DomainServices {
@@ -226,22 +245,29 @@ impl DomainServices {
     /// or cannot be read.
     ///
     /// Renamed rather than copied when the typed name is free, which leaves
-    /// nothing behind. When it is taken — a scan under the new core wrote the
-    /// same bytes there — the `bin` is a leftover, removed once the row has
-    /// followed. And when the `bin` is gone, a pass stopped between the rename
-    /// and the row: the typed file is adopted if its own bytes agree.
+    /// nothing behind. When it holds the same cover — a scan under the new
+    /// core wrote the same bytes there — the `bin` is a leftover, removed once
+    /// the row has followed, or by the sweep if that removal never happens.
+    /// When it holds anything else, empty or cut short, the `bin` replaces it.
+    /// And when the `bin` is gone, a pass stopped between the rename and the
+    /// row: the typed file is adopted if its own bytes agree.
     async fn typed_copy_of_bin(&self, hash: &str) -> Option<TypedCover> {
         let bin = self.artwork_dir.join(format!("{hash}.bin"));
         match leading_bytes(&bin).await {
             Ok(head) => {
                 let format = waveflow_core::artwork::image_format::detect_image_format(&head)?;
                 let typed = self.artwork_dir.join(format!("{hash}.{format}"));
-                if tokio::fs::try_exists(&typed).await.unwrap_or(false) {
+                let length = tokio::fs::metadata(&bin).await.ok()?.len();
+                // Kept only when it holds the same cover: a typed file that is
+                // empty or cut short must not cost the `bin` its only copy.
+                if same_cover(&typed, format, length).await {
                     return Some(TypedCover {
                         format,
                         leftover: true,
                     });
                 }
+                // Free, or holding something else: the `bin`'s bytes take the
+                // name, replacing whatever was there.
                 match tokio::fs::rename(&bin, &typed).await {
                     Ok(()) => Some(TypedCover {
                         format,
@@ -298,8 +324,10 @@ impl DomainServices {
     /// under the operator's `data/`, and a sweep that deletes what it cannot
     /// name is a sweep nobody should run. A file is a candidate only if it is
     /// `<64 hex>.<format>` for a format [`crate::media::artwork_mime`] admits,
-    /// or one of the two thumbnails derived from such a hash. Everything else is
-    /// counted and left where it is.
+    /// `<64 hex>.bin` as the core wrote before v2.1.0 — a cover while its row
+    /// says `bin`, a leftover once it does not — or one of the two thumbnails
+    /// derived from such a hash. Everything else is counted and left where it
+    /// is.
     pub async fn sweep_artwork_store(&self) -> Result<ArtworkSweep, ServiceError> {
         // The rows first, so the walk below asks a database that no longer
         // names what nothing references. Safe under the writer gate without a
@@ -317,6 +345,12 @@ impl DomainServices {
             .await?
             .into_iter()
             .collect();
+        let named_bin: HashSet<String> =
+            sqlx::query_scalar("SELECT hash FROM artwork WHERE format = 'bin'")
+                .fetch_all(self.db.pool())
+                .await?
+                .into_iter()
+                .collect();
 
         let mut entries = match tokio::fs::read_dir(&self.artwork_dir).await {
             Ok(entries) => entries,
@@ -345,6 +379,15 @@ impl DomainServices {
                 StoreEntry::Thumbnail { hash } => {
                     if !named.contains(&hash) && discard_aged_file(&entry.path()).await {
                         swept.thumbnails_removed += 1;
+                    }
+                }
+                // Named only by a row that still says `bin`: a repaired row
+                // reads its typed file, and an unnamed hash nothing reads.
+                StoreEntry::Bin { hash } => {
+                    if named_bin.contains(&hash) {
+                        seen.insert(hash);
+                    } else if discard_aged_file(&entry.path()).await {
+                        swept.covers_removed += 1;
                     }
                 }
                 StoreEntry::Unknown => {
@@ -454,6 +497,11 @@ fn classify_store_entry(name: &str) -> StoreEntry {
                 };
             }
         }
+    }
+    if extension == "bin" && is_hash(stem) {
+        return StoreEntry::Bin {
+            hash: stem.to_owned(),
+        };
     }
     if crate::media::artwork_mime(extension).is_some() && is_hash(stem) {
         return StoreEntry::Cover {
