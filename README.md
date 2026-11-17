@@ -195,6 +195,23 @@ WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
 
 To reach it from outside your home over HTTPS, [`packaging/caddy/`](packaging/caddy/) runs the same server behind Caddy, which obtains and renews the certificate itself; the [operations guide](docs/guides/operations.md#the-recommended-setup-caddy-in-the-same-compose-file) explains it, including how to move a server already started with the file above without starting over on an empty volume.
 
+### Home Assistant
+
+On Home Assistant OS, which runs no container you start yourself, WaveFlow Server installs as an app (what Home Assistant called an add-on) from [its own repository](https://github.com/InstaZDLL/waveflow-home-assistant):
+
+[![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FInstaZDLL%2Fwaveflow-home-assistant)
+
+Or, in Home Assistant, open **Settings → Apps → App store**, choose **Repositories** in the menu, and add `https://github.com/InstaZDLL/waveflow-home-assistant`.
+
+The app runs the image above, unchanged, on amd64 and aarch64: Home Assistant Green or Yellow, a Raspberry Pi 4 or 5 on a 64-bit system, or an x86 machine. It reads your music, read-only, from Home Assistant's `media` and `share` folders. It keeps the database and the instance key in its own folder, which Home Assistant's backups include.
+
+Its first start differs from the steps below, and [its documentation](https://github.com/InstaZDLL/waveflow-home-assistant/blob/main/waveflow/DOCS.md) walks through it:
+
+- you choose the setup token yourself, in the app's **Configuration** tab;
+- you add a library from the web player rather than from a terminal.
+
+The web player opens on port 4533, in a tab of its own. It cannot show inside Home Assistant's sidebar yet.
+
 ### First steps
 
 Open `http://your-host:4533`. The setup screen creates the administrator account; it asks for the one-time token the server wrote in its data directory:
@@ -332,6 +349,7 @@ WaveFlow Server belongs to a small family of free, open-source apps that share o
 </table>
 
 - **[WaveFlow for Android](https://github.com/InstaZDLL/waveflow-android)** — the native mobile client, in development.
+- **[WaveFlow for Home Assistant](https://github.com/InstaZDLL/waveflow-home-assistant)** — this server as a Home Assistant app, from the same image.
 
 ## License
 
