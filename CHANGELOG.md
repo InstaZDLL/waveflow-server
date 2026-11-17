@@ -87,8 +87,9 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
 
 ### Changed
 
-- **waveflow-core is pinned to its `v2.1.0` tag**, from `v2.0.0`. Two things
-  it changes in a scan, for a file read from now on:
+- **waveflow-core is pinned to its `v2.2.0` tag**, from `v2.0.0`, through
+  `v2.1.0`. Two things `v2.1.0` changes in a scan, for a file read from now
+  on:
   - an empty picture is passed over in the fallback too: a file with no
     front cover whose first picture holds no bytes now takes the next
     picture, where it used to have no cover at all;
@@ -101,11 +102,18 @@ it `TrackDetail`, the listings and the catalogue snapshot) carries `clip`:
     is not rewritten, and the cover is served, typed as a JPEG. One stored as
     `.bin` is repaired at boot (see *Fixed*).
 
-  The rest of the release is the desktop's or is not called by the server:
-  the artist identity by MusicBrainz id, the tag workshop, and
-  `scanner::clips`, which RFC-029 will use. `canonical_name`, the audio
-  extensions, the text decoder and lofty are unchanged, so no derived
-  identifier moves.
+  The rest of `v2.1.0` is the desktop's or is not called by the server: the
+  artist identity by MusicBrainz id, the tag workshop, and `scanner::clips`,
+  which RFC-029 uses.
+
+  `v2.2.0` changes nothing the server reads. Its repair of ID3 tags written
+  in a legacy East Asian code page (`scanner::legacy_text`, which turns `Ò¹Çú`
+  back into 夜曲) sits inside the core's own tag reader, and the server's scan
+  reads tags through lofty directly. The text decoder gains
+  `text_encoding::guess`, the step its `decode` always took, and an imported
+  playlist now names its encoding from it, where the server kept a copy of
+  that step. `canonical_name`, the audio extensions, the decoded text and
+  lofty are unchanged, so no derived identifier moves.
 
 ## [2.2.2] — 2026-11-13
 

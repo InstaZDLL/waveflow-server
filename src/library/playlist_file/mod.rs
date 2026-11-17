@@ -11,7 +11,6 @@
 //! `#EXTINF` metadata is kept because it is the only thing left to match on
 //! when a path resolves to nothing.
 
-use chardetng::{EncodingDetector, Iso2022JpDetection, Utf8Detection};
 use encoding_rs::Encoding;
 use serde::{Serialize, Serializer};
 
@@ -164,12 +163,13 @@ fn decode(bytes: &[u8]) -> (String, TextEncoding) {
 
 /// The encoding `waveflow_core::text_encoding::decode` reads `bytes` as.
 ///
-/// The core answers the text and not its encoding, so the encoding is worked
-/// out again here by the same steps in the same order, with the detector set
-/// up the same way. Duplicated rather than trusted: a core that changed its
-/// guess would have a report name one encoding while the text was read as
-/// another, which is what `the_encoding_named_is_the_one_the_core_read`
-/// catches on the next bump.
+/// The core answers the text and not its encoding, so the steps that come
+/// before its guess are taken again here in the same order: a byte-order
+/// mark, then UTF-8. The guess itself is the core's own
+/// [`waveflow_core::text_encoding::guess`] since v2.2.0, the function its
+/// `decode` calls, so the detector is no longer set up twice.
+/// `the_encoding_named_is_the_one_the_core_read` still holds the two together
+/// on the next bump, for the steps that remain copied.
 fn encoding_read_as(bytes: &[u8]) -> &'static Encoding {
     if let Some((encoding, _)) = Encoding::for_bom(bytes) {
         return encoding;
@@ -177,9 +177,7 @@ fn encoding_read_as(bytes: &[u8]) -> &'static Encoding {
     if std::str::from_utf8(bytes).is_ok() {
         return encoding_rs::UTF_8;
     }
-    let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
-    detector.feed(bytes, true);
-    detector.guess(None, Utf8Detection::Deny)
+    waveflow_core::text_encoding::guess(bytes)
 }
 
 /// `#EXTINF:duration,display text`.

@@ -26,15 +26,15 @@ base64 = "0.23"
 blake3 = "1"
 bytes = "1"
 chacha20poly1305 = "0.11"
-# Both arrive with `waveflow-core`, whose `text_encoding` decodes the text
-# files users bring. Named here so an imported playlist can say which
-# encoding it was read as (`playlist_file`), which the core does not answer.
-# Same versions as the core's, so nothing new is compiled.
-chardetng = "1"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
 dashmap = "6"
 dotenvy = "0.15"
+# Arrives with `waveflow-core`, whose `text_encoding` decodes the text files
+# users bring. Named here so an imported playlist can say which encoding it
+# was read as (`playlist_file`): the byte-order mark and the UTF-8 check are
+# taken again, and the guess is the core's own (`text_encoding::guess`). Same
+# version as the core's, so nothing new is compiled.
 encoding_rs = "0.8.42"
 # The API reference bundle is stored gzip-compressed (`src/reference.rs`) and
 # decompressed only for a client that takes no gzip. Already in the tree
@@ -102,7 +102,7 @@ utoipa = { version = "6", features = ["axum_extras", "uuid"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", tag = "v2.1.0", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", tag = "v2.2.0", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"
