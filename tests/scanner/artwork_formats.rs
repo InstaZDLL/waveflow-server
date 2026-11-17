@@ -265,6 +265,25 @@ async fn a_bin_already_renamed_is_adopted_by_the_next_pass() {
     assert_eq!(stored_format(&state, &hash).await, "webp");
 }
 
+/// A `bin` damaged in its header names no format, but the whole typed copy
+/// beside it is still the cover: the row follows it, and the `bin` goes.
+#[tokio::test]
+async fn a_whole_typed_copy_is_found_when_the_bin_header_names_nothing() {
+    let (_temp, state, hash) = scanned_webp_cover("retype-headless-bin").await;
+    let dir = &state.artwork_dir;
+    let bin = dir.join(format!("{hash}.bin"));
+    std::fs::write(&bin, b"").unwrap();
+    row_says_bin(&state, &hash).await;
+
+    assert_eq!(state.services.retype_bin_artwork().await.unwrap(), 1);
+    assert_eq!(stored_format(&state, &hash).await, "webp");
+    assert_eq!(
+        std::fs::read(dir.join(format!("{hash}.webp"))).unwrap(),
+        WEBP
+    );
+    assert!(!bin.exists(), "the empty bin is a leftover");
+}
+
 /// Only a whole copy is adopted: a typed file damaged past its header is not
 /// the cover, and the row stays saying `bin`.
 #[tokio::test]

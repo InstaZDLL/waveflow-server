@@ -249,14 +249,24 @@ impl DomainServices {
     /// it there — the `bin` is a leftover, removed once the row has followed,
     /// or by the sweep if that removal never happens. When it holds anything
     /// else, the `bin` replaces it, if the `bin` is whole; when neither is,
-    /// both stay and the row is not touched. And when the `bin` is gone, a
-    /// pass stopped between the rename and the row: the typed file is adopted
-    /// if it is whole.
+    /// both stay and the row is not touched. When the `bin`'s header names no
+    /// format, a whole typed copy is still the cover, and the `bin` a
+    /// leftover. And when the `bin` is gone, a pass stopped between the rename
+    /// and the row: the typed file is adopted if it is whole.
     async fn typed_copy_of_bin(&self, hash: &str) -> Option<TypedCover> {
         let bin = self.artwork_dir.join(format!("{hash}.bin"));
         match leading_bytes(&bin).await {
             Ok(head) => {
-                let format = waveflow_core::artwork::image_format::detect_image_format(&head)?;
+                let Some(format) = waveflow_core::artwork::image_format::detect_image_format(&head)
+                else {
+                    // The `bin`'s own header names nothing — empty, damaged,
+                    // or a format this server does not serve — but a whole
+                    // typed copy beside it is still the cover.
+                    return self.whole_typed_copy(hash).await.map(|format| TypedCover {
+                        format,
+                        leftover: true,
+                    });
+                };
                 let typed = self.artwork_dir.join(format!("{hash}.{format}"));
                 // A whole typed copy is the cover, and the `bin` beside it a
                 // leftover, damaged or not.
@@ -286,28 +296,33 @@ impl DomainServices {
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                for format in ["jpg", "png", "webp"] {
-                    let typed = self.artwork_dir.join(format!("{hash}.{format}"));
-                    let Ok(head) = leading_bytes(&typed).await else {
-                        continue;
-                    };
-                    if waveflow_core::artwork::image_format::detect_image_format(&head)
-                        == Some(format)
-                        && whole_copy(&typed, hash).await
-                    {
-                        return Some(TypedCover {
-                            format,
-                            leftover: false,
-                        });
-                    }
-                }
-                None
+                self.whole_typed_copy(hash).await.map(|format| TypedCover {
+                    format,
+                    leftover: false,
+                })
             }
             Err(error) => {
                 tracing::warn!(%error, "cannot read a cover stored as bin");
                 None
             }
         }
+    }
+
+    /// The format of a typed copy of `hash` that is whole and whose bytes are
+    /// what its name says, if the store holds one.
+    async fn whole_typed_copy(&self, hash: &str) -> Option<&'static str> {
+        for format in ["jpg", "png", "webp"] {
+            let typed = self.artwork_dir.join(format!("{hash}.{format}"));
+            let Ok(head) = leading_bytes(&typed).await else {
+                continue;
+            };
+            if waveflow_core::artwork::image_format::detect_image_format(&head) == Some(format)
+                && whole_copy(&typed, hash).await
+            {
+                return Some(format);
+            }
+        }
+        None
     }
 
     async fn sweep_artwork_now(&self) {
