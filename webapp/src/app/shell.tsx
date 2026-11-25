@@ -57,16 +57,22 @@ function SplashGate() {
 function ScopedOutlet() {
   const { ready, listed, libraries } = useLibraryScope();
   // Settings stays reachable with no library: it is where one is registered,
-  // and where an account's own settings live whatever it may read.
+  // and where an account's own settings live whatever it may read. So do the
+  // pages that read no library at all, radio and podcasts.
   const settings = useLocation({
     select: (location) => location.pathname.startsWith("/settings"),
+  });
+  const libraryFree = useMatches({
+    select: (matches) =>
+      matches.some((match) => match.staticData.libraryFree === true),
   });
   // Announced rather than blank: a screen reader on an empty `main` has
   // nothing to say, and the wait is a round trip the visitor did not ask for.
   if (!ready) return <Waiting />;
   // Only a list received empty: one that could not be had says nothing about
   // the account, and the screens fall back to unscoped as they did.
-  if (listed && libraries.length === 0 && !settings) return <NoLibrary />;
+  if (listed && libraries.length === 0 && !settings && !libraryFree)
+    return <NoLibrary />;
   return <Outlet />;
 }
 

@@ -47,7 +47,14 @@ server registers that folder as the administrator's library, named `Music`,
 private, and starts its first scan: the web player opens on the music rather
 than on empty pages. The Docker image sets it to `/music`, where the compose
 file mounts your music, so there is nothing to type. An empty folder is
-registered all the same: it is where uploads land.
+registered all the same.
+
+The read-only mount the compose file uses is enough to register and scan the
+library. Uploads are another matter: a library takes none until an
+administrator opens it (see [Receiving files](#receiving-files)), and the files
+it receives are written under `.waveflow-managed` at its root, which a
+read-only mount refuses. Keep `:ro` unless you open the library to uploads,
+and mount the folder writable only then.
 
 Unset, setup creates no library, and one is added under **Settings →
 Administration**, or with `waveflow-server library add`. A path that is not a
@@ -970,7 +977,9 @@ waveflow-server library set-uploads --actor admin --library-id <uuid> --accept
 ```
 
 Run it without `--accept` to close the library again. Once it is open, its
-owners and managers may upload to it. These limits apply to every library:
+owners and managers may upload to it. Received files are written under
+`.waveflow-managed` at the library's root, so the folder must be writable by
+the server: in a container, mount it without `:ro`. These limits apply to every library:
 
 | Variable | Default | What it bounds |
 | --- | --- | --- |

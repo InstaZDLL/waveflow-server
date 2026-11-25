@@ -73,6 +73,18 @@ describe("LibraryScopeProvider", () => {
     expect(scope?.listed).toBe(false);
   });
 
+  it("unsays an empty list when a refresh cannot list again", async () => {
+    // The first list was empty; a library is registered; the refresh fails.
+    listLibraries
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("offline"));
+    await mount();
+    expect(scope?.listed).toBe(true);
+
+    await act(async () => scope?.refresh());
+    expect(scope?.listed).toBe(false);
+  });
+
   it("lists again on refresh, and scopes to a library that appeared", async () => {
     listLibraries.mockResolvedValueOnce([]).mockResolvedValueOnce([music]);
     await mount();

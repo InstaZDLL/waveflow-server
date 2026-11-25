@@ -93,7 +93,13 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
         // The catalogue screens would otherwise wait forever on a scope that
         // is never coming. Unscoped is the honest fallback when the list of
         // libraries cannot be had at all.
-        if (!cancelled) setReady(true);
+        if (cancelled) return;
+        setReady(true);
+        // A list that could not be had again unsays the one before it: a
+        // refresh that fails after a library was registered must not leave
+        // the stale empty list standing as "this account reaches none". The
+        // next refresh asks again.
+        setListed(false);
       },
     );
     return () => {

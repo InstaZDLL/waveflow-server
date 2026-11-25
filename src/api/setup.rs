@@ -27,12 +27,22 @@ pub struct SetupResponse {
     pub user_id: Uuid,
     /// The first library, made of `WAVEFLOW_MUSIC_DIR` and already queued for
     /// its first scan, or `null` when the server made none: the setting is
-    /// unset, its folder is missing, or a library already existed.
+    /// unset, its folder is missing or not a directory, or a library already
+    /// existed. Also `null` when the folder was too slow to answer within the
+    /// wait: the library is then made after the answer, and listed once it is.
     pub library: Option<CreateLibraryResponse>,
 }
 
 /// The name the first library is given. The administrator renames it at will.
 const FIRST_LIBRARY_NAME: &str = "Music";
+
+/// How long setup's answer waits for the first library.
+///
+/// Well inside the request's own deadline: the account exists and the token
+/// is spent by the time the library is made, so a mount slow enough to reach
+/// that deadline must not turn the answer into a timeout the administrator
+/// can only retry into a conflict.
+const FIRST_LIBRARY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[utoipa::path(get, path = "/api/v2/setup", tag = "authentication", responses((status = 200, body = SetupStatusResponse)))]
 pub async fn setup_status(
@@ -70,7 +80,23 @@ pub async fn setup(
         state.setup.close();
     }
     let user_id = outcome.map_err(service_error)?;
-    let library = first_library(&state, user_id).await;
+    // A task of its own rather than a future of this one: past the wait the
+    // answer goes without it, and the library is still made, whole, rather
+    // than cancelled between its row and its scan.
+    let making = tokio::spawn(first_library(state.clone(), user_id));
+    let library = match tokio::time::timeout(FIRST_LIBRARY_WAIT, making).await {
+        Ok(Ok(library)) => library,
+        Ok(Err(error)) => {
+            tracing::error!(error = %error, "the first library's task failed");
+            None
+        }
+        Err(_) => {
+            tracing::warn!(
+                "the music folder is slow to answer: setup answers now, and the first library appears once it is made"
+            );
+            None
+        }
+    };
     Ok((
         StatusCode::CREATED,
         Json(SetupResponse { user_id, library }),
@@ -90,7 +116,7 @@ pub async fn setup(
 /// account that exists, and the token that could retry it is spent. A missing
 /// folder or a refused registration is logged, and the library is added by
 /// hand as before.
-async fn first_library(state: &AppState, owner: Uuid) -> Option<CreateLibraryResponse> {
+async fn first_library(state: AppState, owner: Uuid) -> Option<CreateLibraryResponse> {
     let path = state.music_dir.as_deref()?;
     match state.db.all_libraries().await {
         Ok(libraries) if libraries.is_empty() => {}
@@ -101,7 +127,7 @@ async fn first_library(state: &AppState, owner: Uuid) -> Option<CreateLibraryRes
         }
     }
     let registered = super::libraries::register_library(
-        state,
+        &state,
         owner,
         FIRST_LIBRARY_NAME.to_owned(),
         path,

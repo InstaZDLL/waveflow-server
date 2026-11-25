@@ -221,7 +221,7 @@ docker exec waveflow cat /data/setup-token           # started with docker run
 docker compose exec waveflow cat /data/setup-token   # started with Compose
 ```
 
-That is all: the folder mounted at `/music` becomes your first library as the account is created, and its first scan starts on its own. Uploads land there too. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it.
+That is all: the folder mounted at `/music` becomes your first library as the account is created, and its first scan starts on its own. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it. The read-only mount is enough for that; receiving uploads takes a library opened to them and a writable mount, which the [same guide](docs/guides/operations.md#receiving-files) explains.
 
 <details>
 <summary>From the command line instead of the browser</summary>
