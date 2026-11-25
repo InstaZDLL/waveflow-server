@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -12,6 +13,15 @@ import { type Library, listLibraries } from "../api";
 import { useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.library";
+
+/** How soon an empty or unreadable list is asked again, at first. */
+export const RELIST_FAST_MS = 5_000;
+
+/** How many times at that pace: two minutes, the time a slow mount takes. */
+export const RELIST_FAST_TIMES = 24;
+
+/** The pace after that, for as long as the list stays empty or unreadable. */
+export const RELIST_SLOW_MS = 60_000;
 
 /**
  * The one library the web client is looking at.
@@ -106,6 +116,31 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [generation]);
+
+  // An empty or unreadable list is asked again, without end: quickly for two
+  // minutes, then once a minute. A library can appear without this client
+  // doing anything — setup answers after five seconds and makes the first
+  // library after the answer on a slow mount, and an administrator may share
+  // one from elsewhere — and nothing else would ask, since the library feed
+  // has nothing to follow while the list is empty. Here rather than in the
+  // screen that says so: that screen is not drawn while the list cannot be
+  // read, which is exactly when asking again matters.
+  const relists = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `generation` arms one timer per answer, read by nothing else.
+  useEffect(() => {
+    if (!ready) return;
+    if (listed && libraries.length > 0) {
+      relists.current = 0;
+      return;
+    }
+    const delay =
+      relists.current < RELIST_FAST_TIMES ? RELIST_FAST_MS : RELIST_SLOW_MS;
+    const timer = window.setTimeout(() => {
+      relists.current += 1;
+      refresh();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [ready, listed, libraries.length, generation, refresh]);
 
   useEffect(() => {
     if (!activeId) return;
