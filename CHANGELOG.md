@@ -10,6 +10,31 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
+**A response grows one field.** `POST /api/v2/setup` answers `library`, the
+first library it made (`{ "library_id", "scan_id" }`) or `null`.
+
+### Added
+
+- **The first library is made at setup.** `WAVEFLOW_MUSIC_DIR` names a folder,
+  and the setup screen that creates the first administrator registers it as
+  that account's private library, `Music`, and starts its scan. The Docker
+  image sets it to `/music`, where the compose file mounts the music: a fresh
+  install no longer opens on empty pages, refuses uploads for want of a
+  library, and ignores the folders made under the mount until someone types
+  the path the compose file already named. A path that is not a directory is
+  passed over with a warning, and setup succeeds all the same.
+- **An account that reaches no library is told so.** The catalogue's screens
+  give way to one message: an administrator is offered the way to
+  Administration, anyone else is told the administrator decides.
+- **The setup screen gives the command that prints its token**:
+  `docker compose exec waveflow cat /data/setup-token`.
+
+### Fixed
+
+- **A library registered or deleted from Administration shows at once.** The
+  library picker and the catalogue read a list taken at sign-in, so a new
+  library appeared only after a reload.
+
 ## [2.3.0] — 2026-11-17
 
 The schema gains one table, `track_clip`, so going back to 2.2.2 takes a

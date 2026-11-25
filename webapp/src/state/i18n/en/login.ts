@@ -25,4 +25,5 @@ export const login = {
     one: "Listen to the {count} track kept in this browser",
     other: "Listen to the {count} tracks kept in this browser",
   },
+  "login.setupTokenDocker": "With Docker Compose, this command prints it:",
 } as const;

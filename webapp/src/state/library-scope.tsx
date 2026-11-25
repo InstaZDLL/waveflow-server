@@ -39,6 +39,17 @@ type LibraryScope = {
    * then a second, scoped one that replaces it.
    */
   ready: boolean;
+  /**
+   * Whether the list of libraries was received. `ready` is also true when it
+   * could not be had, and an empty list then says nothing about the account:
+   * only a received one may be read as "this account reaches no library".
+   */
+  listed: boolean;
+  /**
+   * Asks for the list again: after a library is registered or deleted, so the
+   * picker and every scoped screen follow without a reload.
+   */
+  refresh: () => void;
 };
 
 const LibraryScopeContext = createContext<LibraryScope | null>(null);
@@ -57,13 +68,18 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => readStored());
   const [ready, setReady] = useState(false);
+  const [listed, setListed] = useState(false);
+  const [generation, setGeneration] = useState(0);
+  const refresh = useCallback(() => setGeneration((value) => value + 1), []);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `generation` is the request to list again, read by nothing else.
   useEffect(() => {
     let cancelled = false;
     listLibraries().then(
       (found) => {
         if (cancelled) return;
         setLibraries(found);
+        setListed(true);
         setReady(true);
         // A remembered library that is gone — deleted, or a membership
         // withdrawn — must not leave the client scoped to nothing.
@@ -83,7 +99,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [generation]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -100,8 +116,10 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
       active: libraries.find((library) => library.id === activeId) ?? null,
       setActive: setActiveId,
       ready,
+      listed,
+      refresh,
     }),
-    [libraries, activeId, ready],
+    [libraries, activeId, ready, listed, refresh],
   );
 
   return (

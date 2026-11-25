@@ -126,4 +126,10 @@ export const library = {
   "random.fromGenre": "Play this genre at random",
   "random.empty": "There is nothing to draw from yet.",
   "library.active": "Library",
+  "library.none": "No library yet",
+  "library.noneAdmin":
+    "Your music is not registered on this server yet. Add its folder in Administration, and the first scan starts on its own.",
+  "library.noneMember":
+    "No library is shared with this account yet. Ask the server’s administrator.",
+  "library.noneAction": "Add a library",
 } as const;

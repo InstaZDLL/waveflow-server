@@ -130,4 +130,10 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "Riproduci questo genere in ordine casuale",
   "random.empty": "Non ci sono ancora brani da scegliere.",
   "library.active": "Libreria",
+  "library.none": "Ancora nessuna libreria",
+  "library.noneAdmin":
+    "La tua musica non è ancora registrata su questo server. Aggiungi la sua cartella in Amministrazione e la prima scansione partirà da sola.",
+  "library.noneMember":
+    "Nessuna libreria è ancora condivisa con questo account. Chiedi a chi amministra il server.",
+  "library.noneAction": "Aggiungi una libreria",
 };

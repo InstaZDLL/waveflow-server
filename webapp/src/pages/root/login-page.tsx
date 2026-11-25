@@ -14,6 +14,10 @@ import { keptSongs, offlineSupported } from "../../lib/offline";
 import { takeSetupTokenFromFragment } from "../../lib/setup-token-fragment";
 import { useI18n } from "../../state/i18n";
 
+/** What prints the drawn setup token beside the repository's compose file. */
+const SETUP_TOKEN_COMMAND =
+  "docker compose exec waveflow cat /data/setup-token";
+
 /**
  * A way to what this browser kept for offline listening (RFC-022), shown only
  * when it kept something: signed out, or with no server to sign in to, the
@@ -130,7 +134,14 @@ export function LoginPage() {
                 required
               />
               <span id="setup-token-hint" className="muted">
-                {t("login.setupTokenHint")}
+                {t("login.setupTokenHint")}{" "}
+                {/* The command itself, untranslated: most first runs are a
+                    compose file, and its log names a path inside a volume
+                    the host cannot open. */}
+                {t("login.setupTokenDocker")}{" "}
+                <code className="setup-token-command">
+                  {SETUP_TOKEN_COMMAND}
+                </code>
               </span>
             </label>
           ) : null}

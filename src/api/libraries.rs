@@ -63,23 +63,46 @@ pub async fn create_library(
     Json(request): Json<CreateLibraryRequest>,
 ) -> Result<(StatusCode, Json<CreateLibraryResponse>), ApiError> {
     let actor = authenticated(&state, &headers, Access::Admin).await?;
-    let path = std::path::PathBuf::from(&request.path);
-    let metadata = tokio::fs::symlink_metadata(&path)
+    let created = register_library(
+        &state,
+        actor.id,
+        request.name,
+        std::path::Path::new(&request.path),
+        request.visibility,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+/// Registers `path` as a library of `owner` and queues its first scan.
+///
+/// The one way a library comes to exist over HTTP: the administration route,
+/// and setup when `WAVEFLOW_MUSIC_DIR` names the first library's folder. A
+/// path that is not a directory, or is a symbolic link, is refused, as is an
+/// empty name.
+pub(super) async fn register_library(
+    state: &AppState,
+    owner: Uuid,
+    name: String,
+    path: &std::path::Path,
+    visibility: crate::storage::database::LibraryVisibility,
+) -> Result<CreateLibraryResponse, ApiError> {
+    let metadata = tokio::fs::symlink_metadata(path)
         .await
         .map_err(|_| ApiError::Validation)?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() || request.name.trim().is_empty() {
+    if metadata.file_type().is_symlink() || !metadata.is_dir() || name.trim().is_empty() {
         return Err(ApiError::Validation);
     }
-    let canonical = tokio::fs::canonicalize(&path)
+    let canonical = tokio::fs::canonicalize(path)
         .await
         .map_err(|_| ApiError::Validation)?;
     let library_id = state
         .db
         .create_library(
-            actor.id,
-            &request.name,
+            owner,
+            &name,
             &canonical,
-            request.visibility,
+            visibility,
             crate::auth::authentication::now_ms(),
         )
         .await
@@ -90,10 +113,10 @@ pub async fn create_library(
         .trigger(
             crate::storage::catalog::LibraryRecord {
                 id: library_id,
-                name: request.name,
+                name,
                 root_path: canonical,
             },
-            Some(actor.id),
+            Some(owner),
             "library_added",
         )
         .await
@@ -101,13 +124,10 @@ pub async fn create_library(
             tracing::error!(error = %error, library_id = %library_id, "initial scan queue failed");
             ApiError::Unavailable
         })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(CreateLibraryResponse {
-            library_id,
-            scan_id,
-        }),
-    ))
+    Ok(CreateLibraryResponse {
+        library_id,
+        scan_id,
+    })
 }
 
 #[utoipa::path(put, path = "/api/v2/libraries/{library_id}/members/{user_id}", tag = "administration", params(("library_id" = Uuid, Path), ("user_id" = Uuid, Path)), request_body = SetLibraryMemberRequest, responses((status = 204), (status = 401, body = ErrorResponse), (status = 403, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]

@@ -1,5 +1,5 @@
 // The root frame, and the signed-in shell: rail, bars and the player.
-import { Outlet, useMatches } from "@tanstack/react-router";
+import { Outlet, useLocation, useMatches } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { CoverLight } from "../components/artwork/cover-light";
@@ -14,6 +14,7 @@ import {
 } from "../state/library-scope";
 import { LibraryFeed } from "./library-feed";
 import { Brand, Navigation } from "./navigation";
+import { NoLibrary } from "./no-library";
 import { UpdateNotice } from "./update-notice";
 
 /**
@@ -54,10 +55,19 @@ function SplashGate() {
  * narrowing to one library — which is what the unscoped first request did.
  */
 function ScopedOutlet() {
-  const { ready } = useLibraryScope();
+  const { ready, listed, libraries } = useLibraryScope();
+  // Settings stays reachable with no library: it is where one is registered,
+  // and where an account's own settings live whatever it may read.
+  const settings = useLocation({
+    select: (location) => location.pathname.startsWith("/settings"),
+  });
   // Announced rather than blank: a screen reader on an empty `main` has
   // nothing to say, and the wait is a round trip the visitor did not ask for.
-  return ready ? <Outlet /> : <Waiting />;
+  if (!ready) return <Waiting />;
+  // Only a list received empty: one that could not be had says nothing about
+  // the account, and the screens fall back to unscoped as they did.
+  if (listed && libraries.length === 0 && !settings) return <NoLibrary />;
+  return <Outlet />;
 }
 
 /** Compose the authenticated desktop and mobile application chrome. */

@@ -26,4 +26,5 @@ export const login: Record<keyof typeof en, TranslationValue> = {
     one: "收听此浏览器中离线保存的 {count} 首曲目",
     other: "收听此浏览器中离线保存的 {count} 首曲目",
   },
+  "login.setupTokenDocker": "使用 Docker Compose 时，可用以下命令查看：",
 };

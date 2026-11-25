@@ -28,4 +28,5 @@ export const login: Record<keyof typeof en, TranslationValue> = {
     one: "Den {count} in diesem Browser gespeicherten Titel anhören",
     other: "Die {count} in diesem Browser gespeicherten Titel anhören",
   },
+  "login.setupTokenDocker": "Mit Docker Compose gibt dieser Befehl es aus:",
 };

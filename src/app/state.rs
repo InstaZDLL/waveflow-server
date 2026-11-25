@@ -49,6 +49,8 @@ pub struct AppState {
     /// The one-time token first-run setup asks for while no account exists
     /// (RFC-019 decision 1).
     pub setup: Arc<setup_token::SetupGate>,
+    /// `WAVEFLOW_MUSIC_DIR`: the folder setup registers as the first library.
+    pub music_dir: Option<std::path::PathBuf>,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a

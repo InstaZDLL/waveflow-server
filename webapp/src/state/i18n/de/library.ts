@@ -131,4 +131,10 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "Dieses Genre zufällig abspielen",
   "random.empty": "Es gibt noch keine Titel für die Zufallsauswahl.",
   "library.active": "Bibliothek",
+  "library.none": "Noch keine Bibliothek",
+  "library.noneAdmin":
+    "Deine Musik ist auf diesem Server noch nicht eingetragen. Füge ihren Ordner unter Verwaltung hinzu, dann startet der erste Scan von selbst.",
+  "library.noneMember":
+    "Mit diesem Konto ist noch keine Bibliothek geteilt. Frag die Person, die den Server verwaltet.",
+  "library.noneAction": "Bibliothek hinzufügen",
 };

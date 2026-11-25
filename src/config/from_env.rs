@@ -267,6 +267,7 @@ impl Config {
         };
 
         let setup_token = parse_setup_token(read_trimmed_env("WAVEFLOW_SETUP_TOKEN"))?;
+        let music_dir = read_trimmed_env("WAVEFLOW_MUSIC_DIR").map(PathBuf::from);
         // Zero is a setting, not a mistake: an operator with backups of their
         // own turns the copies off with it.
         let migration_backups = parse_env::<usize>("WAVEFLOW_MIGRATION_BACKUPS", "3")?;
@@ -364,6 +365,7 @@ impl Config {
             allowed_origins,
             trusted_proxies,
             setup_token,
+            music_dir,
             migration_backups,
             pid,
         })

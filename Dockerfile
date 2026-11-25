@@ -45,7 +45,8 @@ ENV WAVEFLOW_DATA_DIR=/data \
     WAVEFLOW_FFMPEG_PATH=/usr/bin/ffmpeg \
     WAVEFLOW_FFPROBE_PATH=/usr/bin/ffprobe \
     RUST_LOG=info,waveflow_server=info \
-    WAVEFLOW_LOG_FORMAT=json
+    WAVEFLOW_LOG_FORMAT=json \
+    WAVEFLOW_MUSIC_DIR=/music
 VOLUME ["/data", "/music"]
 # The account the server runs as, when the container starts as root.
 ENV WAVEFLOW_UID=4533 \

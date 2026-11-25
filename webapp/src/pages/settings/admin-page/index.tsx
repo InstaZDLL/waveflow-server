@@ -18,6 +18,7 @@ import {
   useReload,
 } from "../../../components/layout/page-shell";
 import { useI18n } from "../../../state/i18n";
+import { useLibraryScope } from "../../../state/library-scope";
 import { NowPlayingPanel, ScanProgress, TranscodingPanel } from "./activity";
 import { ApiTokensPanel, CredentialForm } from "./credentials";
 import { LibraryMembersPanel, LibrarySettingsPanel } from "./libraries";
@@ -27,6 +28,9 @@ export function AdminPage() {
   const signedInUser = currentUser();
   const { t } = useI18n();
   const reload = useReload(administrationQuery().queryKey);
+  // The rail's picker and the catalogue's screens read their own list of
+  // libraries, and must hear of one registered or deleted here.
+  const { refresh: refreshScope } = useLibraryScope();
   const [notice, setNotice] = useState<string | null>(null);
   const [adminError, setAdminError] = useState<string | null>(null);
   const [libraryName, setLibraryName] = useState("");
@@ -54,6 +58,7 @@ export function AdminPage() {
       setNotice(t("admin.initialScan", { id: result.scan_id }));
       setWatchedScan(result.scan_id);
       reload();
+      refreshScope();
     } catch {
       setAdminError(t("admin.libraryError"));
     } finally {
@@ -167,6 +172,7 @@ export function AdminPage() {
                     onDeleted={(message) => {
                       setAdminError(null);
                       setNotice(message);
+                      refreshScope();
                     }}
                   />
                 </li>

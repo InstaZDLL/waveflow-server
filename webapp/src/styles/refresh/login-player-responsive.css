@@ -13,6 +13,19 @@
   display: none;
 }
 
+/* The command that prints the setup token: on a line of its own, selected
+   whole by one click, and wrapped anywhere rather than widening the form. */
+.setup-token-command {
+  display: block;
+  margin-top: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.4rem;
+  background: var(--panel-soft);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
 .signal {
   height: 1.6rem;
   background: repeating-linear-gradient(
