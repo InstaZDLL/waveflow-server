@@ -106,12 +106,25 @@ impl DomainServices {
             .follow_links
             .is_some_and(|follow| follow != before.follow_links);
         let rewatched = update.watch.is_some_and(|watch| watch != before.watch);
-        let reopened = update
-            .accepts_uploads
-            .filter(|accepts| *accepts != before.accepts_uploads);
         let scan_id = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
+            // Read again under the writer, unlike `before`: opening a library
+            // takes no scan lock, so two requests could otherwise both read
+            // "closed", and the later write would close it again with no
+            // entry, or two openings would write two for one change.
+            let reopened = match update.accepts_uploads {
+                Some(accepts) => {
+                    let was: Option<i64> =
+                        sqlx::query_scalar("SELECT accepts_uploads FROM library WHERE id = ?")
+                            .bind(library_id.to_string())
+                            .fetch_optional(&mut *tx)
+                            .await?;
+                    let was = was.ok_or(ServiceError::NotFound)? != 0;
+                    (accepts != was).then_some(accepts)
+                }
+                None => None,
+            };
             let written = sqlx::query(
                 "UPDATE library SET name = COALESCE(?, name), \
                    root_path = COALESCE(?, root_path), \

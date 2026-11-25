@@ -74,7 +74,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.noLibrary": "먼저 보관함을 선택하세요.",
   "upload.notAllowed": "이 보관함의 소유자나 매니저만 파일을 추가할 수 있어요.",
   "upload.closed":
-    "이 라이브러리는 파일을 받지 않아요. 관리자가 관리의 라이브러리 설정에서 업로드를 열 수 있어요.",
+    "이 보관함은 파일을 받지 않아요. 관리자가 관리의 보관함 설정에서 업로드를 열 수 있어요.",
   "upload.waiting": "대기 중",
   "upload.hashing": "파일 식별값 계산 중…",
   "upload.negotiating": "서버에 확인하는 중…",
