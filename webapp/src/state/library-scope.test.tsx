@@ -157,6 +157,29 @@ describe("LibraryScopeProvider asking again", () => {
     expect(scope?.libraries).toEqual([music]);
   });
 
+  it("waits for a slow answer rather than cutting it short", async () => {
+    // The second ask takes longer than the pace: it must still be heard.
+    let answer: (libraries: Library[]) => void = () => undefined;
+    listLibraries
+      .mockResolvedValueOnce([])
+      .mockReturnValueOnce(
+        new Promise<Library[]>((resolve) => {
+          answer = resolve;
+        }),
+      )
+      .mockResolvedValue([]);
+    await mount();
+    await advance(RELIST_FAST_MS);
+    expect(listLibraries).toHaveBeenCalledTimes(2);
+
+    // Three times the pace, and nothing asked over the answer still due.
+    await advance(RELIST_FAST_MS * 3);
+    expect(listLibraries).toHaveBeenCalledTimes(2);
+
+    await act(async () => answer([music]));
+    expect(scope?.active?.id).toBe("lib-1");
+  });
+
   it("slows down after two minutes, and never gives up", async () => {
     listLibraries.mockResolvedValue([]);
     await mount();
