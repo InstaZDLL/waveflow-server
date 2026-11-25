@@ -80,22 +80,24 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [listed, setListed] = useState(false);
   const [generation, setGeneration] = useState(0);
-  // Counts the answers, received or refused, so the next ask is armed only
-  // once the last one came back: a timer armed on the request would cut a
-  // slow answer short, and a library could stay unseen behind it.
-  const [answers, setAnswers] = useState(0);
+  // Whether a request is out. The next ask is armed only while none is: a
+  // timer running beside a request — an automatic one that is slow, or the
+  // refresh an administration screen asks for — would replace it before it
+  // answered, and a library could stay unseen behind it.
+  const [asking, setAsking] = useState(true);
   const refresh = useCallback(() => setGeneration((value) => value + 1), []);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `generation` is the request to list again, read by nothing else.
   useEffect(() => {
     let cancelled = false;
+    setAsking(true);
     listLibraries().then(
       (found) => {
         if (cancelled) return;
         setLibraries(found);
         setListed(true);
         setReady(true);
-        setAnswers((value) => value + 1);
+        setAsking(false);
         // A remembered library that is gone — deleted, or a membership
         // withdrawn — must not leave the client scoped to nothing.
         setActiveId((current) =>
@@ -110,7 +112,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
         // libraries cannot be had at all.
         if (cancelled) return;
         setReady(true);
-        setAnswers((value) => value + 1);
+        setAsking(false);
         // A list that could not be had again unsays the one before it: a
         // refresh that fails after a library was registered must not leave
         // the stale empty list standing as "this account reaches none". The
@@ -132,9 +134,8 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   // screen that says so: that screen is not drawn while the list cannot be
   // read, which is exactly when asking again matters.
   const relists = useRef(0);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `answers` arms one timer per answer, read by nothing else.
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || asking) return;
     if (listed && libraries.length > 0) {
       relists.current = 0;
       return;
@@ -146,7 +147,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
       refresh();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [ready, listed, libraries.length, answers, refresh]);
+  }, [ready, asking, listed, libraries.length, refresh]);
 
   useEffect(() => {
     if (!activeId) return;

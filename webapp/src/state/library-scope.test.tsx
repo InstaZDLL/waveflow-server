@@ -180,6 +180,31 @@ describe("LibraryScopeProvider asking again", () => {
     expect(scope?.active?.id).toBe("lib-1");
   });
 
+  it("lets a refresh asked by hand answer, past the armed timer", async () => {
+    // The list was empty, so a timer is armed; Administration registers a
+    // library and refreshes, and its answer is slow.
+    let answer: (libraries: Library[]) => void = () => undefined;
+    listLibraries
+      .mockResolvedValueOnce([])
+      .mockReturnValueOnce(
+        new Promise<Library[]>((resolve) => {
+          answer = resolve;
+        }),
+      )
+      .mockResolvedValue([]);
+    await mount();
+    await advance(RELIST_FAST_MS - 1_000, 1_000);
+    await act(async () => scope?.refresh());
+    expect(listLibraries).toHaveBeenCalledTimes(2);
+
+    // The armed timer's time comes and goes: it was cancelled, not fired.
+    await advance(RELIST_FAST_MS * 2);
+    expect(listLibraries).toHaveBeenCalledTimes(2);
+
+    await act(async () => answer([music]));
+    expect(scope?.active?.id).toBe("lib-1");
+  });
+
   it("slows down after two minutes, and never gives up", async () => {
     listLibraries.mockResolvedValue([]);
     await mount();
