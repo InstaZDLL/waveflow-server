@@ -72,7 +72,7 @@ export const folders = {
   "upload.notAllowed":
     "Only an owner or a manager of this library can add files to it.",
   "upload.closed":
-    "This library does not take files. Its operator decides that on the server.",
+    "This library does not take files. An administrator opens it to uploads in its settings, under Administration.",
   "upload.waiting": "Waiting",
   "upload.hashing": "Fingerprinting…",
   "upload.negotiating": "Asking the server…",

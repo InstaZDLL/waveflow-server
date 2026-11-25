@@ -10,8 +10,10 @@ out first, whether or not it breaks a compile.
 
 ## [Unreleased]
 
-**A response grows one field.** `POST /api/v2/setup` answers `library`, the
-first library it made (`{ "library_id", "scan_id" }`) or `null`.
+**Two responses grow one field.** `POST /api/v2/setup` answers `library`, the
+first library it made (`{ "library_id", "scan_id" }`) or `null`, and
+`GET /api/v2/libraries/{id}/settings` answers `accepts_uploads`, which
+`PATCH /api/v2/libraries/{id}` now takes.
 
 ### Added
 
@@ -28,6 +30,12 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`.
   Administration, anyone else is told the administrator decides.
 - **The setup screen gives the command that prints its token**:
   `docker compose exec waveflow cat /data/setup-token`.
+- **An administrator opens a library to uploads from the web.** **Accept
+  uploads**, in a library's settings under Administration, does what
+  `library set-uploads` did alone, and writes the same audit entry. It waits
+  for no scan, so the first library can be opened while its first scan runs.
+  The folder must be writable for an opened library to receive anything: in
+  Docker, mount it without `:ro`, which the compose file now says.
 
 ### Fixed
 

@@ -76,6 +76,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     "Suivre les liens symboliques dont la cible reste dans la bibliothèque",
   "admin.watch":
     "Surveiller le dossier et analyser ce qui change (à couper pour un partage réseau modifié par d’autres machines)",
+  "admin.acceptsUploads":
+    "Accepter les envois : les propriétaires et gestionnaires peuvent y ajouter des fichiers. Le serveur les écrit dans ce dossier, qui doit donc être accessible en écriture (avec Docker, montez-le sans :ro)",
   "admin.save": "Enregistrer",
   "admin.saved": "Enregistré.",
   "admin.savedScan": "Enregistré. Scan {id} ajouté à la file.",

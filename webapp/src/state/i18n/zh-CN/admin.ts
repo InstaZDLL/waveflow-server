@@ -74,6 +74,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.path": "服务器上的文件夹",
   "admin.followLinks": "跟随目标位于音乐库内的符号链接",
   "admin.watch": "监视文件夹并扫描变化（若是由其他机器修改的网络共享，请关闭）",
+  "admin.acceptsUploads":
+    "接受上传：所有者和管理者可以在这里添加文件。服务器会把文件写入这个文件夹，因此它必须可写（使用 Docker 时，挂载时不要加 :ro）",
   "admin.save": "保存",
   "admin.saved": "已保存。",
   "admin.savedScan": "已保存。扫描 {id} 已加入队列。",

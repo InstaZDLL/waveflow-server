@@ -584,3 +584,121 @@ async fn a_narrowed_admin_token_has_no_say_over_a_foreign_library() {
         StatusCode::OK
     );
 }
+
+/// RFC-008 decision 1 from the web: an administrator opens a library to
+/// uploads, and closes it, without the command line. The switch was CLI-only,
+/// so a fresh install could not receive a file until someone found
+/// `library set-uploads`.
+#[tokio::test]
+async fn an_administrator_opens_and_closes_a_library_to_uploads() {
+    let (_temp, config, state) = test_app().await;
+    let (_admin, admin_token) = account_with_token(&state, "uploads-admin", "admin").await;
+    let (owner, owner_token) = account_with_token(&state, "uploads-owner", "user").await;
+    let music = config.data_dir.join("uploads-music");
+    std::fs::create_dir_all(&music).unwrap();
+    let library_id = state
+        .db
+        .create_library(
+            owner,
+            "Uploads",
+            &std::fs::canonicalize(&music).unwrap(),
+            LibraryVisibility::Private,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state.clone());
+    let library = format!("/api/v2/libraries/{library_id}");
+    let send = |request: Request<Body>| {
+        let router = router.clone();
+        async move { router.oneshot(request).await.unwrap() }
+    };
+    let accepts = || async {
+        sqlx::query_scalar::<_, i64>("SELECT accepts_uploads FROM library WHERE id = ?")
+            .bind(library_id.to_string())
+            .fetch_one(state.db.pool())
+            .await
+            .unwrap()
+    };
+    let audited = |kind: &'static str| {
+        let pool = state.db.pool().clone();
+        async move {
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM audit_event WHERE kind = ?")
+                .bind(kind)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
+    };
+
+    // The owner may rename the library, not open it: whether the server
+    // writes into the folder is the operator's call.
+    let refused = send(bearer_json(
+        "PATCH",
+        &library,
+        &owner_token,
+        serde_json::json!({"accepts_uploads": true}),
+    ))
+    .await;
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(accepts().await, 0);
+
+    // Opened while the library is being scanned, as the first library is
+    // right after setup: the switch changes nothing of the walk, so it does
+    // not wait for it. A change that does still waits.
+    let scanning = state.scanner.try_lock_library(library_id).unwrap();
+    let opened = send(bearer_json(
+        "PATCH",
+        &library,
+        &admin_token,
+        serde_json::json!({"accepts_uploads": true}),
+    ))
+    .await;
+    assert_eq!(opened.status(), StatusCode::OK);
+    assert!(
+        json_body(opened).await["scan_id"].is_null(),
+        "it queues no scan"
+    );
+    let rewatch = send(bearer_json(
+        "PATCH",
+        &library,
+        &admin_token,
+        serde_json::json!({"watch": false}),
+    ))
+    .await;
+    assert_eq!(rewatch.status(), StatusCode::CONFLICT);
+    drop(scanning);
+    assert_eq!(accepts().await, 1);
+    assert_eq!(audited("library.uploads_opened").await, 1);
+
+    let settings = send(bearer_json(
+        "GET",
+        &format!("{library}/settings"),
+        &admin_token,
+        serde_json::json!({}),
+    ))
+    .await;
+    assert_eq!(json_body(settings).await["accepts_uploads"], true);
+
+    // Opening an open library again changes nothing and writes no entry.
+    let again = send(bearer_json(
+        "PATCH",
+        &library,
+        &admin_token,
+        serde_json::json!({"accepts_uploads": true}),
+    ))
+    .await;
+    assert_eq!(again.status(), StatusCode::OK);
+    assert_eq!(audited("library.uploads_opened").await, 1);
+
+    let closed = send(bearer_json(
+        "PATCH",
+        &library,
+        &admin_token,
+        serde_json::json!({"accepts_uploads": false}),
+    ))
+    .await;
+    assert_eq!(closed.status(), StatusCode::OK);
+    assert_eq!(accepts().await, 0);
+    assert_eq!(audited("library.uploads_closed").await, 1);
+}

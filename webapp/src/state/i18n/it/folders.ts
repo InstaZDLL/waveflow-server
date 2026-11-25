@@ -76,7 +76,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.notAllowed":
     "Solo un proprietario o un gestore di questa libreria può aggiungervi file.",
   "upload.closed":
-    "Questa libreria non accetta file. Lo decide chi gestisce il server.",
+    "Questa libreria non accetta file. Un amministratore può aprirla ai caricamenti nelle sue impostazioni, in Amministrazione.",
   "upload.waiting": "In attesa",
   "upload.hashing": "Calcolo dell’impronta…",
   "upload.negotiating": "Richiesta al server…",

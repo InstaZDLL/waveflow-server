@@ -77,6 +77,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     "Seguir los enlaces simbólicos cuyo destino quede dentro de la biblioteca",
   "admin.watch":
     "Vigilar la carpeta y escanear lo que cambie (desactívalo para una carpeta de red que modifican otros equipos)",
+  "admin.acceptsUploads":
+    "Aceptar subidas: propietarios y gestores pueden añadir archivos aquí. El servidor los escribe en esta carpeta, que debe admitir escritura (con Docker, móntala sin :ro)",
   "admin.save": "Guardar",
   "admin.saved": "Guardado.",
   "admin.savedScan": "Guardado. Escaneo {id} en cola.",

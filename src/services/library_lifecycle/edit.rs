@@ -40,6 +40,7 @@ impl DomainServices {
             path: settings.library.root_path.to_string_lossy().into_owned(),
             follow_links: settings.follow_links,
             watch: settings.watch,
+            accepts_uploads: settings.accepts_uploads,
         })
     }
 
@@ -84,7 +85,7 @@ impl DomainServices {
         };
         // Only what changes how the library is walked has to wait for no scan;
         // a new name is a label.
-        let _scan_lock = if update.is_administrative() {
+        let _scan_lock = if update.changes_the_walk() {
             Some(
                 self.scanner
                     .try_lock_library(library_id)
@@ -105,6 +106,9 @@ impl DomainServices {
             .follow_links
             .is_some_and(|follow| follow != before.follow_links);
         let rewatched = update.watch.is_some_and(|watch| watch != before.watch);
+        let reopened = update
+            .accepts_uploads
+            .filter(|accepts| *accepts != before.accepts_uploads);
         let scan_id = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
@@ -112,7 +116,8 @@ impl DomainServices {
                 "UPDATE library SET name = COALESCE(?, name), \
                    root_path = COALESCE(?, root_path), \
                    follow_links = COALESCE(?, follow_links), \
-                   watch = COALESCE(?, watch), updated_at = ? \
+                   watch = COALESCE(?, watch), \
+                   accepts_uploads = COALESCE(?, accepts_uploads), updated_at = ? \
                  WHERE id = ?",
             )
             .bind(name.as_deref())
@@ -122,6 +127,7 @@ impl DomainServices {
             )
             .bind(update.follow_links.map(i64::from))
             .bind(update.watch.map(i64::from))
+            .bind(update.accepts_uploads.map(i64::from))
             .bind(now_ms())
             .bind(library_id.to_string())
             .execute(&mut *tx)
@@ -172,6 +178,22 @@ impl DomainServices {
                     "library.watch_set",
                     library_id,
                     serde_json::json!({ "watch": update.watch }),
+                )
+                .await?;
+            }
+            // The same entries the command line writes, so the audit reads one
+            // way whichever door opened the library.
+            if let Some(accepts) = reopened {
+                audit(
+                    &mut tx,
+                    Some(actor.id),
+                    if accepts {
+                        "library.uploads_opened"
+                    } else {
+                        "library.uploads_closed"
+                    },
+                    library_id,
+                    serde_json::json!({}),
                 )
                 .await?;
             }

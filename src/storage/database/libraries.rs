@@ -207,8 +207,9 @@ impl Database {
     ///
     /// Audited, like every other change to what a library permits. The role a
     /// member holds says who may upload; this says whether the library takes
-    /// anything at all, and it is the operator's call rather than a member's —
-    /// which is why it arrives through the CLI and not through the API.
+    /// anything at all, and it is the operator's call rather than a member's:
+    /// the command line, or an administrator's `PATCH` of the library
+    /// (`LibraryUpdate::accepts_uploads`), never a member.
     pub async fn set_library_accepts_uploads(
         &self,
         actor_id: Uuid,

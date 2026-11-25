@@ -78,14 +78,19 @@ export type LibrarySettings = {
    * (RFC-021). Off for a library on a share where watching finds nothing.
    */
   watch: boolean;
+  /**
+   * Whether owners and managers may upload into the library (RFC-008). Off
+   * by default; an administrator's to switch.
+   */
+  accepts_uploads: boolean;
 };
 
 export const getLibrarySettings = (libraryId: string) =>
   call<LibrarySettings>(`/api/v2/libraries/${libraryId}/settings`);
 
 /**
- * Renames a library, moves it, or changes whether its scan follows links. A
- * name is its owner's to change; the path and the links setting are an
+ * Renames a library, moves it, changes whether its scan follows links, or
+ * opens it to uploads. A name is its owner's to change; the rest is an
  * administrator's. A new path or links setting queues a scan.
  */
 export const updateLibrary = (
@@ -95,6 +100,7 @@ export const updateLibrary = (
     path?: string;
     follow_links?: boolean;
     watch?: boolean;
+    accepts_uploads?: boolean;
   },
 ) =>
   call<{ scan_id: string | null }>(`/api/v2/libraries/${libraryId}`, {

@@ -186,6 +186,7 @@ async function mockAuthenticatedApi(page: Page) {
           path: `/srv/music/${id}`,
           follow_links: found?.follow_links ?? false,
           watch: true,
+          accepts_uploads: found?.accepts_uploads ?? false,
         },
       });
       return;

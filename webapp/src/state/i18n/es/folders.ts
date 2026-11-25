@@ -75,7 +75,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.notAllowed":
     "Solo un propietario o un gestor de esta biblioteca puede añadirle archivos.",
   "upload.closed":
-    "Esta biblioteca no acepta archivos. Lo decide quien administra el servidor.",
+    "Esta biblioteca no acepta archivos. Un administrador puede abrirla a las subidas en sus ajustes, en Administración.",
   "upload.waiting": "En espera",
   "upload.hashing": "Calculando la huella…",
   "upload.negotiating": "Consultando al servidor…",

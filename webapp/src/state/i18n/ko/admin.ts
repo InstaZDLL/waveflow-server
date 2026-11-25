@@ -76,6 +76,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.followLinks": "대상이 보관함 안에 있는 심볼릭 링크 따라가기",
   "admin.watch":
     "폴더를 감시하고 바뀐 내용 스캔하기 (다른 기기에서 변경하는 네트워크 공유 폴더라면 끄세요)",
+  "admin.acceptsUploads":
+    "업로드 허용: 소유자와 관리자가 여기에 파일을 추가할 수 있어요. 서버가 이 폴더에 파일을 쓰므로 쓰기가 가능해야 해요(Docker에서는 :ro 없이 마운트하세요)",
   "admin.save": "저장",
   "admin.saved": "저장했어요.",
   "admin.savedScan": "저장했어요. 스캔 {id}이(가) 대기열에 추가됐어요.",

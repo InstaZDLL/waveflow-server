@@ -254,6 +254,38 @@ test("switches a library's watch off from its settings", async ({ page }) => {
 });
 
 /**
+ * Opening a library to uploads was the command line's alone (RFC-008), so a
+ * fresh install could not receive a file from the web at all. It is the same
+ * kind of administrator's switch now, and the scope hears of it: the upload
+ * page reads whether a library takes files from the scope's list.
+ */
+test("opens a library to uploads from its settings", async ({ page }) => {
+  const updates: unknown[] = [];
+  let listings = 0;
+  await page.route("**/api/v2/libraries", async (route) => {
+    listings += 1;
+    await route.fallback();
+  });
+  await page.route("**/api/v2/libraries/library-1", async (route) => {
+    if (route.request().method() !== "PATCH") {
+      await route.fallback();
+      return;
+    }
+    updates.push(route.request().postDataJSON());
+    await route.fulfill({ json: { scan_id: null } });
+  });
+  await page.goto("/admin");
+  await page.getByRole("button", { name: "Name, folder and deletion" }).click();
+  const uploads = page.getByRole("checkbox", { name: /Accept uploads/ });
+  await expect(uploads).not.toBeChecked();
+  const before = listings;
+  await uploads.check();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => updates).toEqual([{ accepts_uploads: true }]);
+  await expect.poll(() => listings).toBeGreaterThan(before);
+});
+
+/**
  * `GET /transcode/status` was the last route of the gap analysis's "the server
  * knows, the screen ignores" table. The panel reads it, and reads it again
  * while the screen stays open: the count moves as listeners start and stop,

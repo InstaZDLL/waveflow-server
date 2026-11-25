@@ -75,7 +75,7 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.notAllowed":
     "このライブラリにファイルを追加できるのは、オーナーかマネージャーだけです。",
   "upload.closed":
-    "このライブラリはファイルを受け付けていません。これはサーバーの運用者が決めています。",
+    "このライブラリはファイルを受け付けていません。管理者が管理画面のライブラリ設定でアップロードを有効にできます。",
   "upload.waiting": "待機中",
   "upload.hashing": "フィンガープリントを取得中…",
   "upload.negotiating": "サーバーに問い合わせ中…",

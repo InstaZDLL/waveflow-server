@@ -73,7 +73,8 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.formats": "音乐库可索引的格式：{extensions}",
   "upload.noLibrary": "请先选择一个音乐库。",
   "upload.notAllowed": "只有此音乐库的所有者或管理者才能向其中添加文件。",
-  "upload.closed": "此音乐库不接收文件，是否允许上传由服务器运维人员设置。",
+  "upload.closed":
+    "这个音乐库不接受文件。管理员可以在“管理”中该音乐库的设置里开启上传。",
   "upload.waiting": "等待中",
   "upload.hashing": "计算指纹…",
   "upload.negotiating": "正在询问服务器…",
