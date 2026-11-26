@@ -25,7 +25,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.secret.listenbrainz": "ユーザートークン",
   "scrobbling.secret.maloja": "API キー",
   "scrobbling.secretHint.listenbrainz":
-    "listenbrainz.org の Settings → User token にあります。",
+    "そのインスタンス（listenbrainz.org または自分のサーバー）のアカウント設定の User token にあります。",
   "scrobbling.secretHint.maloja":
     "Maloja の管理パネルの API Keys で作成します。",
   "scrobbling.link": "連携",

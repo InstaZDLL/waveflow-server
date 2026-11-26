@@ -23,7 +23,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.secret.listenbrainz": "用户令牌",
   "scrobbling.secret.maloja": "API 密钥",
   "scrobbling.secretHint.listenbrainz":
-    "在 listenbrainz.org 的 Settings → User token 中。",
+    "在该实例（listenbrainz.org 或你自己的服务器）的账户设置中的 User token 下。",
   "scrobbling.secretHint.maloja": "在你的 Maloja 管理面板的 API Keys 中创建。",
   "scrobbling.link": "关联",
   "scrobbling.working": "处理中…",

@@ -22,7 +22,7 @@ export const scrobbling = {
   "scrobbling.secret.listenbrainz": "User token",
   "scrobbling.secret.maloja": "API key",
   "scrobbling.secretHint.listenbrainz":
-    "On listenbrainz.org, under Settings → User token.",
+    "In the settings of your account on that instance, under User token: listenbrainz.org, or your own server.",
   "scrobbling.secretHint.maloja":
     "Created in your Maloja’s admin panel, under API Keys.",
   "scrobbling.link": "Link",

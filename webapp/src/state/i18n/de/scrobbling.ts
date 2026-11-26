@@ -25,7 +25,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.secret.listenbrainz": "Benutzertoken",
   "scrobbling.secret.maloja": "API-Schlüssel",
   "scrobbling.secretHint.listenbrainz":
-    "Auf listenbrainz.org unter Settings → User token.",
+    "In den Einstellungen deines Kontos auf dieser Instanz unter User token: listenbrainz.org oder dein eigener Server.",
   "scrobbling.secretHint.maloja":
     "Im Admin-Bereich deines Maloja unter API Keys erstellt.",
   "scrobbling.link": "Verknüpfen",

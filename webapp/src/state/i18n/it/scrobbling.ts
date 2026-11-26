@@ -25,7 +25,7 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.secret.listenbrainz": "Token utente",
   "scrobbling.secret.maloja": "Chiave API",
   "scrobbling.secretHint.listenbrainz":
-    "Su listenbrainz.org, in Settings → User token.",
+    "Nelle impostazioni del tuo account su quell’istanza, in User token: listenbrainz.org o il tuo server.",
   "scrobbling.secretHint.maloja":
     "Creata nel pannello di amministrazione del tuo Maloja, in API Keys.",
   "scrobbling.link": "Collega",
