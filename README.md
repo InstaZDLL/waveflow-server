@@ -252,7 +252,7 @@ Everything below is done from the web player, signed in as the administrator.
 - **Artist biographies and portraits, lyrics from LRCLIB and podcasts** are off until switched on in `.env`, because each one contacts another host: the [operations guide](docs/guides/operations.md#switching-metadata-enrichment-on) has one section per feature, and the [privacy page](docs/guides/privacy.md) lists every request they make.
 - **More accounts, and more libraries,** are added under **Settings → Administration**.
 
-A change to `.env` reaches the server with `docker compose up -d`, which recreates the container. `docker compose restart` keeps the settings it started with. A variable exported in your shell wins over the same line in `.env`: if `WAVEFLOW_PUBLIC_URL` was exported once, `unset` it, and `docker compose config --environment` shows the values Compose will pass. Elsewhere, the same lines go where that installation keeps its settings:
+A change to `.env` reaches the server with `docker compose up -d`, which recreates the container. `docker compose restart` keeps the settings it started with. A variable exported in your shell wins over the same line in `.env`: if `WAVEFLOW_PUBLIC_URL` was exported once, `unset` it. `docker compose config` prints the file as Compose resolved it, and its `environment` section is what the server will receive. Elsewhere, the same lines go where that installation keeps its settings:
 
 - **`docker run`**: one `-e NAME=value` each. A container keeps the settings it was created with, so remove it (`docker rm -f waveflow`) and run the command again with them; the data stays in the `waveflow-data` volume.
 - **The archive for one computer**: its `laptop.env`, read again on the next start.
