@@ -81,4 +81,11 @@ export const playlists = {
   "bookmarks.detail": "One per track. Saving again moves it.",
   "bookmarks.save": "Save this position",
   "bookmarks.forget": "Forget",
+  "playlistPicker.new": "New playlist",
+  "playlistPicker.name": "Its name",
+  "playlistPicker.create": "Create with these tracks",
+  "playlistPicker.existing": "Your playlists",
+  "playlistPicker.none": "You have no playlist yet: name a new one above.",
+  "playlistPicker.loadError": "Your playlists could not be loaded.",
+  "playlistPicker.failed": "The tracks could not be added. Try again.",
 } as const;

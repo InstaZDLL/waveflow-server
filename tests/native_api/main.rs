@@ -30,6 +30,7 @@ mod artists;
 mod browse;
 mod correction_patches;
 mod corrections;
+mod folder_order;
 mod folders;
 mod libraries;
 mod lyrics;

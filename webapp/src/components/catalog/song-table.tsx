@@ -85,6 +85,16 @@ function StarRating({
 }
 
 /**
+ * Rows a person picks to act on together: a checkbox at the head of each row.
+ * `onSelect` is told the row's position and whether Shift was held, so the
+ * owner of the selection can take the range from the last row picked.
+ */
+export type RowSelection = {
+  selected: ReadonlySet<string>;
+  onSelect: (position: number, extend: boolean) => void;
+};
+
+/**
  * A track's number belongs to its sleeve, so it is only meaningful where the
  * sleeve is on screen. Everywhere else — favourites, a playlist, a genre, a
  * history, a draw, a search — the number that means something is the row's
@@ -96,6 +106,7 @@ export function SongTable({
   variant = "default",
   draggableRows = false,
   rowActions,
+  selection,
 }: {
   songs: Song[];
   numbering?: "track" | "position";
@@ -111,6 +122,11 @@ export function SongTable({
    * hold one track twice and the position is the only name a copy has.
    */
   rowActions?: (song: Song, position: number, count: number) => ReactNode;
+  /**
+   * Rows may be picked to act on together. A dragged row that is picked
+   * carries every picked row with it, in the list's order.
+   */
+  selection?: RowSelection;
 }) {
   const player = usePlayer();
   const { t } = useI18n();
@@ -183,7 +199,9 @@ export function SongTable({
 
   return (
     <div className="songs-scroll">
-      <table className={`songs${variant === "album" ? " album-songs" : ""}`}>
+      <table
+        className={`songs${variant === "album" ? " album-songs" : ""}${selection ? " picking" : ""}`}
+      >
         {variant === "album" ? (
           <thead>
             <tr>
@@ -204,25 +222,59 @@ export function SongTable({
           {songs.map((song, position) => {
             const starred = stars[song.id] ?? song.starred_at !== null;
             const active = player.current?.id === song.id;
+            const picked = selection?.selected.has(song.id) ?? false;
+            const rowClass =
+              [active ? "active" : "", picked ? "selected" : ""]
+                .filter(Boolean)
+                .join(" ") || undefined;
             return (
               <tr
                 key={rowIds[position]}
-                className={active ? "active" : undefined}
+                className={rowClass}
                 {...rowProps(songs, position)}
                 draggable={draggableRows || undefined}
                 onDragStart={
                   draggableRows
                     ? (event) => {
+                        // A picked row takes the others with it; an unpicked
+                        // one goes alone, as it did before rows could be picked.
+                        const ids = picked
+                          ? songs
+                              .filter((entry) =>
+                                selection?.selected.has(entry.id),
+                              )
+                              .map((entry) => entry.id)
+                          : [song.id];
                         event.dataTransfer.effectAllowed = "move";
                         event.dataTransfer.setData(
                           TRACK_DRAG_TYPE,
-                          JSON.stringify([song.id]),
+                          JSON.stringify([...new Set(ids)]),
                         );
-                        event.dataTransfer.setData("text/plain", song.title);
+                        event.dataTransfer.setData(
+                          "text/plain",
+                          ids.length > 1
+                            ? t("selection.count", { count: ids.length })
+                            : song.title,
+                        );
                       }
                     : undefined
                 }
               >
+                {selection ? (
+                  <td className="song-pick">
+                    <input
+                      type="checkbox"
+                      checked={picked}
+                      aria-label={t("selection.select", { title: song.title })}
+                      // Shift is read from the click: `onChange` carries no
+                      // modifier, and the range is what Shift means here.
+                      onClick={(event) =>
+                        selection.onSelect(position, event.shiftKey)
+                      }
+                      onChange={() => undefined}
+                    />
+                  </td>
+                ) : null}
                 <td className="index">
                   {numbering === "track"
                     ? (song.track ?? position + 1)

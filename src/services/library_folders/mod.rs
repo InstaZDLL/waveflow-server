@@ -450,8 +450,11 @@ impl DomainServices {
     }
 
     /// The tracks filed directly in a folder, or with `folder_id` `None` the
-    /// library's unfiled ones. Sorted by artist, album, disc and track, a
-    /// missing tag last. Any member reads; `NotFound` for anyone else.
+    /// library's unfiled ones. Album by album, as their sleeves are: by the
+    /// album's artist, the album, then disc and track, a missing tag last.
+    /// Not by each track's own artist, which scattered a compilation, or an
+    /// album with a guest on one song, among the others. Any member reads;
+    /// `NotFound` for anyone else.
     pub async fn folder_tracks(
         &self,
         user_id: Uuid,
@@ -461,11 +464,12 @@ impl DomainServices {
     ) -> Result<Vec<SongItem>, ServiceError> {
         macro_rules! by_sleeve {
             () => {
-                " ORDER BY t.artist_display COLLATE NOCASE NULLS LAST, \
-                   t.album_title COLLATE NOCASE NULLS LAST, \
+                " ORDER BY COALESCE(alb.album_artist_name, t.artist_display) \
+                     COLLATE natural_order NULLS LAST, \
+                   t.album_title COLLATE natural_order NULLS LAST, t.album_id NULLS LAST, \
                    COALESCE(ovr.disc_number, t.disc_number) NULLS LAST, \
                    COALESCE(ovr.track_number, t.track_number) NULLS LAST, \
-                   COALESCE(ovr.title, t.title) COLLATE NOCASE, t.id LIMIT ? OFFSET ?"
+                   COALESCE(ovr.title, t.title) COLLATE natural_order, t.id LIMIT ? OFFSET ?"
             };
         }
         let rows = match folder_id {

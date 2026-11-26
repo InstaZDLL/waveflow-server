@@ -82,4 +82,11 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.detail": "每首曲目一个。再次保存会更新位置。",
   "bookmarks.save": "保存当前播放位置",
   "bookmarks.forget": "删除",
+  "playlistPicker.new": "新建播放列表",
+  "playlistPicker.name": "名称",
+  "playlistPicker.create": "用这些歌曲创建",
+  "playlistPicker.existing": "你的播放列表",
+  "playlistPicker.none": "你还没有播放列表：请在上方为新列表命名。",
+  "playlistPicker.loadError": "无法加载你的播放列表。",
+  "playlistPicker.failed": "无法添加这些歌曲，请重试。",
 };

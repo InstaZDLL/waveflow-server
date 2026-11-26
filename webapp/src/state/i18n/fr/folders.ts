@@ -102,4 +102,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
     "vous ne pouvez plus ajouter de fichiers à cette bibliothèque",
   "upload.reason.error": "quelque chose s’est mal passé",
   "upload.reason.hashing": "ce navigateur n’a pas pu identifier le fichier",
+  "selection.label": "Titres sélectionnés",
+  "selection.select": "Sélectionner « {title} »",
+  "selection.count": {
+    one: "{count} titre sélectionné",
+    other: "{count} titres sélectionnés",
+  },
+  "selection.all": "Tout sélectionner",
+  "selection.none": "Tout désélectionner",
+  "selection.play": "Lire",
+  "selection.queue": "Ajouter à la file",
+  "selection.move": "Déplacer vers un dossier…",
+  "selection.playlist": "Ajouter à une playlist…",
+  "selection.clear": "Effacer la sélection",
+  "selection.moveTitle": {
+    one: "Déplacer {count} titre vers un dossier",
+    other: "Déplacer {count} titres vers un dossier",
+  },
+  "selection.moved": {
+    one: "{count} titre déplacé.",
+    other: "{count} titres déplacés.",
+  },
+  "selection.playlistTitle": {
+    one: "Ajouter {count} titre à une playlist",
+    other: "Ajouter {count} titres à une playlist",
+  },
+  "selection.added": {
+    one: "{count} titre ajouté à {name}.",
+    other: "{count} titres ajoutés à {name}.",
+  },
 };

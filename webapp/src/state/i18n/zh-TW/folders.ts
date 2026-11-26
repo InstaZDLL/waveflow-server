@@ -96,4 +96,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.notAllowed": "你已經無權在這個音樂庫新增檔案",
   "upload.reason.error": "發生錯誤",
   "upload.reason.hashing": "這個瀏覽器無法計算這個檔案的指紋",
+  "selection.label": "已選歌曲",
+  "selection.select": "選擇「{title}」",
+  "selection.count": {
+    one: "已選 {count} 首",
+    other: "已選 {count} 首",
+  },
+  "selection.all": "全選",
+  "selection.none": "全不選",
+  "selection.play": "播放",
+  "selection.queue": "加入播放佇列",
+  "selection.move": "移到資料夾…",
+  "selection.playlist": "加入播放清單…",
+  "selection.clear": "清除選取",
+  "selection.moveTitle": {
+    one: "將 {count} 首歌曲移到資料夾",
+    other: "將 {count} 首歌曲移到資料夾",
+  },
+  "selection.moved": {
+    one: "已移動 {count} 首歌曲。",
+    other: "已移動 {count} 首歌曲。",
+  },
+  "selection.playlistTitle": {
+    one: "將 {count} 首歌曲加入播放清單",
+    other: "將 {count} 首歌曲加入播放清單",
+  },
+  "selection.added": {
+    one: "已將 {count} 首歌曲加入 {name}。",
+    other: "已將 {count} 首歌曲加入 {name}。",
+  },
 };

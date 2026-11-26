@@ -418,3 +418,96 @@ test("keeps the folders and the folder picker readable in the light", async ({
   ).toBeVisible();
   await expectNoWcagViolations(page);
 });
+
+/**
+ * Tracks picked to act on together: a range taken with Shift, filed in one
+ * write, then a playlist made of the folder's tracks. One at a time, from
+ * each row's menu, is what this replaces.
+ */
+test("files a range of picked tracks at once and makes a playlist of them", async ({
+  page,
+}) => {
+  const songs = [
+    song(1, "Hidden Place", 0, false),
+    song(2, "Cocoon", 0, false),
+    song(3, "Pagan Poetry", 0, false),
+    song(4, "Aurora", 0, false),
+  ];
+  const state = await serveFiledFolders(page, songs);
+  state.folders.push({ id: "folder-1", parent_id: null, name: "Rock" });
+  const created: unknown[] = [];
+  await page.route("**/api/v2/playlists", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const body = route.request().postDataJSON() as {
+      name: string;
+      track_ids: string[];
+    };
+    created.push(body);
+    await route.fulfill({
+      status: 201,
+      json: {
+        id: "playlist-new",
+        owner_id: "user-1",
+        owner_username: "listener",
+        name: body.name,
+        comment: null,
+        public: false,
+        created_at: 0,
+        updated_at: 0,
+        songs: [],
+      },
+    });
+  });
+
+  await page.goto("/folders?folder=unfiled");
+  const rows = page.locator(".songs tbody tr");
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+
+  // The second, then Shift on the fourth: the three between them.
+  await page.getByRole("checkbox", { name: "Select “Cocoon”" }).click();
+  await page
+    .getByRole("checkbox", { name: "Select “Aurora”" })
+    .click({ modifiers: ["Shift"] });
+  const bar = page.getByRole("toolbar", { name: "Selected tracks" });
+  await expect(bar).toContainText("3 tracks selected");
+  await expect(
+    page.getByRole("checkbox", { name: "Select “Hidden Place”" }),
+  ).not.toBeChecked();
+
+  await bar.getByRole("button", { name: "Move to a folder…" }).click();
+  const picker = page.getByRole("dialog", {
+    name: "Move 3 tracks to a folder",
+  });
+  await picker.getByRole("button", { name: "Rock" }).click();
+  await expect(picker).toBeHidden();
+  expect(state.writes.at(-1)).toEqual({
+    method: "PUT",
+    path: "placements",
+    body: { track_ids: ["song-2", "song-3", "song-4"], folder_id: "folder-1" },
+  });
+  await expect(page.getByRole("status")).toHaveText("3 tracks moved.");
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByRole("toolbar")).toHaveCount(0);
+
+  // In the folder, every track picked at once, and a playlist made of them.
+  await page.goto("/folders?folder=folder-1");
+  await expect(rows).toHaveCount(3);
+  await page.getByRole("button", { name: "Select all" }).click();
+  await bar.getByRole("button", { name: "Add to a playlist…" }).click();
+  const lists = page.getByRole("dialog", {
+    name: "Add 3 tracks to a playlist",
+  });
+  await lists.getByLabel("New playlist").fill("Rock night");
+  await lists.getByRole("button", { name: "Create with these tracks" }).click();
+  await expect(lists).toBeHidden();
+  expect(created).toEqual([
+    { name: "Rock night", track_ids: ["song-2", "song-3", "song-4"] },
+  ]);
+  await expect(page.getByRole("status")).toHaveText(
+    "3 tracks added to Rock night.",
+  );
+});

@@ -171,7 +171,10 @@
     grid-template-columns: 1fr;
   }
 
-  .songs td:nth-child(3) {
+  /* The third column, the artists, is the fourth where a column of
+     checkboxes leads the row. */
+  .songs:not(.picking) td:nth-child(3),
+  .songs.picking td:nth-child(4) {
     display: none;
   }
   .songs td {

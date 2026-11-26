@@ -85,4 +85,12 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.detail": "Une par piste. Enregistrer à nouveau la déplace.",
   "bookmarks.save": "Enregistrer cette position",
   "bookmarks.forget": "Oublier",
+  "playlistPicker.new": "Nouvelle playlist",
+  "playlistPicker.name": "Son nom",
+  "playlistPicker.create": "Créer avec ces titres",
+  "playlistPicker.existing": "Vos playlists",
+  "playlistPicker.none":
+    "Vous n’avez pas encore de playlist : nommez-en une ci-dessus.",
+  "playlistPicker.loadError": "Vos playlists n’ont pas pu être chargées.",
+  "playlistPicker.failed": "Les titres n’ont pas pu être ajoutés. Réessayez.",
 };
