@@ -506,6 +506,52 @@ next visit asks again.
 **What it logs.** The provider and a verdict, such as `answered HTTP 503` —
 never the request URL, which carries your key.
 
+## Switching scrobbling on
+
+Scrobbling takes two steps, by two people. The operator declares where listens
+may go; then **each account links its own**, under **Settings → External
+scrobbling**, with a credential that belongs to that account alone. Until an
+account links a destination, nothing is queued for it and nothing leaves.
+[RFC-010](../rfcs/RFC-010-external-scrobbling.md) carries the reasoning, and
+[privacy](privacy.md#scrobbling-listenbrainz-maloja-lastfm) says exactly what
+is sent.
+
+| Destination | What the operator sets | What each account pastes or does |
+| --- | --- | --- |
+| ListenBrainz | Nothing: `https://api.listenbrainz.org` is declared by default | Its **user token**, from the settings of its account on listenbrainz.org |
+| Maloja | `WAVEFLOW_SCROBBLE_MALOJA_URL`, the address of the instance | An **API key** created in that Maloja's admin panel |
+| Last.fm | `WAVEFLOW_SCROBBLE_LASTFM_API_KEY` and `WAVEFLOW_SCROBBLE_LASTFM_SECRET`, from an [API application](https://www.last.fm/api/account/create) you register, and an `https` `WAVEFLOW_PUBLIC_URL` | **Connect to Last.fm**: Last.fm asks the person to approve, then sends them back |
+
+```bash
+WAVEFLOW_SCROBBLE_MALOJA_URL=https://maloja.example.com
+WAVEFLOW_SCROBBLE_LASTFM_API_KEY=…
+WAVEFLOW_SCROBBLE_LASTFM_SECRET=…
+```
+
+"Offered by this server. Your account is not linked to it yet." on the
+Settings page therefore means the operator's part is done and the account's is
+not. **The metadata key is not a scrobbling key**: `WAVEFLOW_METADATA_LASTFM_KEY`
+switches on artist biographies, never scrobbling, and the Last.fm row says so
+until its own two variables are set. You may register one Last.fm application
+and place its key in both.
+
+- **Last.fm without `https`.** The approval starts on last.fm and comes back to
+  `WAVEFLOW_PUBLIC_URL`, so without an `https` one the row shows *Unavailable
+  here*. Whoever has a shell on the host can still link an account from the
+  command line (`waveflow-server scrobble authorize`, then `scrobble exchange`).
+- **Several instances.** Each `…_URL` also takes a comma-separated list of
+  `name=url` pairs, `alice=https://…,bob=https://…`, and each account picks one
+  by name. Setting one to the empty string declares no instance: that is how
+  ListenBrainz is switched off.
+- **Plain `http`.** Refused, since the request carries a personal token, unless
+  `WAVEFLOW_SCROBBLE_ALLOW_PLAINTEXT=true`, and even then only towards a
+  private address or a local name (`.local`, `.internal`, `.home.arpa`).
+
+With the compose files in this repository, write these lines in the `.env`
+beside them; the compose file passes the Maloja and Last.fm ones on. The
+others (the plaintext switch, several ListenBrainz instances) have to be added
+under `environment` first.
+
 ## Switching lyrics from LRCLIB on
 
 **Off by default, and an upgrade leaves it off.**
@@ -673,7 +719,7 @@ this repository spell the mount out in full, so there it is one more key:
 
 ```yaml
       - type: bind
-        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        source: ${WAVEFLOW_MUSIC_PATH:?set WAVEFLOW_MUSIC_PATH in .env to the folder that holds your music}
         target: /music
         read_only: true
         bind:

@@ -5,7 +5,9 @@
 #   WAVEFLOW_DOMAIN=music.example.com
 #   WAVEFLOW_MUSIC_PATH=/path/to/music
 #
-# then `docker compose up -d`. Moving a server already running? Read "Moving an
+# then `docker compose up -d`. Every optional setting below takes its value
+# from that same `.env`; a line written there reaches the server only because
+# this file names it under `environment`. Moving a server already running? Read "Moving an
 # existing server" in docs/guides/operations.md first, or this one starts on a
 # new, empty data volume.
 #
@@ -30,12 +32,29 @@ services:
       #   docker compose exec waveflow cat /data/setup-token
       # or choose your own here, 16 characters at least.
       WAVEFLOW_SETUP_TOKEN: ${WAVEFLOW_SETUP_TOKEN:-}
+      # The account the server runs as, 4533 unless you say otherwise. Your
+      # music has to be readable by it.
+      WAVEFLOW_UID: ${WAVEFLOW_UID:-4533}
+      WAVEFLOW_GID: ${WAVEFLOW_GID:-4533}
+      # Optional features, all off while their line is empty; the compose file
+      # at the root of the repository says what each takes, and
+      # docs/guides/operations.md explains them.
+      WAVEFLOW_METADATA_PROVIDERS: ${WAVEFLOW_METADATA_PROVIDERS:-}
+      WAVEFLOW_METADATA_LASTFM_KEY: ${WAVEFLOW_METADATA_LASTFM_KEY:-}
+      WAVEFLOW_METADATA_THEAUDIODB_KEY: ${WAVEFLOW_METADATA_THEAUDIODB_KEY:-}
+      WAVEFLOW_LYRICS_PROVIDERS: ${WAVEFLOW_LYRICS_PROVIDERS:-}
+      WAVEFLOW_PODCASTS: ${WAVEFLOW_PODCASTS:-}
+      # ListenBrainz needs nothing here. Last.fm needs both lines, and finds
+      # the https address it also needs above.
+      WAVEFLOW_SCROBBLE_MALOJA_URL: ${WAVEFLOW_SCROBBLE_MALOJA_URL:-}
+      WAVEFLOW_SCROBBLE_LASTFM_API_KEY: ${WAVEFLOW_SCROBBLE_LASTFM_API_KEY:-}
+      WAVEFLOW_SCROBBLE_LASTFM_SECRET: ${WAVEFLOW_SCROBBLE_LASTFM_SECRET:-}
     volumes:
       - waveflow-data:/data
       # Read-only is all scanning needs. To receive uploads into this library,
       # set read_only to false and tick Accept uploads under Administration.
       - type: bind
-        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        source: ${WAVEFLOW_MUSIC_PATH:?set WAVEFLOW_MUSIC_PATH in .env to the folder that holds your music}
         target: /music
         read_only: true
     networks:
