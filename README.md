@@ -150,6 +150,86 @@
 
 **You need** FFmpeg and ffprobe, on `PATH` or beside the `waveflow-server` executable (already in the Docker image and in the archives below). Nothing else: no database server, no cache, no broker.
 
+| Where it will run | Read |
+| --- | --- |
+| A server, a NAS or a Raspberry Pi that stays on | [With Docker Compose](#with-docker-compose), or [with `docker run`](#with-docker-run) |
+| Home Assistant OS | [Home Assistant](#home-assistant) |
+| Your own computer, for your own music | [On one computer, without Docker](#on-one-computer-without-docker) |
+
+### With Docker Compose
+
+**1. A folder with two files.** Make a folder for the server and fetch the compose file into it:
+
+```bash
+mkdir waveflow && cd waveflow
+curl -fsSLO https://raw.githubusercontent.com/InstaZDLL/waveflow-server/main/docker-compose.yml
+```
+
+Beside it, write a `.env` that names your music folder. Compose reads it on every command run from this folder:
+
+```bash
+echo 'WAVEFLOW_MUSIC_PATH=/path/to/music' > .env
+```
+
+That one line is all the server needs. Every other setting is optional and goes in the same `.env`: the compose file is commented line by line, and it names each setting it passes on to the server.
+
+**2. Start it, and read the setup token.**
+
+```bash
+docker compose up -d
+docker compose exec waveflow cat /data/setup-token
+```
+
+The second command prints the one-time token the setup screen asks for, so that nobody else on your network can claim the server first. The server writes it as it starts: if the command answers *No such file or directory*, wait a few seconds and run it again. Run every `docker compose` command from this folder.
+
+**3. Open `http://your-host:4533`.** The setup screen creates the administrator account. As it does, the folder mounted at `/music` becomes your first library, and its first scan starts on its own: the web player opens on your music. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it. An image of 2.3.0 or earlier does not make the library yet: there, add it under **Settings → Administration** with the path `/music`.
+
+The music is mounted read-only, which is all scanning and playing need. Receiving uploads takes a library opened to them and a writable mount, which the [same guide](docs/guides/operations.md#receiving-files) explains.
+
+To reach the server from outside your home over HTTPS, [`packaging/caddy/`](packaging/caddy/) runs the same server behind Caddy, which obtains and renews the certificate itself. The [operations guide](docs/guides/operations.md#the-recommended-setup-caddy-in-the-same-compose-file) explains it, including how to move a server already started with the file above without starting over on an empty volume.
+
+### With `docker run`
+
+```bash
+docker run -d --name waveflow \
+  -p 4533:4533 \
+  -v waveflow-data:/data \
+  -v /path/to/music:/music:ro \
+  ghcr.io/instazdll/waveflow-server:2.3.0
+docker exec waveflow cat /data/setup-token
+```
+
+Then open `http://your-host:4533`, as in step 3 above. An optional setting is one more `-e NAME=value` on the first command.
+
+The image is built for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system) and published under the same tags on both registries:
+
+| Registry | Image |
+| --- | --- |
+| GitHub Container Registry | `ghcr.io/instazdll/waveflow-server` |
+| Docker Hub | `docker.io/instazdll/waveflow-server` |
+
+Each release is tagged with its version, and `latest` follows the latest stable release.
+
+On Fedora, RHEL and other systems where SELinux is enforcing, Podman refuses the container your music folder until it is labelled for containers: mount it as `/path/to/music:/music:ro,z`, or, in the compose file, add the two lines its comment gives. The [operations guide](docs/guides/operations.md#a-music-folder-under-selinux) says what that changes on the host.
+
+### Home Assistant
+
+On Home Assistant OS, which runs no container you start yourself, WaveFlow Server installs as an app (what Home Assistant called an add-on) from [its own repository](https://github.com/InstaZDLL/waveflow-home-assistant):
+
+[![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FInstaZDLL%2Fwaveflow-home-assistant)
+
+Or, in Home Assistant, open **Settings → Apps → App store**, choose **Repositories** in the menu, and add `https://github.com/InstaZDLL/waveflow-home-assistant`.
+
+The app runs the image above, unchanged, on amd64 and aarch64: Home Assistant Green or Yellow, a Raspberry Pi 4 or 5 on a 64-bit system, or an x86 machine. It reads your music, read-only, from Home Assistant's `media` and `share` folders. It keeps the database and the instance key in its own folder, which Home Assistant's backups include.
+
+Its first start differs from the steps above, and [its documentation](https://github.com/InstaZDLL/waveflow-home-assistant/blob/main/waveflow/DOCS.md) walks through it:
+
+- you choose the setup token yourself, in the app's **Configuration** tab;
+- you add a library from the web player rather than from a terminal;
+- scrobbling works with ListenBrainz alone, which needs no setting: the **Configuration** tab offers none of the lines Maloja and Last.fm need.
+
+The web player opens on port 4533, in a tab of its own. It cannot show inside Home Assistant's sidebar yet.
+
 ### On one computer, without Docker
 
 From 2.1.0, each [release](https://github.com/InstaZDLL/waveflow-server/releases/latest) carries an archive to extract and start, for your own music on your own computer: no terminal on Windows and macOS, no install, and the web player opens on its own.
@@ -164,90 +244,51 @@ From 2.1.0, each [release](https://github.com/InstaZDLL/waveflow-server/releases
 
 Each holds one folder: the server, its own FFmpeg, a `laptop.env` of settings, the licences, and a `README.txt` that walks through the first start. The Windows executables carry a self-signed certificate and the macOS ones an ad-hoc signature, which neither system trusts, so both warn on the first launch; the `README.txt` says what to click past. `SHA256SUMS`, on the same release, holds their checksums, and `ffmpeg-<version>-sources.tar.gz` the source of the FFmpeg they carry. The Linux archives are static and run on any distribution.
 
-The rest of this section is for a server that stays on: the data lives in a folder of your choosing, and the commands assume a terminal.
+### After the first start
 
-### Docker
+Everything below is done from the web player, signed in as the administrator.
 
-```bash
-docker run -d --name waveflow \
-  -p 4533:4533 \
-  -v waveflow-data:/data \
-  -v /path/to/music:/music:ro \
-  ghcr.io/instazdll/waveflow-server:2.3.0
-```
+- **Subsonic apps** sign in with a **dedicated password**, separate from the web one. Set it under **Settings → Administration → Accounts**, in the *Dedicated Subsonic password* field beside the account, with **Rotate credential**. On your own network, point your app at `http://your-host:4533` with that username and password.
+- **Scrobbling** is linked by each account for itself, under **Settings → External scrobbling**. ListenBrainz works as it is: paste the *user token* from your ListenBrainz settings. Maloja and Last.fm need a line or two in `.env` first, which the [operations guide](docs/guides/operations.md#switching-scrobbling-on) gives.
+- **Artist biographies and portraits, lyrics from LRCLIB and podcasts** are off until switched on in `.env`, because each one contacts another host: the [operations guide](docs/guides/operations.md#switching-metadata-enrichment-on) has one section per feature, and the [privacy page](docs/guides/privacy.md) lists every request they make.
+- **More accounts, and more libraries,** are added under **Settings → Administration**.
 
-The image is built for `linux/amd64` and `linux/arm64` (a Raspberry Pi 4 or 5 on a 64-bit system) and published under the same tags on both registries:
+A change to `.env` reaches the server with `docker compose up -d`, which recreates the container. `docker compose restart` keeps the settings it started with. A variable exported in your shell wins over the same line in `.env`: if `WAVEFLOW_PUBLIC_URL` was exported once, `unset` it. `docker compose config` prints the file as Compose resolved it, and its `environment` section is what the server will receive. Elsewhere, the same lines go where that installation keeps its settings:
 
-| Registry | Image |
-| --- | --- |
-| GitHub Container Registry | `ghcr.io/instazdll/waveflow-server` |
-| Docker Hub | `docker.io/instazdll/waveflow-server` |
+- **`docker run`**: one `-e NAME=value` each. A container keeps the settings it was created with, so remove it (`docker rm -f waveflow`) and run the command again with them; the data stays in the `waveflow-data` volume.
+- **The archive for one computer**: its `laptop.env`, read again on the next start.
 
-Each release is tagged with its version, and `latest` follows the latest stable release.
-
-On Fedora, RHEL and other systems where SELinux is enforcing, Podman refuses the container your music folder until it is labelled for containers: mount it as `/path/to/music:/music:ro,z`. The [operations guide](docs/guides/operations.md#a-music-folder-under-selinux) says what that changes on the host.
-
-With Compose, set `WAVEFLOW_MUSIC_PATH` to your music folder, which is mounted read-only:
-
-```bash
-WAVEFLOW_MUSIC_PATH=/path/to/music docker compose up -d
-```
-
-To reach it from outside your home over HTTPS, [`packaging/caddy/`](packaging/caddy/) runs the same server behind Caddy, which obtains and renews the certificate itself; the [operations guide](docs/guides/operations.md#the-recommended-setup-caddy-in-the-same-compose-file) explains it, including how to move a server already started with the file above without starting over on an empty volume.
-
-### Home Assistant
-
-On Home Assistant OS, which runs no container you start yourself, WaveFlow Server installs as an app (what Home Assistant called an add-on) from [its own repository](https://github.com/InstaZDLL/waveflow-home-assistant):
-
-[![Add this repository to your Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2FInstaZDLL%2Fwaveflow-home-assistant)
-
-Or, in Home Assistant, open **Settings → Apps → App store**, choose **Repositories** in the menu, and add `https://github.com/InstaZDLL/waveflow-home-assistant`.
-
-The app runs the image above, unchanged, on amd64 and aarch64: Home Assistant Green or Yellow, a Raspberry Pi 4 or 5 on a 64-bit system, or an x86 machine. It reads your music, read-only, from Home Assistant's `media` and `share` folders. It keeps the database and the instance key in its own folder, which Home Assistant's backups include.
-
-Its first start differs from the steps below, and [its documentation](https://github.com/InstaZDLL/waveflow-home-assistant/blob/main/waveflow/DOCS.md) walks through it:
-
-- you choose the setup token yourself, in the app's **Configuration** tab;
-- you add a library from the web player rather than from a terminal.
-
-The web player opens on port 4533, in a tab of its own. It cannot show inside Home Assistant's sidebar yet.
-
-### First steps
-
-Open `http://your-host:4533`. The setup screen creates the administrator account; it asks for the one-time token the server wrote in its data directory:
-
-```bash
-docker exec waveflow cat /data/setup-token           # started with docker run
-docker compose exec waveflow cat /data/setup-token   # started with Compose
-```
-
-That is all: the folder mounted at `/music` becomes your first library as the account is created, and its first scan starts on its own. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it. The read-only mount is enough for that; receiving uploads takes a library opened to them and a writable mount, which the [same guide](docs/guides/operations.md#receiving-files) explains.
-
-An image of 2.3.0 or earlier does not make the library yet: there, add it under **Settings → Administration** with the path `/music`.
+The server speaks plain HTTP, and Subsonic apps send their credentials with every request: the compose file publishes port 4533 on every interface of the host, which suits a network you trust and nothing wider. To listen from outside, put it behind a reverse proxy that terminates TLS, as [`packaging/caddy/`](packaging/caddy/) does, give your apps its `https://` address, and set `WAVEFLOW_PUBLIC_URL` to it. The [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) says how to publish the port when a proxy sits in front, and has the rest, including backups and the instance key.
 
 <details>
-<summary>From the command line instead of the browser</summary>
+<summary>The same steps from the command line</summary>
 
-The command line creates the account without the token, and without the first library, which you then add under that account (`admin` below):
+The command line creates the account without the token, and without the first library, which you then add under that account (`admin` below). With `docker run`, write `docker exec waveflow` where these say `docker compose exec waveflow`:
 
 ```bash
-docker exec -e WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters' \
+docker compose exec -e WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters' \
   waveflow waveflow-server account create-admin --username admin
-docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
+docker compose exec waveflow waveflow-server library add --owner admin --name Music --path /music
+docker compose exec -e WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password' \
+  waveflow waveflow-server credential set --actor admin --username admin
 ```
 
 </details>
 
-### Connect a Subsonic app
+### When something goes wrong
 
-Subsonic apps use a **dedicated password**, separate from the web one:
+| What you see | Why | What to do |
+| --- | --- | --- |
+| Compose stops on *set WAVEFLOW_MUSIC_PATH in .env* | No `.env` in the folder you ran it from, or no such line in it | Write it as in step 1, and run Compose from that folder |
+| `docker exec waveflow …` answers *No such container* | Compose names the container after the folder, `waveflow-waveflow-1` for instance | Use `docker compose exec waveflow …`, from the folder of the compose file |
+| *Wrong username or password* although they are right, or *Setup failed* on the setup screen | `WAVEFLOW_PUBLIC_URL` is set, and the web player signs in only from that exact address | Open the server at that address, or leave the setting empty on your own network |
+| No `setup-token` file | The server is still starting; or `WAVEFLOW_SETUP_TOKEN` is set, so no file is written; or an account exists already, and the token is spent | Run the command again a few seconds later; or type the value you set; or sign in with that account |
+| The library stays empty, and the log says *Permission denied* | The server runs as uid 4533, which cannot read your music; or SELinux keeps the container out | Make the music readable by everyone, or name its owner with `WAVEFLOW_UID` and `WAVEFLOW_GID`; under SELinux, [label the folder](docs/guides/operations.md#a-music-folder-under-selinux) |
+| A setting written in `.env` changes nothing | Only the names the compose file lists under `environment` reach the server; or the container still runs with the settings it started with | Add the line under `environment` if it is missing, then `docker compose up -d` |
+| A folder made on the disk does not show under **Folders** | That view holds WaveFlow's own folders, not the disk's. The tracks of a new disk folder arrive in **To sort** once scanned; an empty folder shows nowhere | File them from **To sort**: tick them, then **Move to a folder…** |
+| An upload is refused | The library is not open to uploads, or the music is mounted read-only | Both are needed: see [Receiving files](docs/guides/operations.md#receiving-files) |
 
-```bash
-docker exec -e WAVEFLOW_SUBSONIC_PASSWORD='a-different-app-password' \
-  waveflow waveflow-server credential set --actor admin --username admin
-```
-
-On your own network, point your app at `http://your-host:4533` with that username and password. The server speaks plain HTTP, and Subsonic apps send their credentials with every request: `-p 4533:4533` above publishes it on every interface of the host, which suits a network you trust and nothing wider. To listen from outside, put it behind a reverse proxy that terminates TLS, give your apps its `https://` address, and set `WAVEFLOW_PUBLIC_URL` to it. The [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) says how to publish the port when a proxy sits in front, and has the rest, including backups and the instance key.
+The log says more than the screen: `docker compose logs waveflow`.
 
 <details>
 <summary>From source</summary>

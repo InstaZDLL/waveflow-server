@@ -1,36 +1,87 @@
-# Pulls the published image. To run your own build instead, uncomment `build`
-# below — with it present Compose builds from this checkout rather than pulling,
-# which is what a contributor wants and what an operator does not.
+# WaveFlow Server on your own network, over plain HTTP on port 4533.
+#
+# Put this file in a folder of its own, with a `.env` beside it that Compose
+# reads on every command run from that folder. One line is enough:
+#
+#   WAVEFLOW_MUSIC_PATH=/path/to/music
+#
+# then `docker compose up -d`, and open http://your-host:4533. Every other
+# setting below is optional and takes its value from that same `.env`: a line
+# written there reaches the server only because this file names it under
+# `environment`, so a variable it does not name has to be added here as well.
+#
+# To reach the server from outside over HTTPS, use packaging/caddy/ instead,
+# which publishes no port of its own.
+#
 # The same image is on Docker Hub as `docker.io/instazdll/waveflow-server`, with
-# the same tags and digest, for a host that pulls from there instead.
+# the same tags and digest. To run your own build instead, uncomment `build`
+# below and start with `docker compose up -d --build`: without `--build`,
+# Compose may reuse the published image it already has rather than build this
+# checkout. That is what a contributor wants and what an operator does not.
 services:
   waveflow:
     image: ghcr.io/instazdll/waveflow-server:2.3.0
     # build: .
     restart: unless-stopped
-    # Plain HTTP on every interface. To reach the server from outside over
-    # HTTPS, use packaging/caddy/ instead, which publishes no port.
     ports:
       - "4533:4533"
     environment:
       WAVEFLOW_DATA_DIR: /data
       WAVEFLOW_BIND: 0.0.0.0:4533
-      WAVEFLOW_PUBLIC_URL: ${WAVEFLOW_PUBLIC_URL:-}
-      # The port above is published on every interface, so the first account
-      # asks for a one-time setup token.
-      # Leave this empty and the server writes one to /data/setup-token:
+      # The first account asks for a one-time setup token, since the port above
+      # is open to the whole network. Leave this empty and the server writes
+      # one to /data/setup-token, which you read from this folder with
       #   docker compose exec waveflow cat /data/setup-token
-      # or choose your own here, 16 characters at least.
+      # or choose your own here, 16 characters at least, and no file is written.
       WAVEFLOW_SETUP_TOKEN: ${WAVEFLOW_SETUP_TOKEN:-}
+      # Leave this empty on your own network. Once it is set, the web player
+      # signs in only from this exact address: set it to
+      # https://music.example.com and open http://192.168.1.10:4533, and sign-in
+      # answers 403. Set it when a reverse proxy gives the server an address of
+      # its own, to that address.
+      WAVEFLOW_PUBLIC_URL: ${WAVEFLOW_PUBLIC_URL:-}
+      # The account the server runs as, 4533 unless you say otherwise. Your
+      # music has to be readable by it: name the owner of your music here if
+      # it is not readable by everyone.
+      WAVEFLOW_UID: ${WAVEFLOW_UID:-4533}
+      WAVEFLOW_GID: ${WAVEFLOW_GID:-4533}
+      # Optional features, all off while their line is empty. Each is explained
+      # in docs/guides/operations.md.
+      #
+      # Artist biographies, portraits and banners ("Switching metadata
+      # enrichment on"): for instance lastfm,deezer, with your own Last.fm key.
+      WAVEFLOW_METADATA_PROVIDERS: ${WAVEFLOW_METADATA_PROVIDERS:-}
+      WAVEFLOW_METADATA_LASTFM_KEY: ${WAVEFLOW_METADATA_LASTFM_KEY:-}
+      WAVEFLOW_METADATA_THEAUDIODB_KEY: ${WAVEFLOW_METADATA_THEAUDIODB_KEY:-}
+      # Lyrics from LRCLIB for the tracks that have none: lrclib.
+      WAVEFLOW_LYRICS_PROVIDERS: ${WAVEFLOW_LYRICS_PROVIDERS:-}
+      # Podcasts: true.
+      WAVEFLOW_PODCASTS: ${WAVEFLOW_PODCASTS:-}
+      # Scrobbling ("Switching scrobbling on"). ListenBrainz needs nothing
+      # here: each account pastes its own user token in Settings. Maloja needs
+      # your instance's address. Last.fm needs an application of your own,
+      # both lines, and an https WAVEFLOW_PUBLIC_URL; the metadata key above
+      # does not stand in for it.
+      WAVEFLOW_SCROBBLE_MALOJA_URL: ${WAVEFLOW_SCROBBLE_MALOJA_URL:-}
+      WAVEFLOW_SCROBBLE_LASTFM_API_KEY: ${WAVEFLOW_SCROBBLE_LASTFM_API_KEY:-}
+      WAVEFLOW_SCROBBLE_LASTFM_SECRET: ${WAVEFLOW_SCROBBLE_LASTFM_SECRET:-}
     volumes:
+      # The database, its key, the artwork: back them up together.
       - waveflow-data:/data
-      # Your music, and the first library the setup screen registers. Read-only
-      # is all a library needs to be scanned and played. To receive uploads
-      # into it from the web player, set read_only to false and tick Accept
-      # uploads in the library's settings under Administration: the server
-      # then writes the files under .waveflow-managed in this folder.
+      # Your music, and the first library the setup screen registers. The
+      # 2.3.0 image above does not register it yet: add it under Settings →
+      # Administration with the path /music, or with `waveflow-server library
+      # add`. Compose stops with this message when the path is not set, rather
+      # than mounting a folder that does not exist. Read-only is all a library needs to be
+      # scanned and played. To receive uploads into it from the web player,
+      # set read_only to false and tick Accept uploads in the library's
+      # settings under Administration: the server then writes the files under
+      # .waveflow-managed in this folder. Under SELinux (Fedora, RHEL), add
+      #   bind:
+      #     selinux: z
+      # below read_only, as "A music folder under SELinux" explains.
       - type: bind
-        source: ${WAVEFLOW_MUSIC_PATH:-./music}
+        source: ${WAVEFLOW_MUSIC_PATH:?set WAVEFLOW_MUSIC_PATH in .env to the folder that holds your music}
         target: /music
         read_only: true
 

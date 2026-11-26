@@ -63,6 +63,26 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   apart among the other albums. It now sorts by the album's artist, the
   album, then disc and track.
 
+### Changed
+
+- **The compose files pass the optional settings on from `.env`.** A
+  variable written in the `.env` beside a compose file reached the server
+  only if the file named it under `environment`, and neither named any
+  optional one: the metadata providers, lyrics, podcasts, Maloja and the
+  Last.fm application stayed off however they were written. Both files now
+  name them, and `WAVEFLOW_UID` and `WAVEFLOW_GID`, empty meaning the
+  default; a variable they do not name still has to be added by hand.
+- **`WAVEFLOW_MUSIC_PATH` is required by both compose files.** Unset, they
+  mounted `./music`, which Docker refuses to start on when it does not
+  exist; Compose now stops before starting anything, and says which line
+  to write in `.env`.
+- **The README installs with Docker Compose step by step**, from an empty
+  folder, with every command in its `docker compose exec` form, the steps
+  that follow the first start in the web player rather than a terminal, and
+  a table of what goes wrong and why. The operations guide gains *Switching
+  scrobbling on*, which separates scrobbling's variables from the metadata
+  key.
+
 ## [2.3.0] — 2026-11-17
 
 The schema gains one table, `track_clip`, so going back to 2.2.2 takes a
