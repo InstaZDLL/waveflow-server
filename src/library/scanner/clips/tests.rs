@@ -126,7 +126,16 @@ fn fixture_tree(root: &Path) -> Vec<(&'static str, Option<(&'static str, &'stati
     // A video track beside a video of its name.
     video(&root.join("A/Pair.mp4"), 390);
     ebml(&root.join("A/Pair.webm"));
-    vec![
+    // Two spellings of one name, which only a case-sensitive disk can hold:
+    // the one spelt like the track first, though `Twin` sorts before `twin`.
+    std::fs::create_dir_all(root.join("C")).unwrap();
+    ebml(&root.join("C/twin.webm"));
+    let case_sensitive = !root.join("C/Twin.webm").exists();
+    if case_sensitive {
+        flac(&root.join("C/twin.flac"), 400);
+        ebml(&root.join("C/Twin.webm"));
+    }
+    let mut expected = vec![
         ("A/Audio.flac", None),
         ("A/Audio.mp4", None),
         ("A/Clips/Inner.flac", None),
@@ -140,7 +149,39 @@ fn fixture_tree(root: &Path) -> Vec<(&'static str, Option<(&'static str, &'stati
         ("A/Still.mp4", None),
         ("A/Two.flac", Some(("A/Clips/Two.mp4", "clips_dir"))),
         ("B/CASE.flac", Some(("B/clips/case.WEBM", "clips_dir"))),
-    ]
+    ];
+    if case_sensitive {
+        expected.push(("C/twin.flac", Some(("C/twin.webm", "sibling"))));
+    }
+    expected
+}
+
+/// Within one extension, the video spelt like the track comes before another
+/// case of its name, whichever sorts first, as `find_clip` takes it. Over
+/// names only, so a case-insensitive disk, where the fixture tree cannot hold
+/// both spellings, checks it too.
+#[test]
+fn the_spelling_of_the_track_comes_before_another_case() {
+    let list: Vec<(PathBuf, String)> = ["A/Twin.webm", "A/twin.webm", "A/twin.mkv"]
+        .into_iter()
+        .map(|name| (PathBuf::from(name), name.to_owned()))
+        .collect();
+    let videos = Videos::new(&list);
+    let names = |track: &'static str| -> Vec<&str> {
+        videos
+            .candidates(track, Path::new(track))
+            .into_iter()
+            .map(|candidate| candidate.name)
+            .collect()
+    };
+    assert_eq!(
+        names("A/twin.flac"),
+        ["A/twin.webm", "A/Twin.webm", "A/twin.mkv"]
+    );
+    assert_eq!(
+        names("A/Twin.flac"),
+        ["A/Twin.webm", "A/twin.webm", "A/twin.mkv"]
+    );
 }
 
 /// RFC-029 decision 2: the server's matcher answers what the core's
