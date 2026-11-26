@@ -466,7 +466,8 @@ impl DomainServices {
             () => {
                 " ORDER BY COALESCE(alb.album_artist_name, t.artist_display) \
                      COLLATE natural_order NULLS LAST, \
-                   t.album_title COLLATE natural_order NULLS LAST, t.album_id NULLS LAST, \
+                   COALESCE(alb.title, t.album_title) COLLATE natural_order NULLS LAST, \
+                   t.album_id NULLS LAST, \
                    COALESCE(ovr.disc_number, t.disc_number) NULLS LAST, \
                    COALESCE(ovr.track_number, t.track_number) NULLS LAST, \
                    COALESCE(ovr.title, t.title) COLLATE natural_order, t.id LIMIT ? OFFSET ?"

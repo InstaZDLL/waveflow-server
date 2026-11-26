@@ -10,7 +10,9 @@ use super::*;
 /// tracks scattered among other albums' by the name on each. Here the
 /// compilation's two tracks credit `Zed` and `Abe`, and its album artist
 /// sorts after `Mid`: by track artist, `Abe` came first and `Zed` last, with
-/// `Mid`'s album between them.
+/// `Mid`'s album between them. And the album is sorted by its own title, not
+/// each file's spelling of it: a file tagging it in lower case would otherwise
+/// sort apart from its album's other tracks.
 #[tokio::test]
 async fn a_folder_lists_its_tracks_album_by_album() {
     let (_temp, config, state) = test_app().await;
@@ -37,7 +39,9 @@ async fn a_folder_lists_its_tracks_album_by_album() {
         ("Side B", "B Side", "Mid", "Mid", 1, 2),
         ("Disc Two", "Compilation", "Various Artists", "Abe", 2, 1),
         ("First", "Compilation", "Various Artists", "Zed", 1, 1),
-        ("Side A", "B Side", "Mid", "Mid", 1, 1),
+        // The same album, its title spelt in another case on one file: one
+        // album, whose tracks keep their sleeve order.
+        ("Side A", "b side", "Mid", "Mid", 1, 1),
     ];
     state
         .db

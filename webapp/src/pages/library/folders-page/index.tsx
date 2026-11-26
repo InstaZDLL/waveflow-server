@@ -152,6 +152,8 @@ export function FoldersPage({ folder }: { folder: string }) {
       setNotice({ tone: "status", text: said, folder: then });
       return true;
     } catch (error) {
+      // A failed move past 500 tracks may follow batches that were filed.
+      await refresh();
       const text =
         (error instanceof ApiError && refused?.(error)) || t("filed.failed");
       setNotice({ tone: "error", text, folder });
@@ -524,12 +526,16 @@ export function FoldersPage({ folder }: { folder: string }) {
                       setNotice({ tone: "status", text, folder })
                     }
                     onMoved={(moved) =>
-                      // From the selection as it is when the move ends, of
-                      // the folder it ran in: not the one it started from.
-                      setPicks((current) => ({
-                        ...current,
-                        picked: unpick(current.picked, moved),
-                      }))
+                      // Only in the folder the move left: a track picked
+                      // since where it went stays picked.
+                      setPicks((current) =>
+                        current.folder === folder
+                          ? {
+                              ...current,
+                              picked: unpick(current.picked, moved),
+                            }
+                          : current,
+                      )
                     }
                     onClear={() => setPicked(NOTHING_PICKED)}
                   />
