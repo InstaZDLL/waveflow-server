@@ -414,3 +414,29 @@ async fn each_track_category_lists_what_its_criterion_names() {
         "both are one group"
     );
 }
+
+/// A route parses a category from the very name the wire carries for it, and
+/// refuses the credits list, which is not a track category.
+#[test]
+fn a_category_parses_from_the_name_it_serialises_to() {
+    for category in AttentionCategory::ALL {
+        assert_eq!(
+            serde_json::to_value(category).unwrap(),
+            category.as_str(),
+            "{category:?}"
+        );
+        assert_eq!(
+            AttentionCategory::parse_track_category(category.as_str()),
+            (category != AttentionCategory::SplitCredits).then_some(category),
+            "{category:?}"
+        );
+    }
+    assert_eq!(
+        AttentionCategory::parse_track_category("Missing_Year"),
+        None
+    );
+    assert_eq!(
+        AttentionCategory::parse_track_category("\"missing_year\""),
+        None
+    );
+}

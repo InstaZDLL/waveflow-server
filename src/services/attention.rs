@@ -51,12 +51,32 @@ impl AttentionCategory {
         Self::ProbableFakeLossless,
     ];
 
+    /// The name the wire carries, the one `serde` writes for the same variant.
+    /// The match is exhaustive, so a new category cannot go unnamed.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SplitCredits => "split_credits",
+            Self::MissingArtist => "missing_artist",
+            Self::MissingAlbum => "missing_album",
+            Self::MissingYear => "missing_year",
+            Self::MissingTrackNumber => "missing_track_number",
+            Self::MissingCover => "missing_cover",
+            Self::AlbumYearConflict => "album_year_conflict",
+            Self::CompilationNoAlbumArtist => "compilation_no_album_artist",
+            Self::DuplicateTrackNumber => "duplicate_track_number",
+            Self::TrackNumberGap => "track_number_gap",
+            Self::ProbableDuplicate => "probable_duplicate",
+            Self::ProbableFakeLossless => "probable_fake_lossless",
+        }
+    }
+
     /// `None` for anything that is not a track category, so a route can answer
-    /// it as an invalid parameter.
+    /// it as an invalid parameter. The value is compared against the closed set
+    /// of names, never handed to a deserializer.
     pub fn parse_track_category(value: &str) -> Option<Self> {
-        let category: Self =
-            serde_json::from_value(serde_json::Value::String(value.into())).ok()?;
-        (category != Self::SplitCredits).then_some(category)
+        Self::ALL
+            .into_iter()
+            .find(|category| *category != Self::SplitCredits && category.as_str() == value)
     }
 }
 
