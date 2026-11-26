@@ -47,7 +47,8 @@ server registers that folder as the administrator's library, named `Music`,
 private, and starts its first scan: the web player opens on the music rather
 than on empty pages. The Docker image sets it to `/music`, where the compose
 file mounts your music, so there is nothing to type. An empty folder is
-registered all the same.
+registered all the same. Releases up to 2.3.0 do not do this: with one of
+them, add the library by hand as below.
 
 The read-only mount the compose file uses is enough to register and scan the
 library. Uploads are another matter: a library takes none until an

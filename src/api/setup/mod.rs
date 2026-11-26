@@ -36,13 +36,23 @@ pub struct SetupResponse {
 /// The name the first library is given. The administrator renames it at will.
 const FIRST_LIBRARY_NAME: &str = "Music";
 
-/// How long setup's answer waits for the first library.
-///
-/// Well inside the request's own deadline: the account exists and the token
-/// is spent by the time the library is made, so a mount slow enough to reach
-/// that deadline must not turn the answer into a timeout the administrator
-/// can only retry into a conflict.
+/// The longest setup's answer waits for the first library.
 const FIRST_LIBRARY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long setup's answer waits for the first library, `spent` into a
+/// request whose deadline is `deadline`.
+///
+/// Well inside that deadline, whatever `WAVEFLOW_REQUEST_TIMEOUT_SECS` says:
+/// the account exists and the token is spent by the time the library is
+/// made, so a mount slow enough to reach the deadline must not turn the
+/// answer into a timeout the administrator can only retry into a conflict.
+/// Half of what is left, so the answer has the other half to go out in.
+fn first_library_wait(
+    deadline: std::time::Duration,
+    spent: std::time::Duration,
+) -> std::time::Duration {
+    (deadline.saturating_sub(spent) / 2).min(FIRST_LIBRARY_WAIT)
+}
 
 #[utoipa::path(get, path = "/api/v2/setup", tag = "authentication", responses((status = 200, body = SetupStatusResponse)))]
 pub async fn setup_status(
@@ -58,6 +68,7 @@ pub async fn setup(
     headers: HeaderMap,
     Json(request): Json<SetupRequest>,
 ) -> Result<(StatusCode, Json<SetupResponse>), ApiError> {
+    let started = std::time::Instant::now();
     validate_web_origin(&state, &headers)?;
     // Before the username and the password are looked at: a caller without the
     // token learns nothing from this route, not even the password rules.
@@ -84,7 +95,8 @@ pub async fn setup(
     // answer goes without it, and the library is still made, whole, rather
     // than cancelled between its row and its scan.
     let making = tokio::spawn(first_library(state.clone(), user_id));
-    let library = match tokio::time::timeout(FIRST_LIBRARY_WAIT, making).await {
+    let wait = first_library_wait(state.request_timeout, started.elapsed());
+    let library = match tokio::time::timeout(wait, making).await {
         Ok(Ok(library)) => library,
         Ok(Err(error)) => {
             tracing::error!(error = %error, "the first library's task failed");
@@ -160,3 +172,6 @@ async fn first_library(state: AppState, owner: Uuid) -> Option<CreateLibraryResp
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

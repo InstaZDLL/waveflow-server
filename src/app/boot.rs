@@ -204,6 +204,7 @@ async fn boot(db: database::Database, config: &Config) -> anyhow::Result<AppStat
         subsonic_legacy_clients: config.subsonic_legacy_clients.clone().into(),
         setup,
         music_dir: config.music_dir.clone(),
+        request_timeout: config.request_timeout,
     })
 }
 

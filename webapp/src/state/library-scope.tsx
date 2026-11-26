@@ -80,24 +80,27 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [listed, setListed] = useState(false);
   const [generation, setGeneration] = useState(0);
-  // Whether a request is out. The next ask is armed only while none is: a
+  // The generation whose request last answered; a request is out while it
+  // is not the current one. The next ask is armed only while none is: a
   // timer running beside a request — an automatic one that is slow, or the
   // refresh an administration screen asks for — would replace it before it
-  // answered, and a library could stay unseen behind it.
-  const [asking, setAsking] = useState(true);
+  // answered, and a library could stay unseen behind it. A number rather
+  // than a flag set on asking and cleared on answering: an answer quick
+  // enough to land before the flag was ever drawn would leave it as it was,
+  // and with the list unchanged nothing would arm the next ask.
+  const [answered, setAnswered] = useState(-1);
   const refresh = useCallback(() => setGeneration((value) => value + 1), []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `generation` is the request to list again, read by nothing else.
   useEffect(() => {
     let cancelled = false;
-    setAsking(true);
+    const asked = generation;
     listLibraries().then(
       (found) => {
         if (cancelled) return;
         setLibraries(found);
         setListed(true);
         setReady(true);
-        setAsking(false);
+        setAnswered(asked);
         // A remembered library that is gone — deleted, or a membership
         // withdrawn — must not leave the client scoped to nothing.
         setActiveId((current) =>
@@ -112,7 +115,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
         // libraries cannot be had at all.
         if (cancelled) return;
         setReady(true);
-        setAsking(false);
+        setAnswered(asked);
         // A list that could not be had again unsays the one before it: a
         // refresh that fails after a library was registered must not leave
         // the stale empty list standing as "this account reaches none". The
@@ -135,7 +138,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   // read, which is exactly when asking again matters.
   const relists = useRef(0);
   useEffect(() => {
-    if (!ready || asking) return;
+    if (!ready || answered !== generation) return;
     if (listed && libraries.length > 0) {
       relists.current = 0;
       return;
@@ -147,7 +150,7 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
       refresh();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [ready, asking, listed, libraries.length, refresh]);
+  }, [ready, answered, generation, listed, libraries.length, refresh]);
 
   useEffect(() => {
     if (!activeId) return;

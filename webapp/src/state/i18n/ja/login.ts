@@ -29,5 +29,6 @@ export const login: Record<keyof typeof en, TranslationValue> = {
     one: "このブラウザに保存した{count}曲を聴く",
     other: "このブラウザに保存した{count}曲を聴く",
   },
-  "login.setupTokenDocker": "Docker Compose では、次のコマンドで表示できます:",
+  "login.setupTokenDocker":
+    "Docker Compose では、サーバーが生成したトークンを次のコマンドで表示できます。WAVEFLOW_SETUP_TOKEN で設定した値はこのファイルにはありません:",
 };

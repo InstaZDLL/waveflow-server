@@ -28,5 +28,6 @@ export const login: Record<keyof typeof en, TranslationValue> = {
     one: "Den {count} in diesem Browser gespeicherten Titel anhören",
     other: "Die {count} in diesem Browser gespeicherten Titel anhören",
   },
-  "login.setupTokenDocker": "Mit Docker Compose gibt dieser Befehl es aus:",
+  "login.setupTokenDocker":
+    "Mit Docker Compose gibt dieser Befehl das vom Server erzeugte Token aus; ein in WAVEFLOW_SETUP_TOKEN gesetzter Wert steht nicht in dieser Datei:",
 };

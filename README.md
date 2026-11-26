@@ -223,6 +223,8 @@ docker compose exec waveflow cat /data/setup-token   # started with Compose
 
 That is all: the folder mounted at `/music` becomes your first library as the account is created, and its first scan starts on its own. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it. The read-only mount is enough for that; receiving uploads takes a library opened to them and a writable mount, which the [same guide](docs/guides/operations.md#receiving-files) explains.
 
+An image of 2.3.0 or earlier does not make the library yet: there, add it under **Settings → Administration** with the path `/music`.
+
 <details>
 <summary>From the command line instead of the browser</summary>
 

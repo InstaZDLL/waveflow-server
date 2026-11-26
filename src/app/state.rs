@@ -51,6 +51,9 @@ pub struct AppState {
     pub setup: Arc<setup_token::SetupGate>,
     /// `WAVEFLOW_MUSIC_DIR`: the folder setup registers as the first library.
     pub music_dir: Option<std::path::PathBuf>,
+    /// `WAVEFLOW_REQUEST_TIMEOUT_SECS`: the deadline the router puts on a
+    /// request, which setup keeps its wait for the first library inside.
+    pub request_timeout: std::time::Duration,
 }
 
 /// Roughly one offer's worth of JSON — a sixty-four character hash, a size, a
