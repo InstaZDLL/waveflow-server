@@ -225,7 +225,8 @@ The app runs the image above, unchanged, on amd64 and aarch64: Home Assistant Gr
 Its first start differs from the steps above, and [its documentation](https://github.com/InstaZDLL/waveflow-home-assistant/blob/main/waveflow/DOCS.md) walks through it:
 
 - you choose the setup token yourself, in the app's **Configuration** tab;
-- you add a library from the web player rather than from a terminal.
+- you add a library from the web player rather than from a terminal;
+- scrobbling works with ListenBrainz alone, which needs no setting: the **Configuration** tab offers none of the lines Maloja and Last.fm need.
 
 The web player opens on port 4533, in a tab of its own. It cannot show inside Home Assistant's sidebar yet.
 
