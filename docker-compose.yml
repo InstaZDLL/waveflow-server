@@ -24,6 +24,11 @@ services:
       WAVEFLOW_SETUP_TOKEN: ${WAVEFLOW_SETUP_TOKEN:-}
     volumes:
       - waveflow-data:/data
+      # Your music, and the first library the setup screen registers. Read-only
+      # is all a library needs to be scanned and played. To receive uploads
+      # into it from the web player, set read_only to false and tick Accept
+      # uploads in the library's settings under Administration: the server
+      # then writes the files under .waveflow-managed in this folder.
       - type: bind
         source: ${WAVEFLOW_MUSIC_PATH:-./music}
         target: /music

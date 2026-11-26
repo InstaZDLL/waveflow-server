@@ -19,6 +19,7 @@ import {
 } from "../../../api/queries";
 import { useReload, Waiting } from "../../../components/layout/page-shell";
 import { type TranslationKey, useI18n } from "../../../state/i18n";
+import { useLibraryScope } from "../../../state/library-scope";
 
 /** A membership role, named in the reader’s language rather than the wire’s. */
 const MEMBER_ROLE: Record<"owner" | "manager" | "listener", TranslationKey> = {
@@ -210,6 +211,10 @@ export function LibrarySettingsPanel({
   const [path, setPath] = useState<string | null>(null);
   const [follow, setFollow] = useState<boolean | null>(null);
   const [watch, setWatch] = useState<boolean | null>(null);
+  const [uploads, setUploads] = useState<boolean | null>(null);
+  // The upload page reads whether a library takes files from the scope's
+  // list, which must hear of a library opened or closed here.
+  const { refresh: refreshScope } = useLibraryScope();
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ error: boolean; text: string } | null>(
@@ -230,6 +235,7 @@ export function LibrarySettingsPanel({
       path?: string;
       follow_links?: boolean;
       watch?: boolean;
+      accepts_uploads?: boolean;
     } = {};
     if (name !== null && name.trim() !== settings.name) update.name = name;
     if (path !== null && path !== settings.path) update.path = path;
@@ -237,6 +243,9 @@ export function LibrarySettingsPanel({
       update.follow_links = follow;
     }
     if (watch !== null && watch !== settings.watch) update.watch = watch;
+    if (uploads !== null && uploads !== settings.accepts_uploads) {
+      update.accepts_uploads = uploads;
+    }
     if (Object.keys(update).length === 0) return;
     setBusy(true);
     setNotice(null);
@@ -253,8 +262,10 @@ export function LibrarySettingsPanel({
       setPath(null);
       setFollow(null);
       setWatch(null);
+      setUploads(null);
       reloadSettings();
       reloadAdministration();
+      if (update.accepts_uploads !== undefined) refreshScope();
     } catch (error) {
       setNotice({ error: true, text: refusal(error, "admin.saveError") });
     } finally {
@@ -334,6 +345,15 @@ export function LibrarySettingsPanel({
                   onChange={(event) => setWatch(event.target.checked)}
                 />
                 <span>{t("admin.watch")}</span>
+              </label>
+              <label className="toggle-row">
+                <input
+                  type="checkbox"
+                  className="toggle-box"
+                  checked={uploads ?? settings.accepts_uploads}
+                  onChange={(event) => setUploads(event.target.checked)}
+                />
+                <span>{t("admin.acceptsUploads")}</span>
               </label>
               <button type="submit" disabled={busy}>
                 {t("admin.save")}

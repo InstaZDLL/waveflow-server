@@ -78,6 +78,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     "Segui i link simbolici la cui destinazione resta dentro la libreria",
   "admin.watch":
     "Tieni d’occhio la cartella e scansiona ciò che cambia (da disattivare per una condivisione di rete modificata da altri computer)",
+  "admin.acceptsUploads":
+    "Accetta caricamenti: proprietari e gestori possono aggiungere file qui. Il server li scrive in questa cartella, che deve quindi essere scrivibile (con Docker, montala senza :ro)",
   "admin.save": "Salva",
   "admin.saved": "Salvato.",
   "admin.savedScan": "Salvato. Scansione {id} in coda.",

@@ -28,6 +28,8 @@ pub struct LibraryScanSettings {
     /// Whether the watcher observes this library (RFC-021 decision 6, and the
     /// per-library switch it left open).
     pub watch: bool,
+    /// Whether the library takes uploaded files (RFC-008 decision 1).
+    pub accepts_uploads: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -122,7 +124,7 @@ impl Database {
         library_id: Uuid,
     ) -> Result<Option<LibraryScanSettings>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, name, root_path, follow_links, watch FROM library WHERE id = ?",
+            "SELECT id, name, root_path, follow_links, watch, accepts_uploads FROM library WHERE id = ?",
         )
         .bind(library_id.to_string())
         .fetch_optional(self.pool())
@@ -130,10 +132,12 @@ impl Database {
         row.map(|row| {
             let follow_links = row.try_get::<i64, _>("follow_links")? != 0;
             let watch = row.try_get::<i64, _>("watch")? != 0;
+            let accepts_uploads = row.try_get::<i64, _>("accepts_uploads")? != 0;
             Ok(LibraryScanSettings {
                 library: library_from_row(row)?,
                 follow_links,
                 watch,
+                accepts_uploads,
             })
         })
         .transpose()

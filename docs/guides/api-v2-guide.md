@@ -1396,9 +1396,15 @@ A library's lifecycle ([RFC-021](../rfcs/RFC-021-library-lifecycle-and-scan.md)
 decision 5) splits the same way. `PATCH /api/v2/libraries/{library_id}` with a
 `name` is open to the library's owner; with a `path` or `follow_links` it needs
 an administrator on an administrative credential, and it queues a scan whose id
-it answers. `DELETE` is an administrator's, and its body must carry
+it answers. `watch` and `accepts_uploads` are an administrator's too, and queue
+nothing; `accepts_uploads` opens the library to uploaded files
+([RFC-008](../rfcs/RFC-008-receiving-a-file.md)) or closes it, and `GET
+/api/v2/libraries/{library_id}/settings` answers it. `DELETE` is an
+administrator's, and its body must carry
 `{"confirm": "<the library's current name>"}` or nothing is deleted (`422`).
-Every one of them answers `409` while the library is being scanned.
+Every one of them answers `409` while the library is being scanned, except a
+`PATCH` that changes only the name or `accepts_uploads`, which changes nothing
+of the walk.
 
 The tracks a library's scans can no longer find are listed, oldest first and
 with what purging each would cost, by

@@ -28,13 +28,27 @@ pub struct LibraryUpdate {
     /// network share changed by another machine. Queues nothing; the periodic
     /// scan stays either way.
     pub watch: Option<bool>,
+    /// Open the library to uploaded files, or close it (RFC-008 decision 1).
+    /// An administrator only: it decides whether the server writes into the
+    /// folder at all. Received files go under `.waveflow-managed` at the
+    /// root, so the folder must be writable for an opened library to receive
+    /// anything. Queues nothing, and waits for no scan.
+    pub accepts_uploads: Option<bool>,
 }
 
 impl LibraryUpdate {
     /// Whether this needs an administrator, and an administrative credential:
     /// the path and the links setting decide which part of the server's file
-    /// system the server reads, and the watch what the server spends on it.
+    /// system the server reads, the watch what the server spends on it, and
+    /// the uploads switch whether it writes there.
     pub fn is_administrative(&self) -> bool {
+        self.changes_the_walk() || self.accepts_uploads.is_some()
+    }
+
+    /// Whether this changes how the library is walked, and so must wait for
+    /// no scan. Opening it to uploads does not: a library being scanned for
+    /// the first time is exactly the one an administrator opens.
+    pub(super) fn changes_the_walk(&self) -> bool {
         self.path.is_some() || self.follow_links.is_some() || self.watch.is_some()
     }
 }
@@ -57,6 +71,8 @@ pub struct LibrarySettings {
     pub follow_links: bool,
     /// Whether the watcher observes this library.
     pub watch: bool,
+    /// Whether the library takes uploaded files.
+    pub accepts_uploads: bool,
 }
 
 /// What a deletion removed from the catalogue. Nothing was removed from disk.

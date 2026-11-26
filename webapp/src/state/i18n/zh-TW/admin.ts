@@ -75,6 +75,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
   "admin.followLinks": "追蹤目標位於音樂庫內的符號連結",
   "admin.watch":
     "監看資料夾並掃描變更（若是由其他電腦修改的網路共用資料夾，請關閉）",
+  "admin.acceptsUploads":
+    "接受上傳：擁有者和管理者可以在這裡加入檔案。伺服器會把檔案寫入這個資料夾，因此它必須可寫入（使用 Docker 時，掛載時不要加 :ro）",
   "admin.save": "儲存",
   "admin.saved": "已儲存。",
   "admin.savedScan": "已儲存。掃描 {id} 已排入佇列。",

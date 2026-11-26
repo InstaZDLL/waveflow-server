@@ -77,6 +77,8 @@ export const admin: Record<keyof typeof en, TranslationValue> = {
     "Symbolischen Links folgen, deren Ziel innerhalb der Bibliothek bleibt",
   "admin.watch":
     "Ordner überwachen und Änderungen scannen (aus bei einer Netzwerkfreigabe, die von anderen Rechnern geändert wird)",
+  "admin.acceptsUploads":
+    "Uploads annehmen: Eigentümer und Verwaltende können hier Dateien hinzufügen. Der Server schreibt sie in diesen Ordner, er muss also beschreibbar sein (mit Docker ohne :ro einbinden)",
   "admin.save": "Speichern",
   "admin.saved": "Gespeichert.",
   "admin.savedScan": "Gespeichert. Scan {id} ist eingereiht.",

@@ -73,6 +73,8 @@ export const admin = {
     "Follow symbolic links whose target stays inside the library",
   "admin.watch":
     "Watch the folder and scan what changes (off for a network share changed by other machines)",
+  "admin.acceptsUploads":
+    "Accept uploads: owners and managers may add files here. The server writes them into this folder, so it must be writable (in Docker, mount it without :ro)",
   "admin.save": "Save",
   "admin.saved": "Saved.",
   "admin.savedScan": "Saved. Scan {id} queued.",

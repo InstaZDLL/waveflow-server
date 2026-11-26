@@ -52,7 +52,8 @@ them, add the library by hand as below.
 
 The read-only mount the compose file uses is enough to register and scan the
 library. Uploads are another matter: a library takes none until an
-administrator opens it (see [Receiving files](#receiving-files)), and the files
+administrator opens it from Administration (see
+[Receiving files](#receiving-files)), and the files
 it receives are written under `.waveflow-managed` at its root, which a
 read-only mount refuses. Keep `:ro` unless you open the library to uploads,
 and mount the folder writable only then.
@@ -971,16 +972,20 @@ scan.
 
 ## Receiving files
 
-A library takes no uploaded file until an administrator opens it:
+A library takes no uploaded file until an administrator opens it, under
+**Settings → Administration → Name, folder and deletion**, with **Accept
+uploads**, or from the command line:
 
 ```bash
 waveflow-server library set-uploads --actor admin --library-id <uuid> --accept
 ```
 
-Run it without `--accept` to close the library again. Once it is open, its
+Untick it, or run the command without `--accept`, to close the library again.
+Both write the same entry to the audit log. Once it is open, its
 owners and managers may upload to it. Received files are written under
 `.waveflow-managed` at the library's root, so the folder must be writable by
-the server: in a container, mount it without `:ro`. These limits apply to every library:
+the server: in a container, mount it without `:ro`. These limits apply to
+every library:
 
 | Variable | Default | What it bounds |
 | --- | --- | --- |

@@ -40,6 +40,7 @@ impl DomainServices {
             path: settings.library.root_path.to_string_lossy().into_owned(),
             follow_links: settings.follow_links,
             watch: settings.watch,
+            accepts_uploads: settings.accepts_uploads,
         })
     }
 
@@ -84,7 +85,7 @@ impl DomainServices {
         };
         // Only what changes how the library is walked has to wait for no scan;
         // a new name is a label.
-        let _scan_lock = if update.is_administrative() {
+        let _scan_lock = if update.changes_the_walk() {
             Some(
                 self.scanner
                     .try_lock_library(library_id)
@@ -172,6 +173,19 @@ impl DomainServices {
                     "library.watch_set",
                     library_id,
                     serde_json::json!({ "watch": update.watch }),
+                )
+                .await?;
+            }
+            // The command line's own write, so the two doors cannot drift. It
+            // reads the value again in this transaction, under the writer:
+            // opening a library takes no scan lock, so `before` may be stale.
+            if let Some(accepts) = update.accepts_uploads {
+                Database::set_library_accepts_uploads_in(
+                    &mut tx,
+                    actor.id,
+                    library_id,
+                    accepts,
+                    now_ms(),
                 )
                 .await?;
             }

@@ -32,6 +32,8 @@ services:
       WAVEFLOW_SETUP_TOKEN: ${WAVEFLOW_SETUP_TOKEN:-}
     volumes:
       - waveflow-data:/data
+      # Read-only is all scanning needs. To receive uploads into this library,
+      # set read_only to false and tick Accept uploads under Administration.
       - type: bind
         source: ${WAVEFLOW_MUSIC_PATH:-./music}
         target: /music
