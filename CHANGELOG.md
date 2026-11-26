@@ -62,6 +62,13 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   own artist, so a compilation, or an album with a guest on one song, came
   apart among the other albums. It now sorts by the album's artist, the
   album, then disc and track.
+- **A browser on the wrong address is told so.** With `WAVEFLOW_PUBLIC_URL`
+  set, signing in from any other address answered "Wrong username or
+  password." and the setup screen "Setup failed", although both were right.
+  The server now refuses such a request with its own code,
+  `403 origin_rejected`, and both screens name the address the page is on
+  and the setting to correct. A missing or malformed `Origin` keeps
+  `forbidden`.
 
 ### Changed
 

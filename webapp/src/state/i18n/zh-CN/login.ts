@@ -19,6 +19,8 @@ export const login: Record<keyof typeof en, TranslationValue> = {
   "login.password": "密码",
   "login.setupError": "初始化失败。请使用有效的用户名，密码至少 12 个字符。",
   "login.error": "用户名或密码错误。",
+  "login.originError":
+    "此服务器不接受来自 {origin} 的登录。请通过 WAVEFLOW_PUBLIC_URL 中设置的地址打开它，或更正该设置。",
   "login.wait": "请稍候…",
   "login.create": "创建并登录",
   "login.signIn": "登录",

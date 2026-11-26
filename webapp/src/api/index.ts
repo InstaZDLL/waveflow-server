@@ -83,6 +83,7 @@ export {
   hasSession,
   login,
   logout,
+  ORIGIN_REJECTED,
   onSessionOwner,
   SETUP_TOKEN_REJECTED,
   setupRequired,

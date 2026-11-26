@@ -190,7 +190,11 @@ Refresh and logout require all of the following:
   `X-WaveFlow-CSRF` request header.
 
 Set `WAVEFLOW_PUBLIC_URL=https://music.example.com` behind a reverse proxy so
-origin validation and `Secure` cookies use the public HTTPS origin. External
+origin validation and `Secure` cookies use the public HTTPS origin. Once it is
+set, an `Origin` other than that one is `403` with the code `origin_rejected`,
+even when it is the address the request actually reached; without it, the
+`Origin` must name the request's `Host`. A missing or malformed `Origin` stays
+`forbidden`. External
 browser clients also need their exact origins in `WAVEFLOW_ALLOWED_ORIGINS`.
 Wildcards are rejected.
 
@@ -1703,6 +1707,7 @@ Native JSON errors use:
 |---:|---|---|
 | 401 | `unauthorized` | Authenticate again; never infer whether an account exists. |
 | 403 | `forbidden` | Stop or request the required role/origin. |
+| 403 | `origin_rejected` | The browser is not on the server's address: open it at `WAVEFLOW_PUBLIC_URL`, or correct that setting. |
 | 404 | `not_found` | Treat the resource as missing or inaccessible. |
 | 409 | `conflict` | The operation ID was reused for another intent; reconcile and use a new ID only for a genuinely new operation. |
 | 409 | `cursor_expired` | Discard the sync projection and take a fresh snapshot. |

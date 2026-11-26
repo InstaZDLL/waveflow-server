@@ -25,15 +25,27 @@ async fn setup_and_native_administration_cover_users_credentials_and_libraries()
             "password": &admin_password
         }),
     );
-    assert_eq!(
-        router
-            .clone()
-            .oneshot(missing_origin)
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::FORBIDDEN
+    let missing_origin = router.clone().oneshot(missing_origin).await.unwrap();
+    assert_eq!(missing_origin.status(), StatusCode::FORBIDDEN);
+    // No Origin is not a browser on the wrong address, so it keeps the
+    // generic code.
+    assert_eq!(json_body(missing_origin).await["code"], "forbidden");
+
+    // A browser on an address other than the public URL: the setup screen
+    // is told that the address is wrong, not that the password is.
+    let mut elsewhere = json_request(
+        "/api/v2/setup",
+        serde_json::json!({
+            "username": "first-admin",
+            "password": &admin_password
+        }),
     );
+    elsewhere
+        .headers_mut()
+        .insert("origin", "http://192.168.1.10:4533".parse().unwrap());
+    let elsewhere = router.clone().oneshot(elsewhere).await.unwrap();
+    assert_eq!(elsewhere.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(elsewhere).await["code"], "origin_rejected");
 
     // RFC-019: the boot drew a setup token and left it in the data directory.
     let setup_token = setup_token_on_disk(&config);

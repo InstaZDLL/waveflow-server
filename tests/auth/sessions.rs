@@ -336,10 +336,11 @@ async fn browser_session_uses_http_only_refresh_cookie_origin_and_csrf() {
     foreign
         .headers_mut()
         .insert("host", "waveflow.test".parse().unwrap());
-    assert_eq!(
-        router.oneshot(foreign).await.unwrap().status(),
-        StatusCode::FORBIDDEN
-    );
+    let foreign = router.oneshot(foreign).await.unwrap();
+    assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+    // Its own code, so the sign-in screen says the address is wrong rather
+    // than the password.
+    assert_eq!(json_body(foreign).await["code"], "origin_rejected");
 }
 
 /// RFC-023 decision 4: nothing an account handed out keeps working once it is
@@ -460,4 +461,49 @@ async fn a_disabled_account_s_tokens_and_grants_all_stop_working() {
     let spare = json_body(spare).await;
     assert_eq!(spare["user"]["id"], owner.to_string());
     assert_eq!(spare["user"]["username"], "disabled-owner");
+}
+
+/// Without a public URL, the browser's `Origin` must name the request's `Host`.
+/// One that names another address is `origin_rejected`, the code the sign-in
+/// screen turns into "open the server at its own address"; the same request
+/// from the right address gets past the check, to the credentials, which no
+/// account answers.
+#[tokio::test]
+async fn without_a_public_url_another_host_is_told_its_address_is_wrong() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = waveflow_server::config::Config::for_data_dir(temp.path().join("data"));
+    config.public_url = None;
+    let state = waveflow_server::initialize(&config).await.unwrap();
+    let router = waveflow_server::app(&config, state);
+    let sign_in = |origin: &'static str| {
+        let mut request = json_request(
+            "/api/v2/web/auth/login",
+            serde_json::json!({
+                "username": "nobody",
+                "password": Uuid::new_v4().to_string(),
+                "device_name": "Embedded web player"
+            }),
+        );
+        request
+            .headers_mut()
+            .insert("origin", origin.parse().unwrap());
+        request
+            .headers_mut()
+            .insert("host", "192.168.1.10:4533".parse().unwrap());
+        request
+    };
+
+    let elsewhere = router
+        .clone()
+        .oneshot(sign_in("http://music.example.com"))
+        .await
+        .unwrap();
+    assert_eq!(elsewhere.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(elsewhere).await["code"], "origin_rejected");
+
+    let here = router
+        .oneshot(sign_in("http://192.168.1.10:4533"))
+        .await
+        .unwrap();
+    assert_eq!(here.status(), StatusCode::UNAUTHORIZED);
 }

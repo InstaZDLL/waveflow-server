@@ -34,6 +34,12 @@ pub enum ApiError {
     /// (RFC-019 decision 1). Its own code, so the setup screen can say which
     /// field to correct.
     SetupTokenRejected,
+    /// A browser request whose `Origin` is well formed but is not the
+    /// server's: not `WAVEFLOW_PUBLIC_URL` when it is set, not the `Host`
+    /// otherwise. Its own code, so the sign-in screen can say that the address
+    /// is wrong rather than the password: the usual cause is a public URL set
+    /// while the server is opened at another address.
+    OriginRejected,
     Unavailable,
     NotFound,
 }
@@ -63,6 +69,11 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "setup_token_rejected",
                 "The setup token is missing or wrong",
+            ),
+            Self::OriginRejected => (
+                StatusCode::FORBIDDEN,
+                "origin_rejected",
+                "The request did not come from the server's address",
             ),
             Self::Validation => (
                 StatusCode::UNPROCESSABLE_ENTITY,

@@ -105,7 +105,7 @@ pub async fn logout(
     responses(
         (status = 200, body = WebAuthResponse),
         (status = 401, body = ErrorResponse),
-        (status = 403, body = ErrorResponse),
+        (status = 403, body = ErrorResponse, description = "Origin header missing or malformed (`forbidden`), or not the server's address (`origin_rejected`)"),
         (status = 422, body = ErrorResponse),
         (status = 429, body = ErrorResponse, description = "Too many failed sign-ins from this address for this account (RFC-017)",
             headers(("Retry-After" = u32, description = "Seconds until the attempt may be made again"))),

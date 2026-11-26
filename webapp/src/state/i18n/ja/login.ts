@@ -22,6 +22,8 @@ export const login: Record<keyof typeof en, TranslationValue> = {
   "login.setupError":
     "セットアップに失敗しました。有効なユーザー名と、12文字以上のパスワードを使用してください。",
   "login.error": "ユーザー名またはパスワードが正しくありません。",
+  "login.originError":
+    "このサーバーは {origin} からのサインインを受け付けません。WAVEFLOW_PUBLIC_URL に設定されたアドレスで開くか、その設定を修正してください。",
   "login.wait": "お待ちください…",
   "login.create": "作成してサインイン",
   "login.signIn": "サインイン",

@@ -20,6 +20,8 @@ export const login: Record<keyof typeof en, TranslationValue> = {
   "login.setupError":
     "初始設定失敗。請使用有效的使用者名稱，密碼至少 12 個字元。",
   "login.error": "使用者名稱或密碼錯誤。",
+  "login.originError":
+    "此伺服器不接受來自 {origin} 的登入。請透過 WAVEFLOW_PUBLIC_URL 中設定的位址開啟，或更正該設定。",
   "login.wait": "請稍候…",
   "login.create": "建立並登入",
   "login.signIn": "登入",

@@ -65,3 +65,39 @@ test("a setup token handed over in the fragment fills the field and travels in n
     }
   }
 });
+
+/**
+ * A server whose `WAVEFLOW_PUBLIC_URL` names another address refuses the
+ * sign-in with `403 origin_rejected`. The screen says so, with the address the
+ * page is on, rather than calling right credentials wrong; a real `401` still
+ * reads as wrong credentials.
+ */
+test("a refused address is said as such, not as a wrong password", async ({
+  page,
+}) => {
+  let answer = { status: 403, code: "origin_rejected" };
+  await page.route("**/api/v2/setup", (route) =>
+    route.fulfill({ json: { required: false } }),
+  );
+  await page.route("**/api/v2/web/auth/login", (route) =>
+    route.fulfill({
+      status: answer.status,
+      json: { code: answer.code, message: "" },
+    }),
+  );
+
+  await page.goto("/login");
+  await page.getByLabel("Username").fill("nocturne");
+  await page.getByLabel("Password").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  const origin = new URL(page.url()).origin;
+  await expect(
+    page.getByText(`This server does not accept sign-in from ${origin}.`),
+  ).toBeVisible();
+  await expect(page.getByText("Wrong username or password.")).toHaveCount(0);
+
+  answer = { status: 401, code: "unauthorized" };
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Wrong username or password.")).toBeVisible();
+});
