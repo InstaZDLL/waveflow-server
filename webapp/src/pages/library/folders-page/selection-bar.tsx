@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   appendToPlaylist,
   createPlaylist,
+  MAX_PLACEMENTS,
   placeTracks,
   type Song,
 } from "../../../api";
@@ -89,12 +90,25 @@ export function SelectionBar({
           current={folder}
           nested={false}
           onPick={async (target) => {
-            const filed = await placeTracks(libraryId, ids, target);
-            await Promise.all([
-              client.invalidateQueries({ queryKey: ["filed-tree"] }),
-              client.invalidateQueries({ queryKey: ["folder-tracks"] }),
-            ]);
-            onMoved(ids);
+            // One request per batch the server takes, each all or nothing.
+            // Past 500 tracks a later batch can fail after earlier ones were
+            // filed: those are shown where they now are, and leave the
+            // selection, whatever the rest did.
+            const moved: string[] = [];
+            let filed = 0;
+            try {
+              for (let at = 0; at < ids.length; at += MAX_PLACEMENTS) {
+                const batch = ids.slice(at, at + MAX_PLACEMENTS);
+                filed += await placeTracks(libraryId, batch, target);
+                moved.push(...batch);
+              }
+            } finally {
+              await Promise.all([
+                client.invalidateQueries({ queryKey: ["filed-tree"] }),
+                client.invalidateQueries({ queryKey: ["folder-tracks"] }),
+              ]);
+              if (moved.length) onMoved(moved);
+            }
             onDone(t("selection.moved", { count: filed }));
           }}
           onClose={() => setDialog(null)}
