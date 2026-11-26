@@ -2,7 +2,7 @@
 export const scrobbling = {
   "scrobbling.title": "External scrobbling",
   "scrobbling.detail":
-    "Forward what you listen to here to ListenBrainz, Maloja or Last.fm.",
+    "Forward what you listen to here to ListenBrainz, Maloja or Last.fm. This server’s operator chooses the destinations; each account links its own.",
   "scrobbling.none":
     "This server offers no destination. Its operator decides that.",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -11,19 +11,24 @@ export const scrobbling = {
   "scrobbling.instance": "instance “{name}”",
   "scrobbling.unavailable": "Unavailable here: {reason}",
   "scrobbling.unavailable.no_application_configured":
-    "no Last.fm application is declared on this server",
+    "no Last.fm application is declared on this server (its operator sets WAVEFLOW_SCROBBLE_LASTFM_API_KEY and WAVEFLOW_SCROBBLE_LASTFM_SECRET, which the metadata key does not replace)",
   "scrobbling.unavailable.browser_journey_needs_https":
     "the browser journey needs this server’s public address to be an https one — an operator can still link an account from the command line",
   "scrobbling.unavailable.unknown": "this server did not say why",
   "scrobbling.retired":
     "This server no longer offers this instance. Nothing more will leave for it — you can still withdraw the authorisation.",
-  "scrobbling.notLinked": "Not linked.",
-  "scrobbling.secret": "API key",
-  "scrobbling.secretHint": "Taken from your account on that destination.",
+  "scrobbling.notLinked":
+    "Offered by this server. Your account is not linked to it yet.",
+  "scrobbling.secret.listenbrainz": "User token",
+  "scrobbling.secret.maloja": "API key",
+  "scrobbling.secretHint.listenbrainz":
+    "In the settings of your account on that instance, under User token: listenbrainz.org, or your own server.",
+  "scrobbling.secretHint.maloja":
+    "Created in your Maloja’s admin panel, under API Keys.",
   "scrobbling.link": "Link",
   "scrobbling.working": "Working…",
   "scrobbling.linkError":
-    "That authorisation was refused. Check the key and try again.",
+    "That authorisation was refused. Check what you pasted and try again.",
   "scrobbling.unlink": "Unlink",
   "scrobbling.unlinkError": "That link could not be withdrawn.",
   "scrobbling.connect": "Connect to Last.fm",

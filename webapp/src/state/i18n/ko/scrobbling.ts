@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "외부 스크로블",
   "scrobbling.detail":
-    "여기서 들은 음악을 ListenBrainz, Maloja, Last.fm으로 전송해요.",
+    "여기서 들은 음악을 ListenBrainz, Maloja, Last.fm으로 전송해요. 전송 대상은 이 서버의 운영자가 정하고, 각 계정이 자기 계정을 연결해요.",
   "scrobbling.none":
     "이 서버에는 연결할 수 있는 서비스가 없어요. 서버 운영자가 정하는 설정이에요.",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,19 +14,23 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "인스턴스 ‘{name}’",
   "scrobbling.unavailable": "여기서는 사용할 수 없음: {reason}",
   "scrobbling.unavailable.no_application_configured":
-    "이 서버에 등록된 Last.fm 애플리케이션이 없어요",
+    "이 서버에 등록된 Last.fm 애플리케이션이 없어요 (운영자가 WAVEFLOW_SCROBBLE_LASTFM_API_KEY와 WAVEFLOW_SCROBBLE_LASTFM_SECRET을 설정해야 하며, 메타데이터 키로는 대신할 수 없어요)",
   "scrobbling.unavailable.browser_journey_needs_https":
     "브라우저로 연결하려면 이 서버의 공개 주소가 https여야 해요. 운영자는 명령줄에서 계정을 연결할 수 있어요",
   "scrobbling.unavailable.unknown": "서버가 이유를 알려 주지 않았어요",
   "scrobbling.retired":
     "이 서버는 더 이상 이 인스턴스를 지원하지 않아요. 앞으로는 아무것도 전송되지 않아요. 권한은 여전히 철회할 수 있어요.",
-  "scrobbling.notLinked": "연결되지 않음.",
-  "scrobbling.secret": "API 키",
-  "scrobbling.secretHint": "해당 서비스의 내 계정에서 받은 키예요.",
+  "scrobbling.notLinked":
+    "이 서버에서 제공돼요. 아직 내 계정이 연결되지 않았어요.",
+  "scrobbling.secret.listenbrainz": "사용자 토큰",
+  "scrobbling.secret.maloja": "API 키",
+  "scrobbling.secretHint.listenbrainz":
+    "해당 인스턴스(listenbrainz.org 또는 직접 운영하는 서버)의 계정 설정에서 User token에 있어요.",
+  "scrobbling.secretHint.maloja": "Maloja 관리자 패널의 API Keys에서 만들어요.",
   "scrobbling.link": "연결",
   "scrobbling.working": "처리 중…",
   "scrobbling.linkError":
-    "권한 부여가 거부됐어요. 키를 확인하고 다시 시도하세요.",
+    "권한 부여가 거부됐어요. 붙여 넣은 내용을 확인하고 다시 시도하세요.",
   "scrobbling.unlink": "연결 해제",
   "scrobbling.unlinkError": "연결을 해제할 수 없어요.",
   "scrobbling.connect": "Last.fm에 연결",

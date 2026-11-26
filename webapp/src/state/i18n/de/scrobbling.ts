@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "Externes Scrobbling",
   "scrobbling.detail":
-    "Leite weiter, was du hier hörst – an ListenBrainz, Maloja oder Last.fm.",
+    "Leite weiter, was du hier hörst – an ListenBrainz, Maloja oder Last.fm. Der Betreiber dieses Servers wählt die Ziele; jedes Konto verknüpft sein eigenes.",
   "scrobbling.none":
     "Dieser Server bietet kein Ziel an. Das entscheidet sein Betreiber.",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,19 +14,24 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "Instanz „{name}“",
   "scrobbling.unavailable": "Hier nicht verfügbar: {reason}",
   "scrobbling.unavailable.no_application_configured":
-    "auf diesem Server ist keine Last.fm-Anwendung hinterlegt",
+    "auf diesem Server ist keine Last.fm-Anwendung hinterlegt (der Betreiber setzt WAVEFLOW_SCROBBLE_LASTFM_API_KEY und WAVEFLOW_SCROBBLE_LASTFM_SECRET, die der Metadaten-Schlüssel nicht ersetzt)",
   "scrobbling.unavailable.browser_journey_needs_https":
     "die Verknüpfung im Browser braucht eine öffentliche https-Adresse dieses Servers – ein Betreiber kann ein Konto aber über die Kommandozeile verknüpfen",
   "scrobbling.unavailable.unknown": "dieser Server hat keinen Grund genannt",
   "scrobbling.retired":
     "Dieser Server bietet diese Instanz nicht mehr an. Es wird nichts mehr an sie gesendet – du kannst die Autorisierung aber noch zurückziehen.",
-  "scrobbling.notLinked": "Nicht verknüpft.",
-  "scrobbling.secret": "API-Schlüssel",
-  "scrobbling.secretHint": "Aus deinem Konto bei diesem Ziel.",
+  "scrobbling.notLinked":
+    "Von diesem Server angeboten. Dein Konto ist noch nicht verknüpft.",
+  "scrobbling.secret.listenbrainz": "Benutzertoken",
+  "scrobbling.secret.maloja": "API-Schlüssel",
+  "scrobbling.secretHint.listenbrainz":
+    "In den Einstellungen deines Kontos auf dieser Instanz unter User token: listenbrainz.org oder dein eigener Server.",
+  "scrobbling.secretHint.maloja":
+    "Im Admin-Bereich deines Maloja unter API Keys erstellt.",
   "scrobbling.link": "Verknüpfen",
   "scrobbling.working": "Wird bearbeitet…",
   "scrobbling.linkError":
-    "Diese Autorisierung wurde abgelehnt. Prüf den Schlüssel und versuch es noch einmal.",
+    "Diese Autorisierung wurde abgelehnt. Prüf, was du eingefügt hast, und versuch es noch einmal.",
   "scrobbling.unlink": "Trennen",
   "scrobbling.unlinkError": "Diese Verknüpfung konnte nicht getrennt werden.",
   "scrobbling.connect": "Mit Last.fm verbinden",

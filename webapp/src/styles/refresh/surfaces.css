@@ -144,6 +144,13 @@
   margin-bottom: var(--space-8);
 }
 
+/* The panels after the accounts — now playing, transcoding, updates — stand
+   one after another at the page's root, where nothing spaced them: the
+   transcoding and updates cards touched. */
+.admin-page > .admin-panel + .admin-panel {
+  margin-top: var(--space-8);
+}
+
 .admin-page .now-playing-panel > h3,
 .admin-page .admin-grid > .admin-panel > h3 {
   margin-bottom: var(--space-4);

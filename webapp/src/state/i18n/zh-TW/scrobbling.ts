@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "外部播放紀錄同步",
   "scrobbling.detail":
-    "把你在這裡聽過的歌曲同步到 ListenBrainz、Maloja 或 Last.fm。",
+    "把你在這裡聽過的歌曲同步到 ListenBrainz、Maloja 或 Last.fm。同步目標由這台伺服器的營運者選擇，每個帳號各自連結自己的帳號。",
   "scrobbling.none":
     "這台伺服器沒有提供任何同步目的地，這由伺服器的維運人員決定。",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,18 +14,21 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "執行個體「{name}」",
   "scrobbling.unavailable": "在這裡無法使用：{reason}",
   "scrobbling.unavailable.no_application_configured":
-    "這台伺服器沒有設定 Last.fm 應用程式",
+    "這台伺服器沒有設定 Last.fm 應用程式（營運者需設定 WAVEFLOW_SCROBBLE_LASTFM_API_KEY 與 WAVEFLOW_SCROBBLE_LASTFM_SECRET，中繼資料金鑰無法取代它們）",
   "scrobbling.unavailable.browser_journey_needs_https":
     "要透過瀏覽器授權，這台伺服器的公開網址必須使用 https；維運人員仍可以從命令列連結帳號",
   "scrobbling.unavailable.unknown": "這台伺服器沒有說明原因",
   "scrobbling.retired":
     "這台伺服器已不再提供這個執行個體，之後不會再傳送任何紀錄給它。你仍然可以撤銷授權。",
-  "scrobbling.notLinked": "尚未連結。",
-  "scrobbling.secret": "API 金鑰",
-  "scrobbling.secretHint": "從你在該服務的帳號中取得。",
+  "scrobbling.notLinked": "這台伺服器提供此目標。你的帳號尚未連結。",
+  "scrobbling.secret.listenbrainz": "使用者權杖",
+  "scrobbling.secret.maloja": "API 金鑰",
+  "scrobbling.secretHint.listenbrainz":
+    "在該執行個體（listenbrainz.org 或你自己的伺服器）的帳號設定中的 User token 下。",
+  "scrobbling.secretHint.maloja": "在你的 Maloja 管理面板的 API Keys 中建立。",
   "scrobbling.link": "連結",
   "scrobbling.working": "處理中…",
-  "scrobbling.linkError": "授權遭到拒絕。請檢查金鑰後再試一次。",
+  "scrobbling.linkError": "授權遭到拒絕。請檢查你貼上的內容後再試一次。",
   "scrobbling.unlink": "取消連結",
   "scrobbling.unlinkError": "無法取消這個連結。",
   "scrobbling.connect": "連接 Last.fm",

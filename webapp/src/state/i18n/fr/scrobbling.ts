@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "Scrobbling externe",
   "scrobbling.detail":
-    "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm.",
+    "Transmettre ce que vous écoutez ici à ListenBrainz, Maloja ou Last.fm. L’opérateur de ce serveur choisit les destinations ; chaque compte y lie le sien.",
   "scrobbling.none":
     "Ce serveur ne propose aucune destination. C’est son exploitant qui en décide.",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,19 +14,24 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "instance « {name} »",
   "scrobbling.unavailable": "Indisponible ici : {reason}",
   "scrobbling.unavailable.no_application_configured":
-    "aucune application Last.fm n’est déclarée sur ce serveur",
+    "aucune application Last.fm n’est déclarée sur ce serveur (son opérateur définit WAVEFLOW_SCROBBLE_LASTFM_API_KEY et WAVEFLOW_SCROBBLE_LASTFM_SECRET, que la clé des métadonnées ne remplace pas)",
   "scrobbling.unavailable.browser_journey_needs_https":
     "le parcours par le navigateur exige que l’adresse publique de ce serveur soit en https — un exploitant peut encore lier un compte en ligne de commande",
   "scrobbling.unavailable.unknown": "ce serveur n’a pas dit pourquoi",
   "scrobbling.retired":
     "Ce serveur ne propose plus cette instance. Plus rien ne partira vers elle — vous pouvez encore retirer l’autorisation.",
-  "scrobbling.notLinked": "Non liée.",
-  "scrobbling.secret": "Clé d’API",
-  "scrobbling.secretHint": "Prise sur votre compte chez cette destination.",
+  "scrobbling.notLinked":
+    "Proposée par ce serveur. Votre compte n’y est pas encore lié.",
+  "scrobbling.secret.listenbrainz": "Jeton utilisateur",
+  "scrobbling.secret.maloja": "Clé d’API",
+  "scrobbling.secretHint.listenbrainz":
+    "Dans les réglages de votre compte sur cette instance, sous User token : listenbrainz.org, ou votre propre serveur.",
+  "scrobbling.secretHint.maloja":
+    "Créée dans le panneau d’administration de votre Maloja, sous API Keys.",
   "scrobbling.link": "Lier",
   "scrobbling.working": "En cours…",
   "scrobbling.linkError":
-    "Cette autorisation a été refusée. Vérifiez la clé et recommencez.",
+    "Cette autorisation a été refusée. Vérifiez ce que vous avez collé et recommencez.",
   "scrobbling.unlink": "Délier",
   "scrobbling.unlinkError": "Ce lien n’a pas pu être retiré.",
   "scrobbling.connect": "Se connecter à Last.fm",

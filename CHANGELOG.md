@@ -44,6 +44,14 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
 - **A library registered or deleted from Administration shows at once.** The
   library picker and the catalogue read a list taken at sign-in, so a new
   library appeared only after a reload.
+- **Scrobbling asks for each destination's secret by its own name.**
+  ListenBrainz calls it a user token, and says where to find it; Maloja
+  keeps the API key. A destination the operator declared but the account
+  has not linked yet says so, where "Not linked." read as a configuration
+  that had not been taken; and a Last.fm destination with no application
+  names the two variables it needs, which the metadata key does not
+  replace.
+- **The Transcoding and Updates panels of Administration no longer touch.**
 
 ## [2.3.0] — 2026-11-17
 
