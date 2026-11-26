@@ -252,7 +252,10 @@ Everything below is done from the web player, signed in as the administrator.
 - **Artist biographies and portraits, lyrics from LRCLIB and podcasts** are off until switched on in `.env`, because each one contacts another host: the [operations guide](docs/guides/operations.md#switching-metadata-enrichment-on) has one section per feature, and the [privacy page](docs/guides/privacy.md) lists every request they make.
 - **More accounts, and more libraries,** are added under **Settings → Administration**.
 
-A change to `.env` reaches the server with `docker compose up -d`, which recreates the container. `docker compose restart` keeps the settings it started with.
+A change to `.env` reaches the server with `docker compose up -d`, which recreates the container. `docker compose restart` keeps the settings it started with. Elsewhere, the same lines go where that installation keeps its settings:
+
+- **`docker run`**: one `-e NAME=value` each. A container keeps the settings it was created with, so remove it (`docker rm -f waveflow`) and run the command again with them; the data stays in the `waveflow-data` volume.
+- **The archive for one computer**: its `laptop.env`, read again on the next start.
 
 The server speaks plain HTTP, and Subsonic apps send their credentials with every request: the compose file publishes port 4533 on every interface of the host, which suits a network you trust and nothing wider. To listen from outside, put it behind a reverse proxy that terminates TLS, as [`packaging/caddy/`](packaging/caddy/) does, give your apps its `https://` address, and set `WAVEFLOW_PUBLIC_URL` to it. The [operations guide](docs/guides/operations.md#behind-a-reverse-proxy-generally) says how to publish the port when a proxy sits in front, and has the rest, including backups and the instance key.
 

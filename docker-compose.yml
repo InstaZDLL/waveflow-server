@@ -15,8 +15,9 @@
 #
 # The same image is on Docker Hub as `docker.io/instazdll/waveflow-server`, with
 # the same tags and digest. To run your own build instead, uncomment `build`
-# below: with it present Compose builds from this checkout rather than pulling,
-# which is what a contributor wants and what an operator does not.
+# below and start with `docker compose up -d --build`: without `--build`,
+# Compose may reuse the published image it already has rather than build this
+# checkout. That is what a contributor wants and what an operator does not.
 services:
   waveflow:
     image: ghcr.io/instazdll/waveflow-server:2.3.0
