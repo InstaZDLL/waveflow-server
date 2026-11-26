@@ -22,6 +22,8 @@ export const login: Record<keyof typeof en, TranslationValue> = {
   "login.setupError":
     "No se pudo completar la configuración. Usa un nombre de usuario válido y una contraseña de al menos 12 caracteres.",
   "login.error": "Nombre de usuario o contraseña incorrectos.",
+  "login.originError":
+    "Este servidor no acepta inicios de sesión desde {origin}. Ábrelo en la dirección definida en WAVEFLOW_PUBLIC_URL o corrige ese ajuste.",
   "login.wait": "Espera un momento…",
   "login.create": "Crear e iniciar sesión",
   "login.signIn": "Iniciar sesión",

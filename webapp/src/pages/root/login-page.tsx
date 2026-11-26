@@ -5,6 +5,7 @@ import {
   ApiError,
   bootstrapAdmin,
   login,
+  ORIGIN_REJECTED,
   SETUP_TOKEN_REJECTED,
   safeInternalPath,
   setupRequired,
@@ -72,6 +73,12 @@ export function LoginPage() {
     if (handed) setSetupToken(handed);
   }, []);
 
+  /** A refused address, said as such, whichever request it refused. */
+  const refusedAddress = (failure: unknown) =>
+    failure instanceof ApiError && failure.message === ORIGIN_REJECTED
+      ? t("login.originError", { origin: window.location.origin })
+      : null;
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -84,18 +91,19 @@ export function LoginPage() {
           setSetupToken("");
         } catch (failure) {
           setError(
-            failure instanceof ApiError &&
+            refusedAddress(failure) ??
+              (failure instanceof ApiError &&
               failure.message === SETUP_TOKEN_REJECTED
-              ? t("login.setupTokenError")
-              : t("login.setupError"),
+                ? t("login.setupTokenError")
+                : t("login.setupError")),
           );
           return;
         }
       }
       try {
         await login(username, password);
-      } catch {
-        setError(t("login.error"));
+      } catch (failure) {
+        setError(refusedAddress(failure) ?? t("login.error"));
         return;
       }
       const next = safeInternalPath(

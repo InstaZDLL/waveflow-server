@@ -110,7 +110,7 @@ pub(super) fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Resu
         return if parsed.origin() == expected.origin() {
             Ok(())
         } else {
-            Err(ApiError::Forbidden)
+            Err(ApiError::OriginRejected)
         };
     }
     let authority = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
@@ -121,7 +121,7 @@ pub(super) fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Resu
     if authority.eq_ignore_ascii_case(host) {
         Ok(())
     } else {
-        Err(ApiError::Forbidden)
+        Err(ApiError::OriginRejected)
     }
 }
 

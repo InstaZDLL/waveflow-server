@@ -18,6 +18,8 @@ export const login = {
   "login.setupError":
     "Setup failed. Use a valid username and at least 12 password characters.",
   "login.error": "Wrong username or password.",
+  "login.originError":
+    "This server does not accept sign-in from {origin}. Open it at the address set in WAVEFLOW_PUBLIC_URL, or correct that setting.",
   "login.wait": "Please wait…",
   "login.create": "Create and sign in",
   "login.signIn": "Sign in",

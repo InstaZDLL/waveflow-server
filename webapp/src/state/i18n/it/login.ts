@@ -21,6 +21,8 @@ export const login: Record<keyof typeof en, TranslationValue> = {
   "login.setupError":
     "Configurazione non riuscita. Usa un nome utente valido e una password di almeno 12 caratteri.",
   "login.error": "Nome utente o password errati.",
+  "login.originError":
+    "Questo server non accetta accessi da {origin}. Aprilo all’indirizzo impostato in WAVEFLOW_PUBLIC_URL, oppure correggi questa impostazione.",
   "login.wait": "Attendi…",
   "login.create": "Crea e accedi",
   "login.signIn": "Accedi",

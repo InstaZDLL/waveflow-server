@@ -598,4 +598,41 @@ describe("first-run setup", () => {
       api.bootstrapAdmin("admin", crypto.randomUUID(), crypto.randomUUID()),
     ).rejects.toMatchObject({ status: 422, message: "setup failed" });
   });
+
+  it("tells a refused address apart from a refused token", async () => {
+    const api = await freshApi();
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "origin_rejected", message: "" }, 403),
+    );
+    await expect(
+      api.bootstrapAdmin("admin", crypto.randomUUID(), crypto.randomUUID()),
+    ).rejects.toMatchObject({ status: 403, message: api.ORIGIN_REJECTED });
+  });
+});
+
+describe("sign-in", () => {
+  it("tells a refused address apart from wrong credentials", async () => {
+    const api = await freshApi();
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "origin_rejected", message: "" }, 403),
+    );
+    await expect(api.login("admin", crypto.randomUUID())).rejects.toMatchObject(
+      { status: 403, message: api.ORIGIN_REJECTED },
+    );
+
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "unauthorized", message: "" }, 401),
+    );
+    await expect(api.login("admin", crypto.randomUUID())).rejects.toMatchObject(
+      { status: 401, message: "login failed" },
+    );
+
+    // Another 403 is not a refused address: no Origin, or a role.
+    fetchStub.mockResolvedValueOnce(
+      jsonResponse({ code: "forbidden", message: "" }, 403),
+    );
+    await expect(api.login("admin", crypto.randomUUID())).rejects.toMatchObject(
+      { status: 403, message: "login failed" },
+    );
+  });
 });

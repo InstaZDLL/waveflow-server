@@ -374,7 +374,12 @@ export async function login(username: string, password: string): Promise<void> {
     }),
   });
   if (!response.ok) {
-    throw new ApiError(response.status, "login failed");
+    throw new ApiError(
+      response.status,
+      (await errorCode(response)) === ORIGIN_REJECTED
+        ? ORIGIN_REJECTED
+        : "login failed",
+    );
   }
   session = await parse<WebSession>(response);
   clearSessionState();
@@ -388,6 +393,22 @@ export const setupRequired = () =>
 
 /** The message a setup refused for its token is thrown with (RFC-019). */
 export const SETUP_TOKEN_REJECTED = "setup_token_rejected";
+
+/**
+ * The message a sign-in or a setup is thrown with when the server refused the
+ * address the page was opened at: `WAVEFLOW_PUBLIC_URL` names another one.
+ * Told apart so the screen says to open the right address, not that the
+ * password is wrong.
+ */
+export const ORIGIN_REJECTED = "origin_rejected";
+
+/** The `code` of a native JSON error, or nothing when the body is not one. */
+async function errorCode(response: Response): Promise<unknown> {
+  return response
+    .json()
+    .then((body: { code?: unknown }) => body?.code)
+    .catch(() => undefined);
+}
 
 /**
  * Creates the first administrator. `setupToken` is the one-time token the
@@ -409,15 +430,14 @@ export async function bootstrapAdmin(
     }),
   });
   if (!response.ok) {
-    // The token's refusal has its own code, so the screen can point at the
-    // field to correct rather than at the password rules.
-    const code = await response
-      .json()
-      .then((body: { code?: unknown }) => body.code)
-      .catch(() => undefined);
+    // The token's refusal and the address's have their own codes, so the
+    // screen can point at what to correct rather than at the password rules.
+    const code = await errorCode(response);
     throw new ApiError(
       response.status,
-      code === SETUP_TOKEN_REJECTED ? SETUP_TOKEN_REJECTED : "setup failed",
+      code === SETUP_TOKEN_REJECTED || code === ORIGIN_REJECTED
+        ? code
+        : "setup failed",
     );
   }
 }
