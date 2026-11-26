@@ -261,28 +261,38 @@ test("switches a library's watch off from its settings", async ({ page }) => {
  */
 test("opens a library to uploads from its settings", async ({ page }) => {
   const updates: unknown[] = [];
-  let listings = 0;
-  await page.route("**/api/v2/libraries", async (route) => {
-    listings += 1;
-    await route.fallback();
-  });
   await page.route("**/api/v2/libraries/library-1", async (route) => {
     if (route.request().method() !== "PATCH") {
       await route.fallback();
       return;
     }
-    updates.push(route.request().postDataJSON());
+    const body = route.request().postDataJSON() as {
+      accepts_uploads?: boolean;
+    };
+    updates.push(body);
+    // As the server does: the library's listing says so from now on.
+    mock.libraries = mock.libraries.map((entry) =>
+      entry.id === "library-1"
+        ? { ...entry, accepts_uploads: body.accepts_uploads ?? false }
+        : entry,
+    );
     await route.fulfill({ json: { scan_id: null } });
   });
   await page.goto("/admin");
+  const sections = page.getByRole("navigation", { name: "Settings sections" });
+  // Closed: the menu offers no upload, since the active library takes none.
+  await expect(sections.getByRole("link", { name: "Upload" })).toHaveCount(0);
   await page.getByRole("button", { name: "Name, folder and deletion" }).click();
   const uploads = page.getByRole("checkbox", { name: /Accept uploads/ });
   await expect(uploads).not.toBeChecked();
-  const before = listings;
   await uploads.check();
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => updates).toEqual([{ accepts_uploads: true }]);
-  await expect.poll(() => listings).toBeGreaterThan(before);
+
+  // Without a reload: only the library scope, listed again, can show the
+  // section and let the upload page offer its picker.
+  await sections.getByRole("link", { name: "Upload" }).click();
+  await expect(page.getByLabel("Choose audio files")).toBeAttached();
 });
 
 /**

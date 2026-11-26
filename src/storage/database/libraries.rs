@@ -210,6 +210,8 @@ impl Database {
     /// anything at all, and it is the operator's call rather than a member's:
     /// the command line, or an administrator's `PATCH` of the library
     /// (`LibraryUpdate::accepts_uploads`), never a member.
+    ///
+    /// `false` when no library has that id.
     pub async fn set_library_accepts_uploads(
         &self,
         actor_id: Uuid,
@@ -219,29 +221,58 @@ impl Database {
     ) -> Result<bool, sqlx::Error> {
         let _writer = self.writer_guard().await;
         let mut tx = self.begin_write(&_writer).await?;
-        let changed = sqlx::query("UPDATE library SET accepts_uploads=? WHERE id=?")
+        let found =
+            Self::set_library_accepts_uploads_in(&mut tx, actor_id, library_id, accepts, now_ms)
+                .await?
+                .is_some();
+        tx.commit().await?;
+        Ok(found)
+    }
+
+    /// The write behind both doors, inside the caller's transaction: the
+    /// command line's own, and the one an administrator's `PATCH` makes for
+    /// the whole edit. One write, so the two cannot drift.
+    ///
+    /// The value is read in `tx`, under the writer the caller holds, and only
+    /// a change is written and audited: a library opened twice has one
+    /// `library.uploads_opened`, and two requests racing cannot both see it
+    /// closed. `None` when no library has that id, otherwise whether it
+    /// changed.
+    pub(crate) async fn set_library_accepts_uploads_in(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        actor_id: Uuid,
+        library_id: Uuid,
+        accepts: bool,
+        now_ms: i64,
+    ) -> Result<Option<bool>, sqlx::Error> {
+        let was: Option<i64> = sqlx::query_scalar("SELECT accepts_uploads FROM library WHERE id=?")
+            .bind(library_id.to_string())
+            .fetch_optional(&mut **tx)
+            .await?;
+        let Some(was) = was else {
+            return Ok(None);
+        };
+        if (was != 0) == accepts {
+            return Ok(Some(false));
+        }
+        sqlx::query("UPDATE library SET accepts_uploads=? WHERE id=?")
             .bind(i64::from(accepts))
             .bind(library_id.to_string())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
-            == 1;
-        if changed {
-            insert_audit(
-                &mut tx,
-                Some(actor_id),
-                if accepts {
-                    "library.uploads_opened"
-                } else {
-                    "library.uploads_closed"
-                },
-                Some(library_id),
-                now_ms,
-            )
+            .execute(&mut **tx)
             .await?;
-        }
-        tx.commit().await?;
-        Ok(changed)
+        insert_audit(
+            tx,
+            Some(actor_id),
+            if accepts {
+                "library.uploads_opened"
+            } else {
+                "library.uploads_closed"
+            },
+            Some(library_id),
+            now_ms,
+        )
+        .await?;
+        Ok(Some(true))
     }
 
     /// Opens or closes a library to receiving canvases.

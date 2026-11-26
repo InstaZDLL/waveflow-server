@@ -592,7 +592,7 @@ async fn a_narrowed_admin_token_has_no_say_over_a_foreign_library() {
 #[tokio::test]
 async fn an_administrator_opens_and_closes_a_library_to_uploads() {
     let (_temp, config, state) = test_app().await;
-    let (_admin, admin_token) = account_with_token(&state, "uploads-admin", "admin").await;
+    let (admin, admin_token) = account_with_token(&state, "uploads-admin", "admin").await;
     let (owner, owner_token) = account_with_token(&state, "uploads-owner", "user").await;
     let music = config.data_dir.join("uploads-music");
     std::fs::create_dir_all(&music).unwrap();
@@ -701,4 +701,17 @@ async fn an_administrator_opens_and_closes_a_library_to_uploads() {
     assert_eq!(closed.status(), StatusCode::OK);
     assert_eq!(accepts().await, 0);
     assert_eq!(audited("library.uploads_closed").await, 1);
+
+    // The command line's door is the same write: closing a closed library
+    // writes nothing, and opening it writes the one entry the web would.
+    for open in [false, true, true] {
+        assert!(state
+            .db
+            .set_library_accepts_uploads(admin, library_id, open, now_ms())
+            .await
+            .unwrap());
+    }
+    assert_eq!(accepts().await, 1);
+    assert_eq!(audited("library.uploads_closed").await, 1);
+    assert_eq!(audited("library.uploads_opened").await, 2);
 }

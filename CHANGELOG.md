@@ -32,8 +32,10 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   `docker compose exec waveflow cat /data/setup-token`.
 - **An administrator opens a library to uploads from the web.** **Accept
   uploads**, in a library's settings under Administration, does what
-  `library set-uploads` did alone, and writes the same audit entry. It waits
-  for no scan, so the first library can be opened while its first scan runs.
+  `library set-uploads` did alone, through the same write and the same audit
+  entry. It waits for no scan, so the first library can be opened while its
+  first scan runs. Both now audit a change only: `library set-uploads` run
+  twice with the same value writes one entry, where it wrote two.
   The folder must be writable for an opened library to receive anything: in
   Docker, mount it without `:ro`, which the compose file now says.
 

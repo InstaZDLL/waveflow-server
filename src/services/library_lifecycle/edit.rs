@@ -109,28 +109,11 @@ impl DomainServices {
         let scan_id = {
             let _writer = self.db.writer_guard().await;
             let mut tx = self.db.begin_write(&_writer).await?;
-            // Read again under the writer, unlike `before`: opening a library
-            // takes no scan lock, so two requests could otherwise both read
-            // "closed", and the later write would close it again with no
-            // entry, or two openings would write two for one change.
-            let reopened = match update.accepts_uploads {
-                Some(accepts) => {
-                    let was: Option<i64> =
-                        sqlx::query_scalar("SELECT accepts_uploads FROM library WHERE id = ?")
-                            .bind(library_id.to_string())
-                            .fetch_optional(&mut *tx)
-                            .await?;
-                    let was = was.ok_or(ServiceError::NotFound)? != 0;
-                    (accepts != was).then_some(accepts)
-                }
-                None => None,
-            };
             let written = sqlx::query(
                 "UPDATE library SET name = COALESCE(?, name), \
                    root_path = COALESCE(?, root_path), \
                    follow_links = COALESCE(?, follow_links), \
-                   watch = COALESCE(?, watch), \
-                   accepts_uploads = COALESCE(?, accepts_uploads), updated_at = ? \
+                   watch = COALESCE(?, watch), updated_at = ? \
                  WHERE id = ?",
             )
             .bind(name.as_deref())
@@ -140,7 +123,6 @@ impl DomainServices {
             )
             .bind(update.follow_links.map(i64::from))
             .bind(update.watch.map(i64::from))
-            .bind(update.accepts_uploads.map(i64::from))
             .bind(now_ms())
             .bind(library_id.to_string())
             .execute(&mut *tx)
@@ -194,19 +176,16 @@ impl DomainServices {
                 )
                 .await?;
             }
-            // The same entries the command line writes, so the audit reads one
-            // way whichever door opened the library.
-            if let Some(accepts) = reopened {
-                audit(
+            // The command line's own write, so the two doors cannot drift. It
+            // reads the value again in this transaction, under the writer:
+            // opening a library takes no scan lock, so `before` may be stale.
+            if let Some(accepts) = update.accepts_uploads {
+                Database::set_library_accepts_uploads_in(
                     &mut tx,
-                    Some(actor.id),
-                    if accepts {
-                        "library.uploads_opened"
-                    } else {
-                        "library.uploads_closed"
-                    },
+                    actor.id,
                     library_id,
-                    serde_json::json!({}),
+                    accepts,
+                    now_ms(),
                 )
                 .await?;
             }
