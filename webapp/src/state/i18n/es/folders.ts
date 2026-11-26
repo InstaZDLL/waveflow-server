@@ -102,4 +102,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.error": "algo salió mal",
   "upload.reason.hashing":
     "este navegador no pudo calcular la huella del archivo",
+  "selection.label": "Canciones seleccionadas",
+  "selection.select": "Seleccionar «{title}»",
+  "selection.count": {
+    one: "{count} canción seleccionada",
+    other: "{count} canciones seleccionadas",
+  },
+  "selection.all": "Seleccionar todo",
+  "selection.none": "No seleccionar nada",
+  "selection.play": "Reproducir",
+  "selection.queue": "Añadir a la cola",
+  "selection.move": "Mover a una carpeta…",
+  "selection.playlist": "Añadir a una lista…",
+  "selection.clear": "Borrar la selección",
+  "selection.moveTitle": {
+    one: "Mover {count} canción a una carpeta",
+    other: "Mover {count} canciones a una carpeta",
+  },
+  "selection.moved": {
+    one: "{count} canción movida.",
+    other: "{count} canciones movidas.",
+  },
+  "selection.playlistTitle": {
+    one: "Añadir {count} canción a una lista",
+    other: "Añadir {count} canciones a una lista",
+  },
+  "selection.added": {
+    one: "{count} canción añadida a {name}.",
+    other: "{count} canciones añadidas a {name}.",
+  },
 };

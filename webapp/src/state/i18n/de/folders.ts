@@ -103,4 +103,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.error": "etwas ist schiefgelaufen",
   "upload.reason.hashing":
     "dieser Browser konnte keinen Fingerabdruck der Datei erstellen",
+  "selection.label": "Ausgewählte Titel",
+  "selection.select": "„{title}“ auswählen",
+  "selection.count": {
+    one: "{count} Titel ausgewählt",
+    other: "{count} Titel ausgewählt",
+  },
+  "selection.all": "Alle auswählen",
+  "selection.none": "Auswahl aufheben",
+  "selection.play": "Abspielen",
+  "selection.queue": "Zur Warteschlange",
+  "selection.move": "In einen Ordner verschieben…",
+  "selection.playlist": "Zu einer Playlist hinzufügen…",
+  "selection.clear": "Auswahl löschen",
+  "selection.moveTitle": {
+    one: "{count} Titel in einen Ordner verschieben",
+    other: "{count} Titel in einen Ordner verschieben",
+  },
+  "selection.moved": {
+    one: "{count} Titel verschoben.",
+    other: "{count} Titel verschoben.",
+  },
+  "selection.playlistTitle": {
+    one: "{count} Titel zu einer Playlist hinzufügen",
+    other: "{count} Titel zu einer Playlist hinzufügen",
+  },
+  "selection.added": {
+    one: "{count} Titel zu {name} hinzugefügt.",
+    other: "{count} Titel zu {name} hinzugefügt.",
+  },
 };

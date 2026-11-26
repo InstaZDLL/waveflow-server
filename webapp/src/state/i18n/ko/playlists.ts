@@ -85,4 +85,12 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "bookmarks.detail": "곡마다 하나씩 저장돼요. 다시 저장하면 위치가 바뀌어요.",
   "bookmarks.save": "현재 위치 저장",
   "bookmarks.forget": "삭제",
+  "playlistPicker.new": "새 플레이리스트",
+  "playlistPicker.name": "이름",
+  "playlistPicker.create": "이 곡들로 만들기",
+  "playlistPicker.existing": "내 플레이리스트",
+  "playlistPicker.none":
+    "아직 플레이리스트가 없어요. 위에서 새 플레이리스트 이름을 정하세요.",
+  "playlistPicker.loadError": "플레이리스트를 불러오지 못했어요.",
+  "playlistPicker.failed": "곡을 추가하지 못했어요. 다시 시도하세요.",
 };

@@ -98,4 +98,33 @@ export const folders = {
   "upload.reason.notAllowed": "you may no longer add files to this library",
   "upload.reason.error": "something went wrong",
   "upload.reason.hashing": "this browser could not fingerprint the file",
+  "selection.label": "Selected tracks",
+  "selection.select": "Select “{title}”",
+  "selection.count": {
+    one: "{count} track selected",
+    other: "{count} tracks selected",
+  },
+  "selection.all": "Select all",
+  "selection.none": "Select none",
+  "selection.play": "Play",
+  "selection.queue": "Add to queue",
+  "selection.move": "Move to a folder…",
+  "selection.playlist": "Add to a playlist…",
+  "selection.clear": "Clear selection",
+  "selection.moveTitle": {
+    one: "Move {count} track to a folder",
+    other: "Move {count} tracks to a folder",
+  },
+  "selection.moved": {
+    one: "{count} track moved.",
+    other: "{count} tracks moved.",
+  },
+  "selection.playlistTitle": {
+    one: "Add {count} track to a playlist",
+    other: "Add {count} tracks to a playlist",
+  },
+  "selection.added": {
+    one: "{count} track added to {name}.",
+    other: "{count} tracks added to {name}.",
+  },
 } as const;

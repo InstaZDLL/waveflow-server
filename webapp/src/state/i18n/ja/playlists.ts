@@ -88,4 +88,12 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
     "1曲につき1か所保存できます。保存し直すと上書きされます。",
   "bookmarks.save": "この位置を保存",
   "bookmarks.forget": "削除",
+  "playlistPicker.new": "新しいプレイリスト",
+  "playlistPicker.name": "名前",
+  "playlistPicker.create": "この曲で作成",
+  "playlistPicker.existing": "あなたのプレイリスト",
+  "playlistPicker.none":
+    "プレイリストはまだありません。上で新しいプレイリストに名前を付けてください。",
+  "playlistPicker.loadError": "プレイリストを読み込めませんでした。",
+  "playlistPicker.failed": "曲を追加できませんでした。もう一度お試しください。",
 };

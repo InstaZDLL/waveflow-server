@@ -99,4 +99,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.notAllowed": "이제 이 보관함에 파일을 추가할 수 없어요",
   "upload.reason.error": "문제가 발생했어요",
   "upload.reason.hashing": "이 브라우저에서 파일의 식별값을 계산할 수 없어요",
+  "selection.label": "선택한 곡",
+  "selection.select": "‘{title}’ 선택",
+  "selection.count": {
+    one: "{count}곡 선택됨",
+    other: "{count}곡 선택됨",
+  },
+  "selection.all": "모두 선택",
+  "selection.none": "선택 해제",
+  "selection.play": "재생",
+  "selection.queue": "대기열에 추가",
+  "selection.move": "폴더로 이동…",
+  "selection.playlist": "플레이리스트에 추가…",
+  "selection.clear": "선택 지우기",
+  "selection.moveTitle": {
+    one: "{count}곡을 폴더로 이동",
+    other: "{count}곡을 폴더로 이동",
+  },
+  "selection.moved": {
+    one: "{count}곡을 이동했어요.",
+    other: "{count}곡을 이동했어요.",
+  },
+  "selection.playlistTitle": {
+    one: "{count}곡을 플레이리스트에 추가",
+    other: "{count}곡을 플레이리스트에 추가",
+  },
+  "selection.added": {
+    one: "{count}곡을 {name}에 추가했어요.",
+    other: "{count}곡을 {name}에 추가했어요.",
+  },
 };

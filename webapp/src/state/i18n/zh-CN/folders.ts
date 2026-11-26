@@ -96,4 +96,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.notAllowed": "你已无权向此音乐库添加文件",
   "upload.reason.error": "出了点问题",
   "upload.reason.hashing": "此浏览器无法计算该文件的指纹",
+  "selection.label": "已选歌曲",
+  "selection.select": "选择“{title}”",
+  "selection.count": {
+    one: "已选 {count} 首",
+    other: "已选 {count} 首",
+  },
+  "selection.all": "全选",
+  "selection.none": "全不选",
+  "selection.play": "播放",
+  "selection.queue": "加入播放队列",
+  "selection.move": "移到文件夹…",
+  "selection.playlist": "添加到播放列表…",
+  "selection.clear": "清除选择",
+  "selection.moveTitle": {
+    one: "将 {count} 首歌曲移到文件夹",
+    other: "将 {count} 首歌曲移到文件夹",
+  },
+  "selection.moved": {
+    one: "已移动 {count} 首歌曲。",
+    other: "已移动 {count} 首歌曲。",
+  },
+  "selection.playlistTitle": {
+    one: "将 {count} 首歌曲添加到播放列表",
+    other: "将 {count} 首歌曲添加到播放列表",
+  },
+  "selection.added": {
+    one: "已将 {count} 首歌曲添加到 {name}。",
+    other: "已将 {count} 首歌曲添加到 {name}。",
+  },
 };

@@ -103,4 +103,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.error": "qualcosa è andato storto",
   "upload.reason.hashing":
     "questo browser non è riuscito a calcolare l’impronta del file",
+  "selection.label": "Brani selezionati",
+  "selection.select": "Seleziona «{title}»",
+  "selection.count": {
+    one: "{count} brano selezionato",
+    other: "{count} brani selezionati",
+  },
+  "selection.all": "Seleziona tutto",
+  "selection.none": "Deseleziona tutto",
+  "selection.play": "Riproduci",
+  "selection.queue": "Aggiungi alla coda",
+  "selection.move": "Sposta in una cartella…",
+  "selection.playlist": "Aggiungi a una playlist…",
+  "selection.clear": "Annulla la selezione",
+  "selection.moveTitle": {
+    one: "Sposta {count} brano in una cartella",
+    other: "Sposta {count} brani in una cartella",
+  },
+  "selection.moved": {
+    one: "{count} brano spostato.",
+    other: "{count} brani spostati.",
+  },
+  "selection.playlistTitle": {
+    one: "Aggiungi {count} brano a una playlist",
+    other: "Aggiungi {count} brani a una playlist",
+  },
+  "selection.added": {
+    one: "{count} brano aggiunto a {name}.",
+    other: "{count} brani aggiunti a {name}.",
+  },
 };

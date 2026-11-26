@@ -16,22 +16,31 @@ import {
   placeTracks,
   UNFILED,
   updateFolder,
-} from "../../api";
-import { filedTreeQuery, folderTracksQuery } from "../../api/queries";
-import { FolderPicker } from "../../components/catalog/folder-picker";
+} from "../../../api";
+import { filedTreeQuery, folderTracksQuery } from "../../../api/queries";
+import { FolderPicker } from "../../../components/catalog/folder-picker";
 import {
   SongTable,
   TRACK_DRAG_TYPE,
-} from "../../components/catalog/song-table";
-import { Icon } from "../../components/layout/icons";
-import { Loading, PageHeader } from "../../components/layout/page-shell";
-import { usePlayer } from "../../player/player";
-import { useI18n } from "../../state/i18n";
+} from "../../../components/catalog/song-table";
+import { Icon } from "../../../components/layout/icons";
+import { Loading, PageHeader } from "../../../components/layout/page-shell";
+import {
+  NOTHING_PICKED,
+  type Picked,
+  pick,
+  pickAll,
+  pickedIn,
+  unpick,
+} from "../../../lib/selection";
+import { usePlayer } from "../../../player/player";
+import { useI18n } from "../../../state/i18n";
 import {
   mayCorrectTracks,
   mayUploadTo,
   useLibraryScope,
-} from "../../state/library-scope";
+} from "../../../state/library-scope";
+import { SelectionBar } from "./selection-bar";
 
 /** What a dragged folder card carries: its id. */
 const FOLDER_DRAG_TYPE = "application/x-waveflow-folder";
@@ -96,6 +105,17 @@ export function FoldersPage({ folder }: { folder: string }) {
   const formMode = form?.folder === folder ? form.mode : null;
   const shown = notice?.folder === folder ? notice : null;
   const [moving, setMoving] = useState(false);
+  // The rows picked to act on together, for one folder only, like the notice:
+  // carried to another, they would name tracks no longer on screen.
+  const [picks, setPicks] = useState<{ folder: string; picked: Picked }>({
+    folder,
+    picked: NOTHING_PICKED,
+  });
+  const picked = picks.folder === folder ? picks.picked : NOTHING_PICKED;
+  const songIds = songs.map((song) => song.id);
+  const pickedIds = pickedIn(songIds, picked);
+  const pickedSongs = songs.filter((song) => picked.selected.has(song.id));
+  const setPicked = (next: Picked) => setPicks({ folder, picked: next });
   const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const folders = tree.data?.folders ?? [];
@@ -132,6 +152,8 @@ export function FoldersPage({ folder }: { folder: string }) {
       setNotice({ tone: "status", text: said, folder: then });
       return true;
     } catch (error) {
+      // A failed move past 500 tracks may follow batches that were filed.
+      await refresh();
       const text =
         (error instanceof ApiError && refused?.(error)) || t("filed.failed");
       setNotice({ tone: "error", text, folder });
@@ -247,6 +269,17 @@ export function FoldersPage({ folder }: { folder: string }) {
 
   const controls = (
     <>
+      {songs.length ? (
+        <button
+          type="button"
+          onClick={() => setPicked(pickAll(songIds, picked))}
+          aria-pressed={pickedIds.length === songIds.length}
+        >
+          {pickedIds.length === songIds.length
+            ? t("selection.none")
+            : t("selection.all")}
+        </button>
+      ) : null}
       {songs.length ? (
         <button
           className="action-primary"
@@ -482,7 +515,41 @@ export function FoldersPage({ folder }: { folder: string }) {
             !tracks.data ? (
               <Loading error={tracks.error} />
             ) : songs.length ? (
-              <SongTable songs={songs} draggableRows={may} />
+              <>
+                {pickedIds.length ? (
+                  <SelectionBar
+                    libraryId={libraryId}
+                    songs={pickedSongs}
+                    mayFile={may}
+                    folder={folder === UNFILED ? null : folder}
+                    onDone={(text) =>
+                      setNotice({ tone: "status", text, folder })
+                    }
+                    onMoved={(moved) =>
+                      // Only in the folder the move left: a track picked
+                      // since where it went stays picked.
+                      setPicks((current) =>
+                        current.folder === folder
+                          ? {
+                              ...current,
+                              picked: unpick(current.picked, moved),
+                            }
+                          : current,
+                      )
+                    }
+                    onClear={() => setPicked(NOTHING_PICKED)}
+                  />
+                ) : null}
+                <SongTable
+                  songs={songs}
+                  draggableRows={may}
+                  selection={{
+                    selected: picked.selected,
+                    onSelect: (position, extend) =>
+                      setPicked(pick(songIds, picked, position, extend)),
+                  }}
+                />
+              </>
             ) : !children.length || folder === UNFILED ? (
               <p className="muted">
                 {t(folder === UNFILED ? "filed.allFiled" : "filed.empty")}

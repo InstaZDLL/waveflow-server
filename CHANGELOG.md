@@ -38,6 +38,12 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   twice with the same value writes one entry, where it wrote two.
   The folder must be writable for an opened library to receive anything: in
   Docker, mount it without `:ro`, which the compose file now says.
+- **Tracks are picked in a folder and acted on together.** A checkbox leads
+  each row of a filed folder and of To sort, Shift takes the range from the
+  last one picked, and **Select all** takes what is loaded. The picked tracks
+  are played, queued, moved to a folder in one write, or added to a
+  playlist, new or existing; dragging a picked row takes the others with
+  it. Filing a folder full of tracks took one menu per track.
 
 ### Fixed
 
@@ -52,6 +58,10 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   names the two variables it needs, which the metadata key does not
   replace.
 - **The Transcoding and Updates panels of Administration no longer touch.**
+- **A folder lists its tracks album by album.** It sorted by each track's
+  own artist, so a compilation, or an album with a guest on one song, came
+  apart among the other albums. It now sorts by the album's artist, the
+  album, then disc and track.
 
 ## [2.3.0] — 2026-11-17
 

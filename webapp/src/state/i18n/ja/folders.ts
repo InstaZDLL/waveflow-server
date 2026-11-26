@@ -103,4 +103,33 @@ export const folders: Record<keyof typeof en, TranslationValue> = {
   "upload.reason.error": "問題が発生しました",
   "upload.reason.hashing":
     "このブラウザではファイルのフィンガープリントを取得できませんでした",
+  "selection.label": "選択した曲",
+  "selection.select": "「{title}」を選択",
+  "selection.count": {
+    one: "{count}曲を選択中",
+    other: "{count}曲を選択中",
+  },
+  "selection.all": "すべて選択",
+  "selection.none": "選択を解除",
+  "selection.play": "再生",
+  "selection.queue": "キューに追加",
+  "selection.move": "フォルダーへ移動…",
+  "selection.playlist": "プレイリストに追加…",
+  "selection.clear": "選択をクリア",
+  "selection.moveTitle": {
+    one: "{count}曲をフォルダーへ移動",
+    other: "{count}曲をフォルダーへ移動",
+  },
+  "selection.moved": {
+    one: "{count}曲を移動しました。",
+    other: "{count}曲を移動しました。",
+  },
+  "selection.playlistTitle": {
+    one: "{count}曲をプレイリストに追加",
+    other: "{count}曲をプレイリストに追加",
+  },
+  "selection.added": {
+    one: "{count}曲を{name}に追加しました。",
+    other: "{count}曲を{name}に追加しました。",
+  },
 };
