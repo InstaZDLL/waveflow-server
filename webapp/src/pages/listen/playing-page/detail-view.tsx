@@ -5,9 +5,9 @@ import { useState } from "react";
 import type { Song } from "../../../api";
 import { Artwork } from "../../../components/artwork/artwork";
 import { CanvasStage } from "../../../components/artwork/canvas";
+import { type ClipOpen, ClipPlayer } from "../../../components/track/clip";
 import { FileQuality } from "../../../components/track/file-quality";
 import { useI18n } from "../../../state/i18n";
-import { ClipPlayer, useClipOpen } from "./clip";
 import { type LyricSheet, LyricsStrip, useLyricSheet } from "./lyrics";
 
 /**
@@ -40,8 +40,20 @@ export function detailSplit(
  * names and what the file is under it, and the words in a tall column of their
  * own. Without words, one column in the middle. Narrower, the two stack, cover
  * first, as they always have — the stylesheet decides that, not this.
+ *
+ * The clip is the playing screen's, not this view's: the immersive view is laid
+ * over this one without unmounting it, and a clip held here kept playing behind
+ * it. `clipHere` says whether this view is the one showing it.
  */
-export function DetailView({ song }: { song: Song }) {
+export function DetailView({
+  song,
+  clip,
+  clipHere,
+}: {
+  song: Song;
+  clip: ClipOpen;
+  clipHere: boolean;
+}) {
   const { t } = useI18n();
   const lyrics = useLyricSheet(song.id);
   // Adjusted while rendering rather than in an effect, as the artwork does: an
@@ -49,14 +61,13 @@ export function DetailView({ song }: { song: Song }) {
   const [split, setSplit] = useState(false);
   const next = detailSplit(split, lyrics.state);
   if (next !== split) setSplit(next);
-  const clip = useClipOpen(song.id);
-  const clipOpen = clip.open && Boolean(song.clip);
+  const clipOpen = clip.open && clipHere && Boolean(song.clip);
 
   return (
     <div className={`playing ${next ? "playing-split" : "playing-solo"}`}>
       <div className="playing-track">
         {clipOpen ? (
-          <ClipPlayer song={song} onClose={clip.hide} />
+          <ClipPlayer song={song} onClose={clip.hide} session={clip.session} />
         ) : (
           <CanvasStage trackId={song.id}>
             <Artwork
@@ -74,7 +85,7 @@ export function DetailView({ song }: { song: Song }) {
               with the track and not with the lyrics, and a listener who came
               here to read along should not have to pass it twice. */}
           <FileQuality song={song} />
-          {song.clip && !clipOpen ? (
+          {song.clip && !clip.open ? (
             <button type="button" className="clip-open" onClick={clip.show}>
               {t("playing.watchClip")}
             </button>

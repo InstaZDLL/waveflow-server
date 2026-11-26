@@ -1,19 +1,20 @@
-import { act } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Song } from "../../../api";
+import type { Song } from "../../api";
 import {
   PlayerContext,
   PlayerProgressContext,
   type PlayerState,
-} from "../../../player/context";
-import { I18nProvider } from "../../../state/i18n";
-import { ClipPlayer, resumeAt, useClipOpen } from "./clip";
+} from "../../player/context";
+import { I18nProvider } from "../../state/i18n";
+import { ClipPlayer, type ClipSession, resumeAt, useClipOpen } from "./clip";
+import { ClipDialog } from "./clip-dialog";
 
 const clipUrl = vi.hoisted(() => vi.fn());
-vi.mock("../../../api", async (actual) => ({
-  ...(await actual<typeof import("../../../api")>()),
+vi.mock("../../api", async (actual) => ({
+  ...(await actual<typeof import("../../api")>()),
   clipUrl,
 }));
 
@@ -71,6 +72,8 @@ afterEach(() => {
 /** A player that only records what the clip asks of it. */
 function fakePlayer(playing: boolean, asidePlaying = false) {
   const player = {
+    /** The track in the queue: the one whose clip opens, unless a test says. */
+    current: { id: "track" } as { id: string } | null,
     playing,
     asidePlaying,
     /** What plays beside the queue: set while one is loaded, playing or not. */
@@ -88,20 +91,25 @@ function fakePlayer(playing: boolean, asidePlaying = false) {
 
 const song = { id: "track", title: "Song" } as Song;
 
+/** Renders `node` under `player`; called again, it publishes a new player. */
+function renderUnder(player: ReturnType<typeof fakePlayer>, node: ReactNode) {
+  root.render(
+    <I18nProvider>
+      <PlayerContext.Provider value={player as unknown as PlayerState}>
+        <PlayerProgressContext.Provider value={{ position: 5, duration: 200 }}>
+          {node}
+        </PlayerProgressContext.Provider>
+      </PlayerContext.Provider>
+    </I18nProvider>,
+  );
+}
+
 /** Renders the clip under `player`; called again, it publishes a new player. */
 function renderClip(
   player: ReturnType<typeof fakePlayer>,
   onClose: () => void,
 ) {
-  root.render(
-    <I18nProvider>
-      <PlayerContext.Provider value={player as unknown as PlayerState}>
-        <PlayerProgressContext.Provider value={{ position: 5, duration: 200 }}>
-          <ClipPlayer song={song} onClose={onClose} />
-        </PlayerProgressContext.Provider>
-      </PlayerContext.Provider>
-    </I18nProvider>,
-  );
+  renderUnder(player, <ClipPlayer song={song} onClose={onClose} />);
 }
 
 async function openClip(player: ReturnType<typeof fakePlayer>) {
@@ -237,6 +245,142 @@ describe("ClipPlayer", () => {
     act(() => renderClip({ ...player, asidePlaying: true }, onClose));
     expect(pause).toHaveBeenCalledTimes(1);
     pause.mockRestore();
+  });
+
+  it("leaves another track where it was, and gives it back", async () => {
+    // Opened from a track's menu while something else is in the queue: the
+    // clip's position is a place in a different recording.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    player.current = { id: "another" };
+    await openClip(player);
+    expect(player.playing).toBe(false);
+    playTo(60);
+    clickBack();
+    expect(player.seek).not.toHaveBeenCalled();
+    expect(player.playing).toBe(true);
+  });
+});
+
+/**
+ * The detail view and the immersive view each show the clip in their own
+ * place, so moving between them mounts a new player on the same session.
+ */
+describe("ClipPlayer carried from one view to the next", () => {
+  function session(): ClipSession {
+    return { wasPlaying: null, at: null, playing: true };
+  }
+
+  it("goes on where it stood, and still gives the track back", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const carried = session();
+    const player = fakePlayer(true);
+    const onClose = vi.fn();
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer
+          key="detail"
+          song={song}
+          onClose={onClose}
+          session={carried}
+        />,
+      ),
+    );
+    playTo(60);
+    // The track was paused by the clip; the next view must not read that.
+    expect(player.playing).toBe(false);
+
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer
+          key="immersive"
+          song={song}
+          onClose={onClose}
+          session={carried}
+        />,
+      ),
+    );
+    expect(videoElement().autoplay).toBe(true);
+    act(() => {
+      videoElement().dispatchEvent(new Event("loadedmetadata"));
+    });
+    expect(videoElement().currentTime).toBe(60);
+
+    playTo(75);
+    clickBack();
+    expect(player.seek).toHaveBeenCalledWith(75);
+    expect(player.playing).toBe(true);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("stays paused, and leaves the track alone, when it left paused", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const carried = session();
+    const player = fakePlayer(false);
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer
+          key="detail"
+          song={song}
+          onClose={vi.fn()}
+          session={carried}
+        />,
+      ),
+    );
+    act(() => {
+      videoElement().dispatchEvent(new Event("pause"));
+    });
+
+    // The track started from the bar while the clip was out of sight.
+    player.playing = true;
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer
+          key="immersive"
+          song={song}
+          onClose={vi.fn()}
+          session={carried}
+        />,
+      ),
+    );
+    expect(videoElement().autoplay).toBe(false);
+    expect(player.toggle).not.toHaveBeenCalled();
+    expect(player.playing).toBe(true);
+  });
+});
+
+describe("ClipDialog", () => {
+  beforeEach(() => {
+    // jsdom has the element but not the top layer.
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.open = true;
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      this.open = false;
+    };
+  });
+
+  it("gives the track back when Escape closes it", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    player.current = { id: "another" };
+    const onClose = vi.fn();
+    await act(async () =>
+      renderUnder(player, <ClipDialog song={song} onClose={onClose} />),
+    );
+    expect(player.playing).toBe(false);
+
+    const cancel = new Event("cancel", { cancelable: true });
+    act(() => {
+      container.querySelector("dialog")?.dispatchEvent(cancel);
+    });
+    expect(cancel.defaultPrevented).toBe(true);
+    expect(player.playing).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 

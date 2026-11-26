@@ -44,8 +44,18 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   are played, queued, moved to a folder in one write, or added to a
   playlist, new or existing; dragging a picked row takes the others with
   it. Filing a folder full of tracks took one menu per track.
+- **A clip plays in the immersive view and from a track's menu** (RFC-029).
+  The immersive view shows the clip in the cover's place, larger, and a clip
+  opened in the detail view carries on there where it stood. **Watch the
+  clip** in a track's menu, offered only for a track that has one, opens it
+  in a dialog of its own without changing the queue: the track playing
+  pauses, and resumes where it was once the clip closes.
 
 ### Fixed
+
+- **A clip no longer plays on behind the immersive view.** The detail view
+  stays mounted under it, and a clip opened there went on sounding, out of
+  sight, once the immersive view opened.
 
 - **A library registered or deleted from Administration shows at once.** The
   library picker and the catalogue read a list taken at sign-in, so a new

@@ -57,6 +57,36 @@
   margin-top: var(--space-3);
 }
 
+/* Any track's clip, from its menu: a panel like Properties, as wide as the
+   picture needs. `[open]`, for the reason the immersive view gives below. */
+.clip-dialog[open] {
+  display: grid;
+  gap: var(--space-4);
+  width: min(56rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: var(--space-6);
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.clip-dialog::backdrop {
+  background: color-mix(in srgb, black 55%, transparent);
+}
+
+.clip-dialog-header {
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
+}
+
+.clip-dialog .clip-stage.clip-dialog-stage {
+  width: 100%;
+}
+
 .lyrics {
   margin-top: var(--space-8);
 }
@@ -388,6 +418,19 @@
    theme took even those away. */
 .immersive-cover.cover-fallback {
   width: min(78vw, 60vh);
+}
+
+/* The clip in the cover's place, as wide as a 16:9 picture of its height, and
+   centred with its button under it rather than to its left. A little shorter
+   than the cover may be, because that button is a row the cover has not: at
+   60vh the view overflowed a 600-pixel window and scrolled. */
+.immersive .clip-stage.immersive-clip {
+  width: min(92vw, calc(52vh * 16 / 9));
+  justify-items: center;
+}
+
+.immersive-clip .clip-video {
+  max-height: 52vh;
 }
 
 .immersive-detail {

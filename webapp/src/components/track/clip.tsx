@@ -1,10 +1,11 @@
-// A track's music video on the playing screen (RFC-029, the web client).
+// A track's music video (RFC-029, the web client): on the playing screen, in
+// the immersive view, and from a track's menu.
 
 import { useEffect, useRef, useState } from "react";
 
-import { clipUrl, type Song } from "../../../api";
-import { usePlayer, usePlayerProgress } from "../../../player/player";
-import { useI18n } from "../../../state/i18n";
+import { clipUrl, type Song } from "../../api";
+import { usePlayer, usePlayerProgress } from "../../player/player";
+import { useI18n } from "../../state/i18n";
 
 /**
  * Where the track takes over once its clip closes: at the clip's position,
@@ -31,6 +32,28 @@ type ClipState =
   | { kind: "failed" };
 
 /**
+ * What one opening of a clip carries from a player that goes away to the one
+ * that takes over: the detail view and the immersive view each show the clip
+ * in their own place, so moving from one to the other mounts a new element.
+ * Without this, the clip would start over, and closing it would no longer know
+ * whether the track was playing when it opened.
+ */
+export type ClipSession = {
+  /** Whether the track was playing when the clip opened; `null` until then. */
+  wasPlaying: boolean | null;
+  /** Where the clip stood, in seconds; `null` before it played. */
+  at: number | null;
+  /** Whether the clip was playing when its element went away. */
+  playing: boolean;
+};
+
+const freshSession = (): ClipSession => ({
+  wasPlaying: null,
+  at: null,
+  playing: true,
+});
+
+/**
  * Whether the clip of the track on screen is open. Closed again whenever the
  * track changes, so a track that comes back later opens on its cover, not on a
  * clip it was showing before: the view that holds this is not remounted per
@@ -40,18 +63,30 @@ export function useClipOpen(trackId: string): {
   open: boolean;
   show: () => void;
   hide: () => void;
+  session: ClipSession;
 } {
-  const [state, setState] = useState({ trackId, open: false });
+  const [state, setState] = useState(() => ({
+    trackId,
+    open: false,
+    session: freshSession(),
+  }));
   // Adjusted while rendering, as the detail view adjusts its columns: an
   // effect would paint one frame of the old track's clip over the new one.
-  const current = state.trackId === trackId ? state : { trackId, open: false };
+  const current =
+    state.trackId === trackId
+      ? state
+      : { trackId, open: false, session: freshSession() };
   if (current !== state) setState(current);
   return {
     open: current.open,
-    show: () => setState({ trackId, open: true }),
-    hide: () => setState({ trackId, open: false }),
+    session: current.session,
+    show: () => setState({ trackId, open: true, session: freshSession() }),
+    hide: () => setState({ trackId, open: false, session: freshSession() }),
   };
 }
+
+/** An opening of the clip, as {@link useClipOpen} keeps it. */
+export type ClipOpen = ReturnType<typeof useClipOpen>;
 
 /**
  * The clip in place of the cover, with its own sound and its own length.
@@ -64,38 +99,75 @@ export function useClipOpen(trackId: string): {
  * range request with a 404, which the element reports as an error. One new
  * ticket is asked for then, and the clip resumes where it stood; only a 404 to
  * that question means the clip is gone.
+ *
+ * **The clip may be another track's**, opened from a track's menu while
+ * something else is in the queue. The current track then pauses and resumes
+ * as it does for its own clip, but stays where it was: the clip's position is
+ * a place in a different recording.
+ *
+ * `session` is what a clip carries from one view to the next (see
+ * {@link ClipSession}); a player that is the only one for its opening, as in a
+ * dialog, needs none. `closer` hands the caller the same close the button
+ * runs, for a dialog's Escape key, which would otherwise take the clip away
+ * without giving the track back.
  */
 export function ClipPlayer({
   song,
   onClose,
+  session,
+  closer,
+  className,
 }: {
   song: Song;
   onClose: () => void;
+  session?: ClipSession;
+  closer?: { current: (() => void) | null };
+  className?: string;
 }) {
   const { t } = useI18n();
   const player = usePlayer();
   const progress = usePlayerProgress();
   const video = useRef<HTMLVideoElement | null>(null);
   const [state, setState] = useState<ClipState>({ kind: "asking" });
-  // Read once, when the clip opens: what to give back when it closes.
-  const wasPlaying = useRef(player.playing);
-  // Where to put the clip back after a renewed ticket, and whether a renewal
-  // has already been tried since the clip last played.
-  const restoreAt = useRef<number | null>(null);
+  // Read once, when the clip opens: what to give back when it closes. A player
+  // taking over from another reads what the first one read, not the paused
+  // track the first one left behind.
+  const wasPlaying = useRef<boolean | null>(null);
+  if (wasPlaying.current === null) {
+    wasPlaying.current = session?.wasPlaying ?? player.playing;
+    if (session) session.wasPlaying = wasPlaying.current;
+  }
+  // Whether this element starts playing on its own: always for a new opening,
+  // and for one carried over only if the clip was playing when it left.
+  const startPlaying = useRef(session?.playing ?? true);
+  // Where to put the clip back after a renewed ticket or a change of view, and
+  // whether a renewal has already been tried since the clip last played.
+  const restoreAt = useRef<number | null>(session?.at ?? null);
   const renewed = useRef(false);
   // The clip's last known position, kept apart from the element: a renewal
   // that is refused takes the element away, and closing must still hand the
   // track the place the clip had reached.
-  const lastAt = useRef<number | null>(null);
+  const lastAt = useRef<number | null>(session?.at ?? null);
   // The latest of these, for the cleanup and the handlers, which outlive the
   // render that made them.
   const latest = useRef({ player, duration: progress.duration, onClose });
   latest.current = { player, duration: progress.duration, onClose };
 
-  // Pause the track once, as the clip opens.
+  // Pause the track once, as the clip opens — not when a clip that was paused
+  // comes back in another view, where the track may have been started since.
   useEffect(() => {
-    if (latest.current.player.playing) latest.current.player.toggle();
+    if (startPlaying.current && latest.current.player.playing) {
+      latest.current.player.toggle();
+    }
   }, []);
+
+  useEffect(() => {
+    if (!closer) return;
+    closer.current = close;
+    return () => {
+      closer.current = null;
+    };
+  });
 
   // Only one sound at a time: a track started from the bar, the keyboard or the
   // system controls while the clip is open pauses the clip, and so does a
@@ -127,7 +199,7 @@ export function ClipPlayer({
       latest.current.duration,
     );
     const { player } = latest.current;
-    if (at !== null) player.seek(at);
+    if (at !== null && player.current?.id === song.id) player.seek(at);
     // Not over a station or an episode started while the clip was open, playing
     // or paused since by the clip itself: `toggle` would drop it from the bar,
     // and closing a clip must not take away what the listener chose since. A
@@ -156,7 +228,7 @@ export function ClipPlayer({
   }
 
   return (
-    <div className="clip-stage">
+    <div className={className ? `clip-stage ${className}` : "clip-stage"}>
       {state.kind === "playing" ? (
         // biome-ignore lint/a11y/useMediaCaption: the file is the operator's, played as it is; the server has no caption track to offer
         <video
@@ -166,7 +238,7 @@ export function ClipPlayer({
           src={state.url}
           aria-label={t("playing.clipLabel")}
           controls
-          autoPlay
+          autoPlay={startPlaying.current}
           playsInline
           onLoadedMetadata={(event) => {
             if (restoreAt.current !== null) {
@@ -176,11 +248,18 @@ export function ClipPlayer({
           }}
           onTimeUpdate={(event) => {
             lastAt.current = event.currentTarget.currentTime;
+            if (session) session.at = lastAt.current;
+          }}
+          onPause={() => {
+            if (session) session.playing = false;
           }}
           // The other half of one sound at a time: the clip starting — on
           // opening, or from its own controls after the bar had taken over —
           // pauses the track.
           onPlay={() => {
+            // A clip started once plays on by itself after a renewed ticket.
+            startPlaying.current = true;
+            if (session) session.playing = true;
             const { player } = latest.current;
             if (player.playing) player.toggle();
             // A station or an episode plays while the queue is paused, so

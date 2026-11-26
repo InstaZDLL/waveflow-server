@@ -24,6 +24,7 @@ import { useI18n } from "../../state/i18n";
 import { mayCorrectTracks, useLibraryScope } from "../../state/library-scope";
 import { FolderPicker } from "../catalog/folder-picker";
 import { Icon } from "../layout/icons";
+import { ClipDialog } from "../track/clip-dialog";
 import { TrackProperties } from "../track/track-properties";
 import { PopupMenu, type PopupMenuItem } from "./popup-menu";
 
@@ -64,6 +65,11 @@ export function useTrackMenu() {
   } | null>(null);
   // Filing, like Properties, replaces the menu with a dialog of its own.
   const [moving, setMoving] = useState<{
+    song: Song;
+    returnTo: HTMLElement | null;
+  } | null>(null);
+  // And so does a clip (RFC-029).
+  const [watching, setWatching] = useState<{
     song: Song;
     returnTo: HTMLElement | null;
   } | null>(null);
@@ -212,6 +218,10 @@ export function useTrackMenu() {
                 setMoving({ song, returnTo: opened.returnTo });
                 setOpened(null);
               }}
+              onWatch={(song) => {
+                setWatching({ song, returnTo: opened.returnTo });
+                setOpened(null);
+              }}
             />,
             document.body,
           )
@@ -246,6 +256,16 @@ export function useTrackMenu() {
           onClose={() => {
             const returnTo = moving.returnTo;
             setMoving(null);
+            returnTo?.focus();
+          }}
+        />
+      ) : null}
+      {watching ? (
+        <ClipDialog
+          song={watching.song}
+          onClose={() => {
+            const returnTo = watching.returnTo;
+            setWatching(null);
             returnTo?.focus();
           }}
         />
@@ -285,12 +305,14 @@ function TrackMenu({
   onClose,
   onProperties,
   onMove,
+  onWatch,
   onDownloadFailed,
 }: {
   opened: Opened;
   onClose: () => void;
   onProperties: (song: Song) => void;
   onMove: (song: Song) => void;
+  onWatch: (song: Song) => void;
   onDownloadFailed: () => void;
 }) {
   const { t } = useI18n();
@@ -315,6 +337,19 @@ function TrackMenu({
       label: t("trackMenu.queue"),
       run: () => player.enqueue([song]),
     },
+    // Only for a track the server says has one: the summary rides on the
+    // song, so the entry costs no request to decide (RFC-029 decision 8).
+    ...(song.clip
+      ? [
+          {
+            key: "clip",
+            icon: "clip" as const,
+            label: t("playing.watchClip"),
+            run: () => onWatch(song),
+            opensDialog: true,
+          },
+        ]
+      : []),
     {
       key: "download",
       icon: "download",

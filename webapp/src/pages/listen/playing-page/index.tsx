@@ -17,6 +17,7 @@ import {
   PageHeader,
   useReload,
 } from "../../../components/layout/page-shell";
+import { useClipOpen } from "../../../components/track/clip";
 import { usePlayer, usePlayerProgress } from "../../../player/player";
 import { type TranslationKey, useI18n } from "../../../state/i18n";
 import { DetailView } from "./detail-view";
@@ -113,6 +114,9 @@ export function PlayingPage() {
   const { data: bookmarks } = useQuery(bookmarksQuery());
   const current = player.current;
   const view = playingView(useSearch({ strict: false }));
+  // Held here rather than in a view, so the clip follows the listener from the
+  // detail view into the immersive one and back, shown by whichever is on top.
+  const clip = useClipOpen(current?.id ?? "");
 
   /**
    * One bookmark per track, replaced rather than added — so this button reads
@@ -167,11 +171,17 @@ export function PlayingPage() {
               its place, so leaving it returns to a page that was never torn
               down — and the detail stays beneath it for the frame the dialog
               takes to open. */}
-          {view === "immersive" ? <ImmersiveView song={current} /> : null}
+          {view === "immersive" ? (
+            <ImmersiveView song={current} clip={clip} />
+          ) : null}
           {view === "lyrics" ? (
             <LyricsView song={current} />
           ) : (
-            <DetailView song={current} />
+            <DetailView
+              song={current}
+              clip={clip}
+              clipHere={view !== "immersive"}
+            />
           )}
         </>
       ) : (
