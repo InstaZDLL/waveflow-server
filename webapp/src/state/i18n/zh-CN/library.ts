@@ -126,4 +126,9 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "随机播放此流派",
   "random.empty": "暂时没有可抽取的内容。",
   "library.active": "音乐库",
+  "library.none": "还没有音乐库",
+  "library.noneAdmin":
+    "你的音乐还没有在这台服务器上登记。在“管理”中添加它的文件夹，首次扫描会自动开始。",
+  "library.noneMember": "还没有音乐库共享给这个账户。请联系服务器的管理员。",
+  "library.noneAction": "添加音乐库",
 };

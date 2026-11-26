@@ -126,4 +126,9 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "隨機播放這個類型",
   "random.empty": "目前還沒有可以抽選的內容。",
   "library.active": "音樂庫",
+  "library.none": "還沒有音樂庫",
+  "library.noneAdmin":
+    "你的音樂還沒有在這台伺服器上登錄。在「管理」中加入它的資料夾，首次掃描會自動開始。",
+  "library.noneMember": "還沒有音樂庫分享給這個帳號。請聯絡伺服器的管理員。",
+  "library.noneAction": "加入音樂庫",
 };

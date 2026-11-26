@@ -171,6 +171,8 @@ impl Config {
             // Drawn at boot and written to the data directory, as production
             // does by default: the setup tests read it back from there.
             setup_token: None,
+            // No first library: a test that wants one sets the folder.
+            music_dir: None,
             migration_backups: 3,
             // The real defaults, so the whole test suite exercises the specs
             // production runs under rather than a simplified stand-in.

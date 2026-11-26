@@ -300,6 +300,15 @@ pub struct Config {
     /// instead, and no file is written; it must be at least
     /// [`SETUP_TOKEN_MIN_CHARS`] characters. Ignored once an account exists.
     pub setup_token: Option<String>,
+    /// `WAVEFLOW_MUSIC_DIR`: the folder the first library is made of. When the
+    /// setup screen creates the first administrator and no library exists,
+    /// the server registers this folder as that account's private library,
+    /// named `Music`, and queues its first scan. Unset by default, and then
+    /// setup creates no library; the Docker image sets it to `/music`, where
+    /// the compose file mounts the music. A path that is not a directory is
+    /// passed over with a warning, and setup succeeds all the same. Read once,
+    /// at setup: it neither creates a second library nor moves the first.
+    pub music_dir: Option<PathBuf>,
     /// `WAVEFLOW_MIGRATION_BACKUPS`: how many copies of the database, taken
     /// with its key just before a boot applies pending migrations, are kept
     /// in the data directory (RFC-019 decision 3). `3` by default; `0` takes

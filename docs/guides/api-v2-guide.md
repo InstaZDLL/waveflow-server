@@ -68,7 +68,15 @@ curl -X POST https://music.example.com/api/v2/setup \
   -d "{\"username\":\"admin\",\"password\":\"replace-with-at-least-12-characters\",\"setup_token\":\"$(cat data/setup-token)\"}"
 ```
 
-It returns `201` with `{"user_id":"USER_UUID"}`. A missing or wrong token is
+It returns `201` with `{"user_id":"USER_UUID","library":null}`. When the
+operator set `WAVEFLOW_MUSIC_DIR`, as the Docker image does, `library` is the
+first library setup registered from that folder and the scan it queued,
+`{"library_id":"LIBRARY_UUID","scan_id":"SCAN_UUID"}`. Setting the variable
+does not guarantee one: `library` stays `null`, with the same `201`, when the
+folder is missing or is not a directory, and when it is too slow to answer
+within five seconds, in which case the library appears in
+`GET /api/v2/libraries` once it is made. Read the list rather than this field
+to know what exists. A missing or wrong token is
 `403` with the code `setup_token_rejected`, and once an account exists the
 request is `409`. Operators may instead use the `account create-admin` CLI command
 shown in the main README.

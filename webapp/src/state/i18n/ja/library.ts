@@ -136,4 +136,10 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "このジャンルをランダム再生",
   "random.empty": "選べる曲がまだありません。",
   "library.active": "ライブラリ",
+  "library.none": "まだライブラリがありません",
+  "library.noneAdmin":
+    "このサーバーには、まだ音楽が登録されていません。管理画面でフォルダーを追加すると、最初のスキャンが自動で始まります。",
+  "library.noneMember":
+    "このアカウントと共有されているライブラリはまだありません。サーバーの管理者に確認してください。",
+  "library.noneAction": "ライブラリを追加",
 };

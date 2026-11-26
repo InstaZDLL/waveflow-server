@@ -29,14 +29,14 @@ export const queueRoute = createRoute({
 export const radioRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/radio",
-  staticData: { layout: "workspace" },
+  staticData: { layout: "workspace", libraryFree: true },
   component: RadioPage,
 });
 
 export const podcastsRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/podcasts",
-  staticData: { layout: "workspace" },
+  staticData: { layout: "workspace", libraryFree: true },
   // The channel whose episodes are open, so Back and a reload keep it.
   validateSearch: (search: Record<string, unknown>): { channel?: string } => ({
     channel: typeof search.channel === "string" ? search.channel : undefined,

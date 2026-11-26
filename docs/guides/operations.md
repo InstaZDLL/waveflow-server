@@ -32,10 +32,36 @@ one-time **setup token** ([RFC-019](../rfcs/RFC-019-exposure-hardening.md)):
 - or choose it yourself with `WAVEFLOW_SETUP_TOKEN` (16 characters at least),
   and no file is written.
 
+The setup screen gives that command too, under the token's field.
+
 The token stops working, and the file is deleted, as soon as the first account
 exists. Creating it from the command line instead
 (`waveflow-server account create-admin`) needs no token: that already requires
 a shell on the host. A server that finds an account at boot asks for nothing.
+
+### The first library
+
+`WAVEFLOW_MUSIC_DIR` names the folder the first library is made of. When the
+setup screen creates the first administrator and no library exists yet, the
+server registers that folder as the administrator's library, named `Music`,
+private, and starts its first scan: the web player opens on the music rather
+than on empty pages. The Docker image sets it to `/music`, where the compose
+file mounts your music, so there is nothing to type. An empty folder is
+registered all the same. Releases up to 2.3.0 do not do this: with one of
+them, add the library by hand as below.
+
+The read-only mount the compose file uses is enough to register and scan the
+library. Uploads are another matter: a library takes none until an
+administrator opens it (see [Receiving files](#receiving-files)), and the files
+it receives are written under `.waveflow-managed` at its root, which a
+read-only mount refuses. Keep `:ro` unless you open the library to uploads,
+and mount the folder writable only then.
+
+Unset, setup creates no library, and one is added under **Settings →
+Administration**, or with `waveflow-server library add`. A path that is not a
+directory is passed over with a warning in the log, and setup succeeds anyway.
+The setting is read only at setup: it never adds a second library, nor moves
+the first. Creating the first account from the command line does not read it.
 
 ## Back up two files, together
 
@@ -952,7 +978,9 @@ waveflow-server library set-uploads --actor admin --library-id <uuid> --accept
 ```
 
 Run it without `--accept` to close the library again. Once it is open, its
-owners and managers may upload to it. These limits apply to every library:
+owners and managers may upload to it. Received files are written under
+`.waveflow-managed` at the library's root, so the folder must be writable by
+the server: in a container, mount it without `:ro`. These limits apply to every library:
 
 | Variable | Default | What it bounds |
 | --- | --- | --- |

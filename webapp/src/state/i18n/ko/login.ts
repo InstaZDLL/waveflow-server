@@ -27,4 +27,6 @@ export const login: Record<keyof typeof en, TranslationValue> = {
     one: "이 브라우저에 저장된 {count}곡 듣기",
     other: "이 브라우저에 저장된 {count}곡 듣기",
   },
+  "login.setupTokenDocker":
+    "Docker Compose에서는 서버가 생성한 토큰을 이 명령으로 확인할 수 있어요. WAVEFLOW_SETUP_TOKEN으로 설정한 값은 이 파일에 없어요:",
 };

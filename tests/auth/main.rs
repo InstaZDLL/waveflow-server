@@ -22,6 +22,7 @@ use waveflow_server::storage::database::LibraryVisibility;
 mod support;
 use support::*;
 
+mod first_library;
 mod oauth;
 mod sessions;
 mod setup;

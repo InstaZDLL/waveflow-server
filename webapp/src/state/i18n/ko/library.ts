@@ -129,4 +129,10 @@ export const library: Record<keyof typeof en, TranslationValue> = {
   "random.fromGenre": "이 장르 무작위 재생",
   "random.empty": "아직 뽑을 곡이 없어요.",
   "library.active": "보관함",
+  "library.none": "아직 보관함이 없어요",
+  "library.noneAdmin":
+    "이 서버에 아직 음악이 등록되지 않았어요. 관리에서 폴더를 추가하면 첫 스캔이 자동으로 시작돼요.",
+  "library.noneMember":
+    "이 계정과 공유된 보관함이 아직 없어요. 서버 관리자에게 문의하세요.",
+  "library.noneAction": "보관함 추가",
 };

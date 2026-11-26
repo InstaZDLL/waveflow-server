@@ -217,21 +217,23 @@ The web player opens on port 4533, in a tab of its own. It cannot show inside Ho
 Open `http://your-host:4533`. The setup screen creates the administrator account; it asks for the one-time token the server wrote in its data directory:
 
 ```bash
-docker exec waveflow cat /data/setup-token
+docker exec waveflow cat /data/setup-token           # started with docker run
+docker compose exec waveflow cat /data/setup-token   # started with Compose
 ```
 
-Then add your music under that account (`admin` below), and the first scan starts on its own:
+That is all: the folder mounted at `/music` becomes your first library as the account is created, and its first scan starts on its own. The [operations guide](docs/guides/operations.md#the-first-library) says how `WAVEFLOW_MUSIC_DIR` decides it. The read-only mount is enough for that; receiving uploads takes a library opened to them and a writable mount, which the [same guide](docs/guides/operations.md#receiving-files) explains.
 
-```bash
-docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
-```
+An image of 2.3.0 or earlier does not make the library yet: there, add it under **Settings → Administration** with the path `/music`.
 
 <details>
 <summary>From the command line instead of the browser</summary>
 
+The command line creates the account without the token, and without the first library, which you then add under that account (`admin` below):
+
 ```bash
 docker exec -e WAVEFLOW_ACCOUNT_PASSWORD='at-least-twelve-characters' \
   waveflow waveflow-server account create-admin --username admin
+docker exec waveflow waveflow-server library add --owner admin --name Music --path /music
 ```
 
 </details>

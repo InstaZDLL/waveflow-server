@@ -36,6 +36,11 @@ declare module "@tanstack/react-router" {
      * a wide window; the editorial pages keep the contained column.
      */
     layout?: "workspace";
+    /**
+     * A page that reads nothing of the music libraries — Radio, Podcasts —
+     * and so stays open to an account that reaches none.
+     */
+    libraryFree?: true;
   }
 }
 

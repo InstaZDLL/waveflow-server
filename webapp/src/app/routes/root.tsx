@@ -71,5 +71,8 @@ export const authedRoute = createRoute({
 export const authorizeRoute = createRoute({
   getParentRoute: () => authedRoute,
   path: "/authorize",
+  // Approving a desktop sign-in reads no library: an account that reaches
+  // none must still be able to answer it.
+  staticData: { libraryFree: true },
   component: AuthorizePage,
 });

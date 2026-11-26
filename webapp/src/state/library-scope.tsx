@@ -5,6 +5,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -12,6 +13,15 @@ import { type Library, listLibraries } from "../api";
 import { useI18n } from "./i18n";
 
 const STORAGE_KEY = "waveflow.library";
+
+/** How soon an empty or unreadable list is asked again, at first. */
+export const RELIST_FAST_MS = 5_000;
+
+/** How many times at that pace: two minutes, the time a slow mount takes. */
+export const RELIST_FAST_TIMES = 24;
+
+/** The pace after that, for as long as the list stays empty or unreadable. */
+export const RELIST_SLOW_MS = 60_000;
 
 /**
  * The one library the web client is looking at.
@@ -39,6 +49,17 @@ type LibraryScope = {
    * then a second, scoped one that replaces it.
    */
   ready: boolean;
+  /**
+   * Whether the list of libraries was received. `ready` is also true when it
+   * could not be had, and an empty list then says nothing about the account:
+   * only a received one may be read as "this account reaches no library".
+   */
+  listed: boolean;
+  /**
+   * Asks for the list again: after a library is registered or deleted, so the
+   * picker and every scoped screen follow without a reload.
+   */
+  refresh: () => void;
 };
 
 const LibraryScopeContext = createContext<LibraryScope | null>(null);
@@ -57,14 +78,29 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
   const [libraries, setLibraries] = useState<Library[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => readStored());
   const [ready, setReady] = useState(false);
+  const [listed, setListed] = useState(false);
+  const [generation, setGeneration] = useState(0);
+  // The generation whose request last answered; a request is out while it
+  // is not the current one. The next ask is armed only while none is: a
+  // timer running beside a request — an automatic one that is slow, or the
+  // refresh an administration screen asks for — would replace it before it
+  // answered, and a library could stay unseen behind it. A number rather
+  // than a flag set on asking and cleared on answering: an answer quick
+  // enough to land before the flag was ever drawn would leave it as it was,
+  // and with the list unchanged nothing would arm the next ask.
+  const [answered, setAnswered] = useState(-1);
+  const refresh = useCallback(() => setGeneration((value) => value + 1), []);
 
   useEffect(() => {
     let cancelled = false;
+    const asked = generation;
     listLibraries().then(
       (found) => {
         if (cancelled) return;
         setLibraries(found);
+        setListed(true);
         setReady(true);
+        setAnswered(asked);
         // A remembered library that is gone — deleted, or a membership
         // withdrawn — must not leave the client scoped to nothing.
         setActiveId((current) =>
@@ -77,13 +113,44 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
         // The catalogue screens would otherwise wait forever on a scope that
         // is never coming. Unscoped is the honest fallback when the list of
         // libraries cannot be had at all.
-        if (!cancelled) setReady(true);
+        if (cancelled) return;
+        setReady(true);
+        setAnswered(asked);
+        // A list that could not be had again unsays the one before it: a
+        // refresh that fails after a library was registered must not leave
+        // the stale empty list standing as "this account reaches none". The
+        // next refresh asks again.
+        setListed(false);
       },
     );
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [generation]);
+
+  // An empty or unreadable list is asked again, without end: quickly for two
+  // minutes, then once a minute. A library can appear without this client
+  // doing anything — setup answers after five seconds and makes the first
+  // library after the answer on a slow mount, and an administrator may share
+  // one from elsewhere — and nothing else would ask, since the library feed
+  // has nothing to follow while the list is empty. Here rather than in the
+  // screen that says so: that screen is not drawn while the list cannot be
+  // read, which is exactly when asking again matters.
+  const relists = useRef(0);
+  useEffect(() => {
+    if (!ready || answered !== generation) return;
+    if (listed && libraries.length > 0) {
+      relists.current = 0;
+      return;
+    }
+    const delay =
+      relists.current < RELIST_FAST_TIMES ? RELIST_FAST_MS : RELIST_SLOW_MS;
+    const timer = window.setTimeout(() => {
+      relists.current += 1;
+      refresh();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [ready, answered, generation, listed, libraries.length, refresh]);
 
   useEffect(() => {
     if (!activeId) return;
@@ -100,8 +167,10 @@ export function LibraryScopeProvider({ children }: { children: ReactNode }) {
       active: libraries.find((library) => library.id === activeId) ?? null,
       setActive: setActiveId,
       ready,
+      listed,
+      refresh,
     }),
-    [libraries, activeId, ready],
+    [libraries, activeId, ready, listed, refresh],
   );
 
   return (
