@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "外部播放记录同步",
   "scrobbling.detail":
-    "把你在这里听过的歌曲同步到 ListenBrainz、Maloja 或 Last.fm。",
+    "把你在这里听过的歌曲同步到 ListenBrainz、Maloja 或 Last.fm。同步目标由这台服务器的运营者选择，每个账户各自关联自己的账户。",
   "scrobbling.none": "这台服务器没有提供任何同步目标，这由服务器管理员决定。",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
   "scrobbling.provider.maloja": "Maloja",
@@ -13,18 +13,21 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "实例“{name}”",
   "scrobbling.unavailable": "此处不可用：{reason}",
   "scrobbling.unavailable.no_application_configured":
-    "这台服务器没有配置 Last.fm 应用",
+    "这台服务器没有配置 Last.fm 应用（运营者需设置 WAVEFLOW_SCROBBLE_LASTFM_API_KEY 和 WAVEFLOW_SCROBBLE_LASTFM_SECRET，元数据密钥不能代替它们）",
   "scrobbling.unavailable.browser_journey_needs_https":
     "通过浏览器授权需要这台服务器的公开地址使用 https；管理员仍可以在命令行中关联账户",
   "scrobbling.unavailable.unknown": "服务器没有说明原因",
   "scrobbling.retired":
     "这台服务器已不再提供这个实例，之后不会再向它发送任何记录。你仍然可以撤销授权。",
-  "scrobbling.notLinked": "未关联。",
-  "scrobbling.secret": "API 密钥",
-  "scrobbling.secretHint": "从你在该服务的账户中获取。",
+  "scrobbling.notLinked": "这台服务器提供此目标。你的账户尚未关联。",
+  "scrobbling.secret.listenbrainz": "用户令牌",
+  "scrobbling.secret.maloja": "API 密钥",
+  "scrobbling.secretHint.listenbrainz":
+    "在 listenbrainz.org 的 Settings → User token 中。",
+  "scrobbling.secretHint.maloja": "在你的 Maloja 管理面板的 API Keys 中创建。",
   "scrobbling.link": "关联",
   "scrobbling.working": "处理中…",
-  "scrobbling.linkError": "授权被拒绝。请检查密钥后重试。",
+  "scrobbling.linkError": "授权被拒绝。请检查你粘贴的内容后重试。",
   "scrobbling.unlink": "取消关联",
   "scrobbling.unlinkError": "无法取消这个关联。",
   "scrobbling.connect": "连接 Last.fm",

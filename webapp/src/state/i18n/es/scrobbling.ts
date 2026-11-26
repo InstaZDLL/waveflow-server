@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "Scrobbling externo",
   "scrobbling.detail":
-    "Envía lo que escuchas aquí a ListenBrainz, Maloja o Last.fm.",
+    "Envía lo que escuchas aquí a ListenBrainz, Maloja o Last.fm. El operador de este servidor elige los destinos; cada cuenta vincula la suya.",
   "scrobbling.none":
     "Este servidor no ofrece ningún destino. Lo decide quien lo administra.",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,19 +14,24 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "instancia “{name}”",
   "scrobbling.unavailable": "No disponible aquí: {reason}",
   "scrobbling.unavailable.no_application_configured":
-    "no hay ninguna aplicación de Last.fm declarada en este servidor",
+    "no hay ninguna aplicación de Last.fm declarada en este servidor (su operador define WAVEFLOW_SCROBBLE_LASTFM_API_KEY y WAVEFLOW_SCROBBLE_LASTFM_SECRET, que la clave de metadatos no sustituye)",
   "scrobbling.unavailable.browser_journey_needs_https":
     "la conexión desde el navegador necesita que la dirección pública de este servidor sea https; quien lo administra aún puede vincular una cuenta desde la línea de comandos",
   "scrobbling.unavailable.unknown": "este servidor no indicó el motivo",
   "scrobbling.retired":
     "Este servidor ya no ofrece esta instancia. No se le enviará nada más; aún puedes retirar la autorización.",
-  "scrobbling.notLinked": "Sin vincular.",
-  "scrobbling.secret": "Clave de API",
-  "scrobbling.secretHint": "Se obtiene de tu cuenta en ese destino.",
+  "scrobbling.notLinked":
+    "Ofrecido por este servidor. Tu cuenta aún no está vinculada.",
+  "scrobbling.secret.listenbrainz": "Token de usuario",
+  "scrobbling.secret.maloja": "Clave de API",
+  "scrobbling.secretHint.listenbrainz":
+    "En listenbrainz.org, en Settings → User token.",
+  "scrobbling.secretHint.maloja":
+    "Creada en el panel de administración de tu Maloja, en API Keys.",
   "scrobbling.link": "Vincular",
   "scrobbling.working": "Procesando…",
   "scrobbling.linkError":
-    "Se rechazó esa autorización. Revisa la clave y vuelve a intentarlo.",
+    "Se rechazó esa autorización. Revisa lo que pegaste y vuelve a intentarlo.",
   "scrobbling.unlink": "Desvincular",
   "scrobbling.unlinkError": "No se pudo retirar ese vínculo.",
   "scrobbling.connect": "Conectar con Last.fm",

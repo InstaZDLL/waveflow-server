@@ -251,7 +251,7 @@ test("unlinks one instance and leaves a namesake at another recipient", async ({
     page.getByRole("button", { name: "Unlink: Maloja — instance “default”" }),
   ).toBeVisible();
   await expect(
-    page.getByLabel("API key: ListenBrainz — instance “default”"),
+    page.getByLabel("User token: ListenBrainz — instance “default”"),
   ).toBeVisible();
   expect(mock.scrobbleWrites).toEqual([
     { method: "DELETE", path: "/api/v2/scrobble-links/listenbrainz/default" },

@@ -38,6 +38,27 @@ const PROVIDER_NAME: Record<ScrobbleProvider, TranslationKey> = {
   lastfm: "scrobbling.provider.lastfm",
 };
 
+/**
+ * What each destination calls the secret it hands out, and where it keeps it.
+ *
+ * In the destination's own words: ListenBrainz calls it a user token, and a
+ * field asking for an "API key" sent someone looking for a thing that page
+ * does not have. Last.fm hands out none; its journey runs in the browser.
+ */
+const SECRET = {
+  listenbrainz: {
+    label: "scrobbling.secret.listenbrainz",
+    hint: "scrobbling.secretHint.listenbrainz",
+  },
+  maloja: {
+    label: "scrobbling.secret.maloja",
+    hint: "scrobbling.secretHint.maloja",
+  },
+} as const satisfies Record<
+  Exclude<ScrobbleProvider, "lastfm">,
+  { label: TranslationKey; hint: TranslationKey }
+>;
+
 const HEALTH_NAME = {
   healthy: "scrobbling.health.healthy",
   degraded: "scrobbling.health.degraded",
@@ -305,21 +326,21 @@ function DestinationRow({
             </button>
             <small className="muted">{t("scrobbling.connectDetail")}</small>
           </>
-        ) : row.available === true ? (
+        ) : row.available === true && row.provider !== "lastfm" ? (
           <form className="inline-form" onSubmit={(event) => void link(event)}>
             <input
               type="password"
               value={secret}
               onChange={(event) => setSecret(event.target.value)}
-              aria-label={`${t("scrobbling.secret")}: ${name}`}
-              placeholder={t("scrobbling.secret")}
+              aria-label={`${t(SECRET[row.provider].label)}: ${name}`}
+              placeholder={t(SECRET[row.provider].label)}
               autoComplete="off"
               required
             />
             <button type="submit" disabled={busy}>
               {busy ? t("scrobbling.working") : t("scrobbling.link")}
             </button>
-            <small className="muted">{t("scrobbling.secretHint")}</small>
+            <small className="muted">{t(SECRET[row.provider].hint)}</small>
           </form>
         ) : null}
       </div>

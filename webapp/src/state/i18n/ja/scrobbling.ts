@@ -5,7 +5,7 @@ import type { scrobbling as en } from "../en/scrobbling";
 export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.title": "外部への Scrobble",
   "scrobbling.detail":
-    "ここで聴いた曲を ListenBrainz、Maloja、Last.fm に送信します。",
+    "ここで聴いた曲を ListenBrainz、Maloja、Last.fm に送信します。送信先はこのサーバーの運営者が選び、各アカウントが自分のアカウントを連携します。",
   "scrobbling.none":
     "このサーバーには送信先がありません。これはサーバーの運用者が決めています。",
   "scrobbling.provider.listenbrainz": "ListenBrainz",
@@ -14,19 +14,24 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.instance": "インスタンス「{name}」",
   "scrobbling.unavailable": "ここでは利用できません：{reason}",
   "scrobbling.unavailable.no_application_configured":
-    "このサーバーには Last.fm アプリケーションが登録されていません",
+    "このサーバーには Last.fm アプリケーションが登録されていません（運営者が WAVEFLOW_SCROBBLE_LASTFM_API_KEY と WAVEFLOW_SCROBBLE_LASTFM_SECRET を設定する必要があり、メタデータ用のキーでは代わりになりません）",
   "scrobbling.unavailable.browser_journey_needs_https":
     "ブラウザでの連携には、このサーバーの公開アドレスが https である必要があります。運用者はコマンドラインからアカウントを連携できます",
   "scrobbling.unavailable.unknown": "このサーバーは理由を示しませんでした",
   "scrobbling.retired":
     "このサーバーはこのインスタンスを提供しなくなりました。今後ここへ送信されることはありません。認可の取り消しは引き続き行えます。",
-  "scrobbling.notLinked": "未連携です。",
-  "scrobbling.secret": "API キー",
-  "scrobbling.secretHint": "送信先のアカウントから取得してください。",
+  "scrobbling.notLinked":
+    "このサーバーで利用できます。あなたのアカウントはまだ連携されていません。",
+  "scrobbling.secret.listenbrainz": "ユーザートークン",
+  "scrobbling.secret.maloja": "API キー",
+  "scrobbling.secretHint.listenbrainz":
+    "listenbrainz.org の Settings → User token にあります。",
+  "scrobbling.secretHint.maloja":
+    "Maloja の管理パネルの API Keys で作成します。",
   "scrobbling.link": "連携",
   "scrobbling.working": "処理中…",
   "scrobbling.linkError":
-    "認可が拒否されました。キーを確認して、もう一度お試しください。",
+    "認可が拒否されました。貼り付けた内容を確認して、もう一度お試しください。",
   "scrobbling.unlink": "連携解除",
   "scrobbling.unlinkError": "連携を解除できませんでした。",
   "scrobbling.connect": "Last.fm に接続",
