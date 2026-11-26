@@ -68,9 +68,11 @@ services:
     volumes:
       # The database, its key, the artwork: back them up together.
       - waveflow-data:/data
-      # Your music, and the first library the setup screen registers. Compose
-      # stops with this message when the path is not set, rather than mounting
-      # a folder that does not exist. Read-only is all a library needs to be
+      # Your music, and the first library the setup screen registers. The
+      # 2.3.0 image above does not register it yet: add it under Settings →
+      # Administration with the path /music, or with `waveflow-server library
+      # add`. Compose stops with this message when the path is not set, rather
+      # than mounting a folder that does not exist. Read-only is all a library needs to be
       # scanned and played. To receive uploads into it from the web player,
       # set read_only to false and tick Accept uploads in the library's
       # settings under Administration: the server then writes the files under
