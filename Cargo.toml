@@ -20,7 +20,9 @@ legacy-v1 = []
 [dependencies]
 anyhow = "1"
 async-stream = "0.3"
-argon2 = { version = "0.5", features = ["std"] }
+# Without `getrandom`: the salt is drawn by `security::fill_random`, as every
+# other secret is, and handed to `hash_password_with_salt`.
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 blake3 = "1"
@@ -58,7 +60,7 @@ md-5 = "0.11"
 # The library watcher (RFC-021 decision 6). Default features only, which is the
 # FSEvents backend on macOS and nothing else: inotify on Linux and
 # ReadDirectoryChangesW on Windows need no feature.
-notify = "8"
+notify = "9"
 # Already in the tree through `url`; declared because `playlist_file` reads
 # percent escapes out of playlist entries and a transitive dependency is not a
 # promise.
@@ -102,7 +104,7 @@ utoipa = { version = "6", features = ["axum_extras", "uuid"] }
 url = "2"
 uuid = { version = "1", features = ["v4", "v8", "serde"] }
 walkdir = "2"
-waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", tag = "v2.2.0", default-features = false }
+waveflow-core = { git = "https://github.com/InstaZDLL/WaveFlow", tag = "v2.4.0", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"

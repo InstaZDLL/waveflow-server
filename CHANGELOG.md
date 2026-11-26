@@ -89,6 +89,15 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   a table of what goes wrong and why. The operations guide gains *Switching
   scrobbling on*, which separates scrobbling's variables from the metadata
   key.
+- **waveflow-core is pinned to its `v2.4.0` tag**, from `v2.2.0`. Of what
+  the server calls, only the clip lookup moves: among videos of one
+  extension named like a track in different cases (`Song.mp4` and
+  `song.MP4`), the one spelt like the track is taken first, then the others
+  by name, where the order the folder listed in decided.
+- **argon2 0.6 and notify 9.** A password is hashed with the same
+  parameters, and a hash written before verifies as it did, which a test now
+  holds with one written by argon2 0.5. reqwest stays on 0.12, the version
+  waveflow-core links, so the binary keeps one HTTP client.
 
 ## [2.3.0] — 2026-11-17
 
