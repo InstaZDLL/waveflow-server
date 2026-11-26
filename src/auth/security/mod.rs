@@ -3,7 +3,7 @@
 use std::{fs::OpenOptions, io::Write, path::Path};
 
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Argon2,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -148,9 +148,8 @@ pub fn hash_password(password: &str) -> Result<String, SecurityError> {
     }
     let mut salt_bytes = [0u8; 16];
     fill_random(&mut salt_bytes)?;
-    let salt = SaltString::encode_b64(&salt_bytes).map_err(|_| SecurityError::PasswordHash)?;
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password_with_salt(password.as_bytes(), &salt_bytes)
         .map(|hash| hash.to_string())
         .map_err(|_| SecurityError::PasswordHash)
 }

@@ -595,13 +595,13 @@ async fn a_channel_lists_its_newest_episodes_and_every_stored_one() {
         .as_array()
         .unwrap();
     assert_eq!(channels.len(), 2);
-    for (id, count) in [(long_id, listed + 1), (short_id, 4)] {
+    for (channel_name, id, count) in [("long", long_id, listed + 1), ("short", short_id, 4)] {
         let channel = channels
             .iter()
             .find(|channel| channel["id"] == id.to_string())
             .unwrap();
         let episodes = channel["episode"].as_array().unwrap();
-        assert_eq!(episodes.len(), count, "{id}");
+        assert_eq!(episodes.len(), count, "the {channel_name} channel");
         assert!(episodes
             .iter()
             .all(|episode| episode["channelId"] == id.to_string()));

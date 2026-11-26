@@ -4,7 +4,8 @@
 //! The rule is `waveflow_core::scanner::clips::find_clip`: a video named like
 //! the track, case ignored, beside it, else in a `Clips` folder beside it,
 //! else the track's own file when it holds a moving picture; several
-//! candidates in `VIDEO_EXTENSIONS` order, each confirmed by its content, and
+//! candidates in `VIDEO_EXTENSIONS` order, then the one spelt like the track
+//! before another case, then by name, each confirmed by its content, and
 //! no neighbour offered to a track that is itself inside a `Clips` folder.
 //! `find_clip` lists a folder for every track it is asked about, so the scan
 //! matches names in memory over what the walk already listed and reads the
@@ -78,7 +79,9 @@ pub(super) struct Candidate<'a> {
 /// The videos one walk saw, indexed by folder and name.
 pub(super) struct Videos<'a> {
     list: &'a [(PathBuf, String)],
-    /// `(folder, stem)` → indices into `list`, in `VIDEO_EXTENSIONS` order.
+    /// `(folder, stem)` → indices into `list`, in `VIDEO_EXTENSIONS` order
+    /// and then by name; [`Videos::candidates`] puts the track's own spelling
+    /// first within one extension.
     named: HashMap<(&'a str, String), Vec<usize>>,
     /// A folder → its `Clips` folder, the first by name when the disk holds
     /// two spellings of it.
@@ -120,16 +123,27 @@ impl<'a> Videos<'a> {
         let Some(stem) = stem(file) else {
             return Vec::new();
         };
+        // The stem as the track spells it: a case-sensitive disk can hold
+        // `Song.mp4` beside `song.mp4`, and the core takes the one spelt like
+        // the track before the other, whatever the names' order.
+        let spelt = Path::new(file).file_stem().and_then(OsStr::to_str);
+        let other_case =
+            |name: &str| Path::new(split(name).1).file_stem().and_then(OsStr::to_str) != spelt;
         let mut found = Vec::new();
         let in_clips_dir = !folder.is_empty() && is_clips_dir_name(OsStr::new(split(folder).1));
         if !in_clips_dir {
             let mut named = |folder: &'t str, origin: &'static str| {
-                for &index in self
+                let mut indices = self
                     .named
                     .get(&(folder, stem.clone()))
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                {
+                    .cloned()
+                    .unwrap_or_default();
+                // Stable over the order by name, so names still break ties.
+                indices.sort_by_key(|&index| {
+                    let name = &self.list[index].1;
+                    (rank(name), other_case(name))
+                });
+                for index in indices {
                     let (path, name) = &self.list[index];
                     if name != track {
                         found.push(Candidate { path, name, origin });
