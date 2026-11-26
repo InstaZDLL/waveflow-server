@@ -5,11 +5,13 @@
  * reports. The anchor is the last row picked by itself: Shift on another row
  * picks every row between the two, as file managers do, and leaves the anchor
  * where it was so a second Shift-click redraws the range from the same row.
+ * The anchor is held by its id, not its position: a list re-read with a row
+ * gone would otherwise hand the anchor to the row that took its place.
  */
 export type Picked = {
   selected: ReadonlySet<string>;
-  /** The position of the last row picked without Shift, if any. */
-  anchor: number | null;
+  /** The id of the last row picked without Shift, if any. */
+  anchor: string | null;
 };
 
 export const NOTHING_PICKED: Picked = { selected: new Set(), anchor: null };
@@ -30,27 +32,34 @@ export function pick(
 ): Picked {
   const id = ids[position];
   if (id === undefined) return current;
-  const anchor =
-    current.anchor !== null && current.anchor < ids.length
-      ? current.anchor
-      : null;
-  if (extend && anchor !== null) {
+  const anchor = current.anchor === null ? -1 : ids.indexOf(current.anchor);
+  if (extend && anchor !== -1) {
     const selected = new Set(current.selected);
     const [from, to] =
       anchor <= position ? [anchor, position] : [position, anchor];
     for (let index = from; index <= to; index += 1) selected.add(ids[index]);
-    return { selected, anchor };
+    return { selected, anchor: current.anchor };
   }
   const selected = new Set(current.selected);
   if (selected.has(id)) selected.delete(id);
   else selected.add(id);
-  return { selected, anchor: position };
+  return { selected, anchor: id };
 }
 
 /** Every row of `ids` picked, or none when all of them already are. */
 export function pickAll(ids: readonly string[], current: Picked): Picked {
   const all = ids.length > 0 && ids.every((id) => current.selected.has(id));
   return all ? NOTHING_PICKED : { selected: new Set(ids), anchor: null };
+}
+
+/**
+ * The selection without `ids`: what an action took away, and only that, so
+ * rows picked while it ran stay picked.
+ */
+export function unpick(current: Picked, ids: readonly string[]): Picked {
+  const selected = new Set(current.selected);
+  for (const id of ids) selected.delete(id);
+  return { selected, anchor: current.anchor };
 }
 
 /**

@@ -27,6 +27,7 @@ export function SelectionBar({
   mayFile,
   folder,
   onDone,
+  onMoved,
   onClear,
 }: {
   libraryId: string;
@@ -38,6 +39,11 @@ export function SelectionBar({
   folder: string | null;
   /** Says what was done, once it is. */
   onDone: (said: string) => void;
+  /**
+   * The tracks a move filed elsewhere, once it has: only those leave the
+   * selection, so rows picked while a slow move ran stay picked.
+   */
+  onMoved: (ids: string[]) => void;
   onClear: () => void;
 }) {
   const { t } = useI18n();
@@ -88,7 +94,7 @@ export function SelectionBar({
               client.invalidateQueries({ queryKey: ["filed-tree"] }),
               client.invalidateQueries({ queryKey: ["folder-tracks"] }),
             ]);
-            onClear();
+            onMoved(ids);
             onDone(t("selection.moved", { count: filed }));
           }}
           onClose={() => setDialog(null)}

@@ -31,6 +31,7 @@ import {
   pick,
   pickAll,
   pickedIn,
+  unpick,
 } from "../../../lib/selection";
 import { usePlayer } from "../../../player/player";
 import { useI18n } from "../../../state/i18n";
@@ -521,6 +522,14 @@ export function FoldersPage({ folder }: { folder: string }) {
                     folder={folder === UNFILED ? null : folder}
                     onDone={(text) =>
                       setNotice({ tone: "status", text, folder })
+                    }
+                    onMoved={(moved) =>
+                      // From the selection as it is when the move ends, of
+                      // the folder it ran in: not the one it started from.
+                      setPicks((current) => ({
+                        ...current,
+                        picked: unpick(current.picked, moved),
+                      }))
                     }
                     onClear={() => setPicked(NOTHING_PICKED)}
                   />
