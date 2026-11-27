@@ -45,6 +45,13 @@ export type ClipSession = {
   at: number | null;
   /** Whether the clip was playing when its element went away. */
   playing: boolean;
+  /**
+   * Gives the track back as closing the clip would, without closing it: set
+   * by the player that shows the clip, run by whoever holds the session when
+   * it goes away with the clip still open. The player cannot do it on its own
+   * unmounting, which is also how the clip moves from one view to the next.
+   */
+  giveBack?: () => void;
 };
 
 const freshSession = (): ClipSession => ({
@@ -58,6 +65,12 @@ const freshSession = (): ClipSession => ({
  * track changes, so a track that comes back later opens on its cover, not on a
  * clip it was showing before: the view that holds this is not remounted per
  * track.
+ *
+ * **Leaving with the clip open gives the track back.** The playing screen
+ * holds this; a listener who goes to another page with the clip still open
+ * takes the clip away with the screen, and the track it paused would stay
+ * paused with nothing on screen to say why. A change of track gives nothing
+ * back: the queue moved on, and what plays now is the listener's.
  */
 export function useClipOpen(trackId: string): {
   open: boolean;
@@ -77,6 +90,11 @@ export function useClipOpen(trackId: string): {
       ? state
       : { trackId, open: false, session: freshSession() };
   if (current !== state) setState(current);
+  // Only an open clip's session has a player to give back through: closing,
+  // and a change of track, both start a fresh session that none has claimed.
+  const live = useRef(current.session);
+  live.current = current.session;
+  useEffect(() => () => live.current.giveBack?.(), []);
   return {
     open: current.open,
     session: current.session,
@@ -173,6 +191,27 @@ export function ClipPlayer({
     };
   });
 
+  // Whether this opening has given the track back already, and the way to,
+  // for the cleanup below, which outlives the render that made it.
+  const givenBack = useRef(false);
+  const lone = useRef(!session);
+  const giveBackLater = useRef(giveBack);
+  giveBackLater.current = giveBack;
+  useEffect(() => {
+    // Cleared on the way in: `StrictMode` runs this twice on one instance.
+    givenBack.current = false;
+    // A player of its own, as in a dialog, gives the track back when it goes:
+    // a dialog unmounted by Back is no less closed than one closed by Escape.
+    // A player on a session is unmounted by a change of view too, so its
+    // session's holder decides (see `useClipOpen`).
+    return () => {
+      if (lone.current) giveBackLater.current();
+    };
+  }, []);
+  useEffect(() => {
+    if (session) session.giveBack = giveBack;
+  });
+
   // Only one sound at a time: a track started from the bar, the keyboard or the
   // system controls while the clip is open pauses the clip, and so does a
   // station or an episode started beside the queue.
@@ -207,7 +246,14 @@ export function ClipPlayer({
     return video.current ? video.current.currentTime : lastAt.current;
   }
 
-  function close() {
+  /**
+   * The track back as the clip found it: at the clip's place when it is the
+   * clip's own, and playing if it was. Once per opening, whichever way the
+   * clip goes — the button, its end, Escape, or the page going away.
+   */
+  function giveBack() {
+    if (givenBack.current) return;
+    givenBack.current = true;
     const at = resumeAt(position(), latest.current.duration);
     const { player } = latest.current;
     if (at !== null && player.current?.id === song.id) player.seek(at);
@@ -224,6 +270,10 @@ export function ClipPlayer({
     ) {
       player.toggle();
     }
+  }
+
+  function close() {
+    giveBack();
     latest.current.onClose();
   }
 

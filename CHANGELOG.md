@@ -56,6 +56,9 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
 - **A clip no longer plays on behind the immersive view.** The detail view
   stays mounted under it, and a clip opened there went on sounding, out of
   sight, once the immersive view opened.
+- **Leaving a clip open no longer leaves the track paused.** Going to
+  another page with the clip open on the playing screen, or pressing Back
+  behind a track's clip, gives the track back as closing the clip does.
 
 - **A library registered or deleted from Administration shows at once.** The
   library picker and the catalogue read a list taken at sign-in, so a new

@@ -503,3 +503,102 @@ describe("useClipOpen", () => {
     expect(container.textContent).toBe("closed");
   });
 });
+
+/** The playing screen, as far as the clip goes: one opening, shown in a view. */
+function Screen({ trackId, view }: { trackId: string; view: string }) {
+  const clip = useClipOpen(trackId);
+  return clip.open ? (
+    <ClipPlayer
+      key={view}
+      song={{ ...song, id: trackId }}
+      onClose={clip.hide}
+      session={clip.session}
+    />
+  ) : (
+    <button type="button" onClick={clip.show}>
+      Watch
+    </button>
+  );
+}
+
+/**
+ * The clip goes away without being closed: the screen is left, the view
+ * changes, the track changes, or the menu's dialog is taken down by Back.
+ */
+describe("a clip that goes without being closed", () => {
+  async function openOnScreen(player: ReturnType<typeof fakePlayer>) {
+    act(() => renderUnder(player, <Screen trackId="track" view="detail" />));
+    await act(async () => container.querySelector("button")?.click());
+    expect(player.playing).toBe(false);
+  }
+
+  it("gives the track back when the playing screen is left", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openOnScreen(player);
+    playTo(60);
+
+    act(() => renderUnder(player, null));
+    expect(player.seek).toHaveBeenCalledWith(60);
+    expect(player.playing).toBe(true);
+  });
+
+  it("gives nothing back on a change of view, which is the clip moving", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openOnScreen(player);
+    await act(async () =>
+      renderUnder(player, <Screen trackId="track" view="immersive" />),
+    );
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+    expect(player.playing).toBe(false);
+    expect(container.querySelector("video")).not.toBeNull();
+  });
+
+  // Two guards hold this, and removing either alone leaves it green: the
+  // change of track starts a fresh session no player has claimed, and the
+  // player gives back only the track it paused (`openedOn`).
+  it("gives nothing back when the track changes", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openOnScreen(player);
+    player.current = { id: "next" };
+    act(() => renderUnder(player, <Screen trackId="next" view="detail" />));
+    act(() => renderUnder(player, null));
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives the track back when the menu's dialog is taken down", async () => {
+    HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+      this.open = true;
+    };
+    HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+      this.open = false;
+    };
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    player.current = { id: "another" };
+    await act(async () =>
+      renderUnder(player, <ClipDialog song={song} onClose={vi.fn()} />),
+    );
+    expect(player.playing).toBe(false);
+
+    // Back, from behind a modal dialog: the page goes, the dialog with it.
+    act(() => renderUnder(player, null));
+    expect(player.playing).toBe(true);
+  });
+
+  it("gives the track back once, when the button closed it first", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openClip(player);
+    clickBack();
+    expect(player.toggle).toHaveBeenCalledTimes(2);
+    // In the browser the dialog goes in the same update, and the player the
+    // cleanup reads is the last one rendered, which still says paused: a
+    // second giving back would toggle the track straight off again.
+    player.playing = false;
+    act(() => renderUnder(player, null));
+    expect(player.toggle).toHaveBeenCalledTimes(2);
+  });
+});
