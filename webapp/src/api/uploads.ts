@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import {
   ApiError,
   call,
@@ -68,11 +69,14 @@ export async function putUploadChunk(
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   // Whose session this attempt speaks for; see `renewFor`.
   const generation = sessionGeneration;
-  const response = await fetch(`/api/v2/uploads/${id}/chunks/${index}`, {
-    method: "PUT",
-    headers,
-    body: bytes,
-  });
+  const response = await fetch(
+    serverUrl(`/api/v2/uploads/${id}/chunks/${index}`),
+    {
+      method: "PUT",
+      headers,
+      body: bytes,
+    },
+  );
   if (response.status === 401 && retry && (await renewFor(generation))) {
     return putUploadChunk(id, index, bytes, false);
   }

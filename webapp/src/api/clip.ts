@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import { ApiError, call } from "./client";
 import type { StreamUrl } from "./stream";
 
@@ -27,7 +28,7 @@ export async function clipUrl(trackId: string): Promise<StreamUrl | null> {
       `/api/v2/tracks/${trackId}/clip-ticket`,
       { method: "POST" },
     );
-    return { url: ticket.url, expiresAt: ticket.expires_at };
+    return { url: serverUrl(ticket.url), expiresAt: ticket.expires_at };
   } catch (cause) {
     if (cause instanceof ApiError && cause.status === 404) return null;
     throw cause;

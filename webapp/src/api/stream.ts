@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import { call } from "./client";
 
 /**
@@ -13,5 +14,6 @@ export async function streamUrl(trackId: string): Promise<StreamUrl> {
     `/api/v2/tracks/${trackId}/stream-ticket`,
     { method: "POST" },
   );
-  return { url: ticket.url, expiresAt: ticket.expires_at };
+  // A root path, which this page may have to ask for under a prefix.
+  return { url: serverUrl(ticket.url), expiresAt: ticket.expires_at };
 }

@@ -65,11 +65,12 @@ pub async fn setup_status(
 #[utoipa::path(post, path = "/api/v2/setup", tag = "authentication", params(("Origin" = String, Header, description = "Required browser origin")), request_body = SetupRequest, responses((status = 201, body = SetupResponse), (status = 403, description = "Origin header missing or malformed (`forbidden`), not the server's address (`origin_rejected`), or the setup token missing or wrong (`setup_token_rejected`)", body = ErrorResponse), (status = 409, description = "An account already exists", body = ErrorResponse), (status = 422, body = ErrorResponse)))]
 pub async fn setup(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
     Json(request): Json<SetupRequest>,
 ) -> Result<(StatusCode, Json<SetupResponse>), ApiError> {
     let started = std::time::Instant::now();
-    validate_web_origin(&state, &headers)?;
+    validate_web_origin(&state, &ingress, &headers)?;
     // Before the username and the password are looked at: a caller without the
     // token learns nothing from this route, not even the password rules.
     match state.setup.admit(request.setup_token.as_deref()) {

@@ -1,7 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
-import { createShare, deleteShare, type Share } from "../../api";
+import {
+  ApiError,
+  createShare,
+  deleteShare,
+  type Share,
+  underPrefix,
+} from "../../api";
 import { sharesQuery } from "../../api/queries";
 import { MAX_SHARE_TRACKS } from "../../api/shares";
 import {
@@ -23,6 +29,10 @@ export function SharesPage() {
   const [createdShare, setCreatedShare] = useState<Share | null>(null);
   const reload = useReload(sharesQuery().queryKey);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  // Inside Home Assistant with no public address (RFC-030 decision 8), the
+  // server refuses to make a link nobody outside the panel could open; the
+  // form then gives way to why.
+  const [needsAddress, setNeedsAddress] = useState(false);
   const { data: value, error } = useQuery(sharesQuery());
   const createdShareNotice = createdShare?.url ? (
     <p>
@@ -59,8 +69,16 @@ export function SharesPage() {
       setDescription("");
       setMaxVisits("");
       reload();
-    } catch {
-      setMutationError(t("shares.createError"));
+    } catch (failure) {
+      if (
+        underPrefix() &&
+        failure instanceof ApiError &&
+        failure.status === 409
+      ) {
+        setNeedsAddress(true);
+      } else {
+        setMutationError(t("shares.createError"));
+      }
     }
   }
 
@@ -82,8 +100,14 @@ export function SharesPage() {
         title={t("nav.shares")}
         detail={t("shares.detail")}
       />
+      {needsAddress ? (
+        <p className="muted" role="status">
+          {t("shares.needsAddress")}
+        </p>
+      ) : null}
       <form
         className="inline-form"
+        hidden={needsAddress}
         onSubmit={(event) => void shareQueue(event)}
       >
         <input
@@ -107,7 +131,7 @@ export function SharesPage() {
           {t("shares.create")}
         </button>
       </form>
-      {!player.queue.length ? (
+      {!player.queue.length && !needsAddress ? (
         <p className="muted">{t("shares.needQueue")}</p>
       ) : null}
       {tooLong ? (

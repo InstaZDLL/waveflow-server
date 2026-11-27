@@ -11,6 +11,7 @@ import {
   type ScrobbleProvider,
   type ScrobbleUnavailable,
   type UncertainScrobble,
+  underPrefix,
   unlinkScrobble,
 } from "../../api";
 import { scrobbleRowsQuery, uncertainScrobblesQuery } from "../../api/queries";
@@ -315,6 +316,13 @@ function DestinationRow({
           >
             {busy ? t("scrobbling.working") : t("scrobbling.unlink")}
           </button>
+        ) : row.available === true &&
+          row.provider === "lastfm" &&
+          underPrefix() ? (
+          // Inside Home Assistant (RFC-030 decision 8): Last.fm sends the
+          // listener back to the server's own address, whose cookies the
+          // panel never had, so the journey cannot finish here.
+          <small className="muted">{t("scrobbling.connectElsewhere")}</small>
         ) : row.available === true && row.provider === "lastfm" ? (
           <>
             <button

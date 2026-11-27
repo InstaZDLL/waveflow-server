@@ -32,6 +32,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlink": "取消連結",
   "scrobbling.unlinkError": "無法取消這個連結。",
   "scrobbling.connect": "連接 Last.fm",
+  "scrobbling.connectElsewhere":
+    "Last.fm 會導回伺服器自己的位址，請從那裡而不是從 Home Assistant 連結。",
   "scrobbling.connectDetail":
     "Last.fm 不提供可以直接貼上的金鑰，所以會先帶你到 Last.fm 確認，再帶你回到這裡。",
   "scrobbling.connectError": "無法開啟 Last.fm 授權頁面。",

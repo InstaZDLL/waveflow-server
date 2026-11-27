@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import {
   ApiError,
   call,
@@ -47,7 +48,11 @@ export async function placeCanvas(
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   // Whose session this attempt speaks for; see the same line in `call`.
   const generation = sessionGeneration;
-  const response = await fetch(path, { method: "PUT", headers, body: file });
+  const response = await fetch(serverUrl(path), {
+    method: "PUT",
+    headers,
+    body: file,
+  });
   if (response.status === 401 && retry && (await renewFor(generation))) {
     return placeCanvas(trackId, file, false, true);
   }
@@ -125,5 +130,5 @@ async function mintCanvasTicket(trackId: string): Promise<StreamUrl> {
     `/api/v2/tracks/${trackId}/canvas-ticket`,
     { method: "POST" },
   );
-  return { url: ticket.url, expiresAt: ticket.expires_at };
+  return { url: serverUrl(ticket.url), expiresAt: ticket.expires_at };
 }

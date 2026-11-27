@@ -3,7 +3,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useRef, useState } from "react";
 
-import { currentUser, logout } from "../api";
+import { currentUser, logout, serverUrl } from "../api";
 import {
   albumsQuery,
   artistsQuery,
@@ -128,7 +128,7 @@ export function Brand() {
     <Link className="brand" to="/" aria-label={t("nav.home")}>
       <img
         className="brand-logo brand-logo-light"
-        src="/brand/waveflow-logo-horizontal-color.svg"
+        src={serverUrl("/brand/waveflow-logo-horizontal-color.svg")}
         alt=""
         aria-hidden="true"
         width={131}
@@ -136,7 +136,7 @@ export function Brand() {
       />
       <img
         className="brand-logo brand-logo-dark"
-        src="/brand/waveflow-logo-horizontal-dark.svg"
+        src={serverUrl("/brand/waveflow-logo-horizontal-dark.svg")}
         alt=""
         aria-hidden="true"
         width={131}

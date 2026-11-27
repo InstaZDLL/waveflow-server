@@ -65,6 +65,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "這個連結只會顯示一次：",
   "shares.defaultName": "音樂分享",
   "shares.empty": "還沒有建立任何公開連結。",
+  "shares.needsAddress":
+    "分享連結需要伺服器的外部位址，但這台伺服器沒有設定。請將 WAVEFLOW_PUBLIC_URL 設為在 Home Assistant 之外連到它的位址，然後在這裡建立分享。",
   "shares.createError": "無法建立分享。",
   "shares.tooLong":
     "一個分享最多可包含 {limit} 首歌曲，而播放佇列中有 {count} 首。請縮短播放佇列後再分享。",

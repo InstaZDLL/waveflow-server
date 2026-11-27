@@ -168,6 +168,8 @@ impl Config {
             },
             allowed_origins: Vec::new(),
             trusted_proxies: Vec::new(),
+            // No ingress listener: a test that wants one builds its router.
+            ingress: super::IngressSettings::off(),
             // Drawn at boot and written to the data directory, as production
             // does by default: the setup tests read it back from there.
             setup_token: None,

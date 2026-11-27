@@ -70,6 +70,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "Dieser Link wird nur einmal angezeigt:",
   "shares.defaultName": "Geteilte Musik",
   "shares.empty": "Es wurden noch keine öffentlichen Links erstellt.",
+  "shares.needsAddress":
+    "Ein Freigabelink braucht die externe Adresse des Servers, die dieser Server nicht hat. Setze WAVEFLOW_PUBLIC_URL auf die Adresse, unter der er außerhalb von Home Assistant erreichbar ist, und erstelle die Freigabe dann hier.",
   "shares.createError": "Die Freigabe konnte nicht erstellt werden.",
   "shares.tooLong":
     "Eine Freigabe umfasst bis zu {limit} Titel, die Warteschlange enthält {count}. Kürze die Warteschlange, um sie zu teilen.",

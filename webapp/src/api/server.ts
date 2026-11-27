@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import { ApiError } from "./client";
 
 /** The running server as its liveness probe describes it. */
@@ -22,7 +23,7 @@ export type ServerIdentity = {
  * sign-in page asks before anyone has a session.
  */
 export async function getServerIdentity(): Promise<ServerIdentity> {
-  const response = await fetch("/health", {
+  const response = await fetch(serverUrl("/health"), {
     headers: { accept: "application/json" },
     credentials: "omit",
   });

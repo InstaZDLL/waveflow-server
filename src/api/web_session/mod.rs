@@ -3,6 +3,7 @@
 //! Split out of `http.rs`; `mod.rs` re-exports it, so `crate::api::*` paths are unchanged.
 
 use super::*;
+use crate::http::ingress::Ingress;
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct WebAuthResponse {
@@ -13,23 +14,71 @@ pub struct WebAuthResponse {
     pub device_id: Uuid,
 }
 
+/// Where the browser session's cookies live, and whether they are `Secure`.
+///
+/// On the main listener: at the root, `Secure` when `WAVEFLOW_PUBLIC_URL` is
+/// https, as always. On Home Assistant's ingress (RFC-030 decision 5): under
+/// the prefix, so the refresh cookie is sent back at all and neither is sent
+/// with every request to Home Assistant itself; and `Secure` as the browser
+/// reached Home Assistant, which Core names in `X-Forwarded-Proto`. The public
+/// URL says nothing about that address, and a `Secure` cookie on a Home
+/// Assistant served over plain http would never be stored.
+pub(crate) struct CookieScope {
+    root: String,
+    secure: bool,
+}
+
+impl CookieScope {
+    pub(crate) fn of(state: &AppState, ingress: &Ingress, headers: &HeaderMap) -> Self {
+        let secure = if ingress.0.is_some() {
+            headers
+                .get("x-forwarded-proto")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+        } else {
+            secure_cookies(state)
+        };
+        Self {
+            root: ingress.root().to_owned(),
+            secure,
+        }
+    }
+
+    fn refresh_path(&self) -> String {
+        format!("{}/api/v2/web/auth", self.root)
+    }
+
+    fn csrf_path(&self) -> String {
+        format!("{}/", self.root)
+    }
+
+    fn secure(&self) -> &'static str {
+        if self.secure {
+            "; Secure"
+        } else {
+            ""
+        }
+    }
+}
+
 pub(super) fn web_auth_response(
     state: &AppState,
-    _headers: &HeaderMap,
+    scope: &CookieScope,
     tokens: crate::auth::authentication::AuthTokens,
 ) -> Result<Response, ApiError> {
     let csrf_token = crate::auth::security::generate_token("wfcsrf_");
-    let secure = secure_cookies(state);
     let refresh_cookie = format!(
-        "{WEB_REFRESH_COOKIE}={}; Path=/api/v2/web/auth; HttpOnly; SameSite=Strict; Max-Age={}{}",
+        "{WEB_REFRESH_COOKIE}={}; Path={}; HttpOnly; SameSite=Strict; Max-Age={}{}",
         tokens.refresh_token,
+        scope.refresh_path(),
         state.refresh_token_ttl.as_secs(),
-        if secure { "; Secure" } else { "" }
+        scope.secure()
     );
     let csrf_cookie = format!(
-        "{WEB_CSRF_COOKIE}={csrf_token}; Path=/; SameSite=Strict; Max-Age={}{}",
+        "{WEB_CSRF_COOKIE}={csrf_token}; Path={}; SameSite=Strict; Max-Age={}{}",
+        scope.csrf_path(),
         state.refresh_token_ttl.as_secs(),
-        if secure { "; Secure" } else { "" }
+        scope.secure()
     );
     let body = WebAuthResponse {
         access_token: tokens.access_token,
@@ -50,12 +99,16 @@ pub(super) fn append_cookie(response: &mut Response, value: String) -> Result<()
     Ok(())
 }
 
-pub(super) fn expired_cookie(name: &str, http_only: bool, secure: bool) -> String {
+pub(super) fn expired_cookie(name: &str, http_only: bool, scope: &CookieScope) -> String {
     format!(
         "{name}=; Path={}; SameSite=Strict; Max-Age=0{}{}",
-        if http_only { "/api/v2/web/auth" } else { "/" },
+        if http_only {
+            scope.refresh_path()
+        } else {
+            scope.csrf_path()
+        },
         if http_only { "; HttpOnly" } else { "" },
-        if secure { "; Secure" } else { "" }
+        scope.secure()
     )
 }
 
@@ -79,8 +132,12 @@ pub(super) fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a
         .find_map(|(key, value)| (key == name && !value.is_empty()).then_some(value))
 }
 
-pub(super) fn validate_web_request(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
-    validate_web_origin(state, headers)?;
+pub(super) fn validate_web_request(
+    state: &AppState,
+    ingress: &Ingress,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    validate_web_origin(state, ingress, headers)?;
     let cookie = cookie_value(headers, WEB_CSRF_COOKIE).ok_or(ApiError::Forbidden)?;
     let supplied = headers
         .get(WEB_CSRF_HEADER)
@@ -92,7 +149,17 @@ pub(super) fn validate_web_request(state: &AppState, headers: &HeaderMap) -> Res
     Ok(())
 }
 
-pub(super) fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+/// Whether a browser request comes from the server's own page.
+///
+/// On Home Assistant's ingress (RFC-030 decision 6), `WAVEFLOW_PUBLIC_URL` is
+/// not the address the browser is on, so it is not asked: `Origin` is compared
+/// with `Host`, which Home Assistant passes through from the browser, as on a
+/// server with no public URL.
+pub(super) fn validate_web_origin(
+    state: &AppState,
+    ingress: &Ingress,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
     let origin = headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -105,7 +172,7 @@ pub(super) fn validate_web_origin(state: &AppState, headers: &HeaderMap) -> Resu
     {
         return Err(ApiError::Forbidden);
     }
-    if let Some(public_url) = state.public_url.as_deref() {
+    if let Some(public_url) = state.public_url.as_deref().filter(|_| ingress.0.is_none()) {
         let expected = url::Url::parse(public_url).map_err(|_| ApiError::Unavailable)?;
         return if parsed.origin() == expected.origin() {
             Ok(())

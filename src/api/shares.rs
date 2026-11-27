@@ -64,6 +64,7 @@ pub(super) fn share_clear(names: &[String]) -> Result<crate::services::ShareClea
 #[utoipa::path(get, path = "/api/v2/shares", tag = "user-data", responses((status = 200, body = [ShareResponse]), (status = 401, body = ErrorResponse)))]
 pub async fn list_shares(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ShareResponse>>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
@@ -73,18 +74,24 @@ pub async fn list_shares(
         .await
         .map_err(service_error)?
         .into_iter()
-        .map(|share| share_response(&state, share))
+        .map(|share| share_response(&state, &ingress, share))
         .collect();
     Ok(Json(shares))
 }
 
-#[utoipa::path(post, path = "/api/v2/shares", tag = "user-data", request_body = CreateShareRequest, responses((status = 201, body = ShareResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 422, body = ErrorResponse)))]
+#[utoipa::path(post, path = "/api/v2/shares", tag = "user-data", request_body = CreateShareRequest, responses((status = 201, body = ShareResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse), (status = 409, body = ErrorResponse, description = "Inside Home Assistant, with no `WAVEFLOW_PUBLIC_URL`: the link would have no address (`share_address_missing`, RFC-030)"), (status = 422, body = ErrorResponse)))]
 pub async fn create_share(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
     Json(request): Json<CreateShareRequest>,
 ) -> Result<(StatusCode, Json<ShareResponse>), ApiError> {
     let user = authenticated(&state, &headers, Access::Write).await?;
+    // Before anything is created: a share whose link nobody outside the panel
+    // could open is not one to make (RFC-030 decision 8).
+    if ingress.0.is_some() && state.public_url.is_none() {
+        return Err(ApiError::ShareAddressMissing);
+    }
     let context = mutation_context(&state, &headers, user.id).await?;
     let share = state
         .services
@@ -98,12 +105,16 @@ pub async fn create_share(
         )
         .await
         .map_err(service_error)?;
-    Ok((StatusCode::CREATED, Json(share_response(&state, share))))
+    Ok((
+        StatusCode::CREATED,
+        Json(share_response(&state, &ingress, share)),
+    ))
 }
 
 #[utoipa::path(patch, path = "/api/v2/shares/{share_id}", tag = "user-data", params(("share_id" = Uuid, Path)), request_body = UpdateShareRequest, responses((status = 200, body = ShareResponse), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
 pub async fn update_share(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     Path(share_id): Path<Uuid>,
     headers: HeaderMap,
     Json(request): Json<UpdateShareRequest>,
@@ -123,7 +134,7 @@ pub async fn update_share(
         )
         .await
         .map_err(service_error)?;
-    Ok(Json(share_response(&state, share)))
+    Ok(Json(share_response(&state, &ingress, share)))
 }
 
 #[utoipa::path(delete, path = "/api/v2/shares/{share_id}", tag = "user-data", params(("share_id" = Uuid, Path)), responses((status = 204), (status = 401, body = ErrorResponse), (status = 404, body = ErrorResponse)))]
@@ -142,13 +153,25 @@ pub async fn delete_share(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn share_response(state: &AppState, share: crate::services::ShareItem) -> ShareResponse {
-    let url = share.url_token.map(|token| {
+/// A share as the API answers it, with its link.
+///
+/// The link is the public URL followed by `/share/<token>`, or that path alone
+/// when no public URL is set, which on the main listener is the server's own
+/// address. Inside Home Assistant (RFC-030 decision 8) a bare path would name
+/// a page of Home Assistant's, so a share listed there with no public URL
+/// carries no link.
+pub(super) fn share_response(
+    state: &AppState,
+    ingress: &crate::http::ingress::Ingress,
+    share: crate::services::ShareItem,
+) -> ShareResponse {
+    let url = share.url_token.and_then(|token| {
         let path = format!("/share/{token}");
-        state
-            .public_url
-            .as_ref()
-            .map_or_else(|| path.clone(), |base| format!("{base}{path}"))
+        match state.public_url.as_ref() {
+            Some(base) => Some(format!("{base}{path}")),
+            None if ingress.0.is_some() => None,
+            None => Some(path),
+        }
     });
     ShareResponse {
         id: share.id,

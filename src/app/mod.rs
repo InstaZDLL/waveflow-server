@@ -15,7 +15,7 @@ mod state;
 
 pub use boot::{initialize, shutdown_signal};
 pub use openapi::{ApiDoc, OPENAPI_JSON_PATH, SCALAR_PATH};
-pub use router::app;
+pub use router::{app, ingress_app};
 pub(crate) use source::{LICENSE_URL, SOURCE_URL};
 pub use state::AppState;
 

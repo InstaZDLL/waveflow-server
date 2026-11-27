@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import {
   ApiError,
   artworkUrls,
@@ -20,9 +21,12 @@ async function loadArtworkUrl(
   if (session) headers.set("authorization", `Bearer ${session.access_token}`);
   // Whose session this attempt speaks for; see `renewFor`.
   const generation = sessionGeneration;
-  const response = await fetch(`/api/v2/artwork/${encodeURIComponent(id)}`, {
-    headers,
-  });
+  const response = await fetch(
+    serverUrl(`/api/v2/artwork/${encodeURIComponent(id)}`),
+    {
+      headers,
+    },
+  );
   if (response.status === 401 && retry && (await renewFor(generation))) {
     return loadArtworkUrl(id, false);
   }

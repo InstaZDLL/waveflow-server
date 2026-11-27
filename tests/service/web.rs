@@ -455,3 +455,86 @@ async fn a_browser_opening_a_share_link_is_handed_the_player() {
     assert_eq!(below.status(), StatusCode::NOT_FOUND);
     assert!(!content_type(&below).starts_with("text/html"));
 }
+
+/// Every `src` and `href` the shell makes that names a path on this server.
+fn served_references(html: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for attribute in ["src=\"", "href=\""] {
+        for (index, _) in html.match_indices(attribute) {
+            let value = &html[index + attribute.len()..];
+            let value = &value[..value.find('"').unwrap_or(value.len())];
+            if value.starts_with("./") || (value.starts_with('/') && !value.starts_with("//")) {
+                found.push(value.to_owned());
+            }
+        }
+    }
+    found
+}
+
+/// RFC-030 decisions 3 and 9: inside Home Assistant the shell anchors every
+/// reference under the ingress prefix and names it for the client, and it may
+/// be framed by Home Assistant's own page; on the main listener the same
+/// request is served at the root, the header unread.
+///
+/// Holds with the real client and with the placeholder `build.rs` embeds
+/// alike, since it asks the served bytes rather than a known file name.
+#[tokio::test]
+async fn the_shell_is_served_under_home_assistants_prefix() {
+    const PREFIX: &str = "/api/hassio_ingress/tok_42";
+    let (_temp, config, state) = test_app().await;
+    let app = waveflow_server::app(&config, state);
+    let request = |uri: &str| {
+        Request::get(uri)
+            .header("x-ingress-path", PREFIX)
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    for uri in ["/", "/albums/some-client-route", "/index.html"] {
+        let response = waveflow_server::ingress_app(app.clone())
+            .oneshot(request(uri))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        // Framed by Home Assistant's page, on the same origin as ours.
+        let policy = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(policy.ends_with("frame-ancestors 'self'"), "{policy}");
+        assert_eq!(response.headers()["x-frame-options"], "SAMEORIGIN");
+        let html = body_text(response).await;
+        assert!(
+            html.contains(&format!(r#"name="waveflow-base" content="{PREFIX}""#)),
+            "{uri}: {html}"
+        );
+        let references = served_references(&html);
+        for reference in &references {
+            assert!(
+                reference.starts_with(&format!("{PREFIX}/")),
+                "{uri}: {reference} escapes the prefix"
+            );
+        }
+        assert!(
+            !html.contains(r#"rel="manifest""#),
+            "{uri}: installable under a prefix"
+        );
+    }
+
+    // The main listener: the same header, read by nobody.
+    for uri in ["/", "/albums/some-client-route", "/index.html"] {
+        let response = app.clone().oneshot(request(uri)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let html = body_text(response).await;
+        assert!(
+            html.contains(r#"name="waveflow-base" content="""#),
+            "{uri}: {html}"
+        );
+        for reference in served_references(&html) {
+            assert!(
+                reference.starts_with('/') && !reference.starts_with(PREFIX),
+                "{uri}: {reference}"
+            );
+        }
+    }
+}

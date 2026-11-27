@@ -35,6 +35,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlink": "Trennen",
   "scrobbling.unlinkError": "Diese Verknüpfung konnte nicht getrennt werden.",
   "scrobbling.connect": "Mit Last.fm verbinden",
+  "scrobbling.connectElsewhere":
+    "Last.fm leitet dich zur eigenen Adresse des Servers zurück. Verbinde es daher von dort aus, nicht aus Home Assistant.",
   "scrobbling.connectDetail":
     "Last.fm stellt keinen Schlüssel zum Einfügen bereit. Du erteilst die Freigabe deshalb auf der Last.fm-Website und kehrst anschließend hierher zurück.",
   "scrobbling.connectError":

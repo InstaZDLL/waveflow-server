@@ -23,6 +23,7 @@ mod support;
 use support::*;
 
 mod first_library;
+mod ingress;
 mod oauth;
 mod sessions;
 mod setup;

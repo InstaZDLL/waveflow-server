@@ -11,6 +11,10 @@
     <!-- Wave green, the brand's own colour, as the logo kit's head snippet
          sets it (design/logo/web/ in InstaZDLL/WaveFlow). -->
     <meta name="theme-color" content="#10B981" />
+    <!-- The path the server is reached under (RFC-030). Empty, as written
+         here, everywhere but inside Home Assistant, where the server fills in
+         `/api/hassio_ingress/<token>` as it serves this page. -->
+    <meta name="waveflow-base" content="" />
     <!-- Both icons come from the logo kit unchanged, and both carry its small
          drawing, the heavier stroke the guide asks for below 24px. The `.ico`
          first, sized, for the browsers that read nothing else; the SVG after,

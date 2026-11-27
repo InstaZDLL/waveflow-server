@@ -43,6 +43,7 @@ const PLACEHOLDER: &str = r#"<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="waveflow-base" content="" />
     <title>WaveFlow Server</title>
   </head>
   <body>

@@ -39,6 +39,13 @@ pub(super) fn normalize_public_url(value: &str) -> anyhow::Result<String> {
 /// the operator wrote. A block written in IPv4-mapped form is read as the IPv4
 /// block it spells, which is how the limiter compares it.
 pub(super) fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
+    parse_addresses("WAVEFLOW_TRUSTED_PROXIES", list)
+}
+
+/// A comma-separated list of addresses or CIDR blocks, as
+/// [`parse_proxy_addresses`] reads it, under the name of the variable it came
+/// from.
+pub(super) fn parse_addresses(variable: &str, list: &str) -> anyhow::Result<Vec<ipnet::IpNet>> {
     list.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -47,7 +54,7 @@ pub(super) fn parse_proxy_addresses(list: &str) -> anyhow::Result<Vec<ipnet::IpN
                 .parse::<ipnet::IpNet>()
                 .or_else(|_| entry.parse::<std::net::IpAddr>().map(ipnet::IpNet::from))
                 .map(crate::auth::sign_in::trusted_network)
-                .map_err(|_| anyhow::anyhow!("invalid WAVEFLOW_TRUSTED_PROXIES entry {entry:?}"))
+                .map_err(|_| anyhow::anyhow!("invalid {variable} entry {entry:?}"))
         })
         .collect()
 }

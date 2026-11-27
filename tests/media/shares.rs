@@ -22,7 +22,21 @@ async fn shared_file(name: &str, share: serde_json::Value) -> SharedFile {
 
 /// `shared_file`, with a cover beside the track when `cover` says so.
 async fn shared_file_with(name: &str, share: serde_json::Value, cover: bool) -> SharedFile {
-    let (temp, config, state) = test_app().await;
+    shared_file_on(name, share, cover, true).await
+}
+
+/// `shared_file_with`, on a server with or without a public URL.
+async fn shared_file_on(
+    name: &str,
+    share: serde_json::Value,
+    cover: bool,
+    public_url: bool,
+) -> SharedFile {
+    let (temp, mut config, mut state) = test_app().await;
+    if !public_url {
+        config.public_url = None;
+        state.public_url = None;
+    }
     let password = uuid::Uuid::new_v4().to_string();
     let hash = security::hash_password(&password).unwrap();
     let owner = state
@@ -386,4 +400,91 @@ async fn a_share_page_shows_covers_through_the_visit_and_nothing_else() {
         StatusCode::NOT_FOUND,
         "a deleted share stops answering its covers at once"
     );
+}
+
+/// `send_json`, as Home Assistant's ingress hands a request on (RFC-030): the
+/// prefix named in `X-Ingress-Path`, to the router only that listener serves.
+async fn through_ingress(
+    router: &axum::Router,
+    method: &str,
+    uri: &str,
+    token: &str,
+    body: Option<serde_json::Value>,
+) -> axum::response::Response {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("x-ingress-path", "/api/hassio_ingress/tok_42")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            body.map(|body| body.to_string()).unwrap_or_default(),
+        ))
+        .unwrap();
+    waveflow_server::ingress_app(router.clone())
+        .oneshot(request)
+        .await
+        .unwrap()
+}
+
+/// RFC-030 decision 8: with no `WAVEFLOW_PUBLIC_URL`, a share's link is a bare
+/// path, which inside Home Assistant names a page of Home Assistant's. So the
+/// panel cannot make a share, while the main listener, where that path is the
+/// server's own, is unchanged. (A listed share carries no link on either: the
+/// native list never reveals one.)
+#[tokio::test]
+async fn inside_home_assistant_a_share_needs_a_public_address() {
+    let shared = shared_file_on("ingress-sharer", serde_json::json!({}), false, false).await;
+    assert!(
+        shared.share_url.starts_with("/share/"),
+        "{}",
+        shared.share_url
+    );
+
+    let refused = through_ingress(
+        &shared.router,
+        "POST",
+        "/api/v2/shares",
+        &shared.token,
+        Some(serde_json::json!({ "track_ids": [shared.track] })),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::CONFLICT);
+    assert_eq!(json_body(refused).await["code"], "share_address_missing");
+    // Nothing was made.
+    let listed =
+        json_body(send_json(&shared.router, "GET", "/api/v2/shares", &shared.token, None).await)
+            .await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+}
+
+#[tokio::test]
+async fn inside_home_assistant_a_public_address_gives_shares_their_link() {
+    let (_temp, mut config, mut state) = test_app().await;
+    config.public_url = Some("https://music.example.org".to_owned());
+    state.public_url = config.public_url.clone();
+    let password = uuid::Uuid::new_v4().to_string();
+    state
+        .db
+        .create_account(
+            "ingress-public",
+            &security::hash_password(&password).unwrap(),
+            AccountRole::User,
+            now_ms(),
+        )
+        .await
+        .unwrap();
+    let router = waveflow_server::app(&config, state);
+    let token = login_token(&router, "ingress-public", &password).await;
+    // An unknown track: whatever the answer, it is not the missing address.
+    let answered = through_ingress(
+        &router,
+        "POST",
+        "/api/v2/shares",
+        &token,
+        Some(serde_json::json!({ "track_ids": [uuid::Uuid::new_v4()] })),
+    )
+    .await;
+    assert_ne!(answered.status(), StatusCode::CONFLICT);
+    assert_ne!(json_body(answered).await["code"], "share_address_missing");
 }

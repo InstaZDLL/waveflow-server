@@ -32,6 +32,8 @@ export const scrobbling = {
   "scrobbling.unlink": "Unlink",
   "scrobbling.unlinkError": "That link could not be withdrawn.",
   "scrobbling.connect": "Connect to Last.fm",
+  "scrobbling.connectElsewhere":
+    "Last.fm sends you back to the server’s own address, so connect it from there rather than from Home Assistant.",
   "scrobbling.connectDetail":
     "Last.fm hands out no key you can paste, so it asks you there and brings you back.",
   "scrobbling.connectError": "The Last.fm journey could not be opened.",
