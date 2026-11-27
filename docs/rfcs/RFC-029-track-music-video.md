@@ -9,7 +9,9 @@
   [#452](https://github.com/InstaZDLL/waveflow-server/pull/452) (decisions 5
   to 8, the routes, the ticket and the `clip` field),
   [#453](https://github.com/InstaZDLL/waveflow-server/pull/453) (the web
-  client, on the playing screen's detail view); and, for decision 9 in the
+  client, on the playing screen's detail view),
+  [#471](https://github.com/InstaZDLL/waveflow-server/pull/471) (the web
+  client's immersive view and track menu); and, for decision 9 in the
   desktop's repository, [WaveFlow#1119](https://github.com/InstaZDLL/WaveFlow/pull/1119)
   (which server tracks have a clip, and the clip ticket with its expiry) and
   [WaveFlow#1125](https://github.com/InstaZDLL/WaveFlow/pull/1125) (playing

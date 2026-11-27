@@ -7,6 +7,7 @@ import { formatDuration, type Song } from "../../../api";
 import { Artwork } from "../../../components/artwork/artwork";
 import { CanvasStage } from "../../../components/artwork/canvas";
 import { Icon } from "../../../components/layout/icons";
+import { type ClipOpen, ClipPlayer } from "../../../components/track/clip";
 import { usePlayer, usePlayerProgress } from "../../../player/player";
 import { useI18n } from "../../../state/i18n";
 
@@ -22,8 +23,13 @@ import { useI18n } from "../../../state/i18n";
  * that fills the screen with a cover and leaves no way to pause is a trap
  * rather than a mode. The keyboard shortcuts keep working regardless: the
  * player listens on the window, which a modal dialog does not intercept.
+ *
+ * **The clip takes the artwork's place here too**, larger, since this is the
+ * view that gives the screen to the picture. It is the playing screen's clip,
+ * not one of its own: opened in the detail view, it carries on here where it
+ * stood, and leaving the view hands it back to the detail view still playing.
  */
-export function ImmersiveView({ song }: { song: Song }) {
+export function ImmersiveView({ song, clip }: { song: Song; clip: ClipOpen }) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const player = usePlayer();
@@ -81,13 +87,22 @@ export function ImmersiveView({ song }: { song: Song }) {
         if (event.target === frame.current) frame.current?.close();
       }}
     >
-      <CanvasStage trackId={song.id} className="immersive-stage">
-        <Artwork
-          artworkId={song.artwork_hash}
-          title={song.title}
-          className="cover immersive-cover"
+      {clip.open && song.clip ? (
+        <ClipPlayer
+          song={song}
+          onClose={clip.hide}
+          session={clip.session}
+          className="immersive-clip"
         />
-      </CanvasStage>
+      ) : (
+        <CanvasStage trackId={song.id} className="immersive-stage">
+          <Artwork
+            artworkId={song.artwork_hash}
+            title={song.title}
+            className="cover immersive-cover"
+          />
+        </CanvasStage>
+      )}
       <div className="immersive-detail">
         <span className="eyebrow">{song.album ?? t("common.album")}</span>
         <h2>{song.title}</h2>
@@ -123,6 +138,11 @@ export function ImmersiveView({ song }: { song: Song }) {
             <Icon name="next" />
           </button>
         </div>
+        {song.clip && !clip.open ? (
+          <button type="button" className="clip-open" onClick={clip.show}>
+            {t("playing.watchClip")}
+          </button>
+        ) : null}
       </div>
       <button
         type="button"
