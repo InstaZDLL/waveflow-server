@@ -160,7 +160,9 @@ covering what the other cannot:
 - **The prefixed end-to-end suite** (see *The order of the work*) catches what
   the source check cannot: its mock serves the client only under the prefix
   and fails the test on any request that reaches the root, whatever built
-  its address.
+  its address. Its reach is the paths it runs: the mock sees only the
+  requests those tests make, so a call no test exercises is covered by
+  neither check. Hence the rule in *The order of the work*.
 
 The server's own answers do not change: a ticket stays `/api/v2/stream/…`.
 The client is the one place that knows where it was loaded from, and the
@@ -256,7 +258,11 @@ browser tab remains for whoever prefers it.
    direct calls, the tickets, no service worker and no manifest under a
    prefix, the source check. Playwright runs one suite under a prefix behind
    a mock that strips it, as Home Assistant does, and that fails on any
-   request reaching the root instead.
+   request reaching the root instead. **A call that builds its path at run
+   time** — in a variable, by concatenation, or through a helper other than
+   `serverUrl` — comes with a test in that suite that goes through it, in the
+   pull request that adds the call: the source check cannot see such a path,
+   and the suite sees only what it runs.
 3. **The app**: the `config.yaml` above, in its repository, at the first
    server release that carries both, tried on a real Home Assistant.
 
