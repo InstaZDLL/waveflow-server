@@ -213,7 +213,17 @@ later.
   ListenBrainz and Maloja, which take a token, works in the panel.
 - **Share links** are built from `WAVEFLOW_PUBLIC_URL` as they are today, and
   never from the ingress address, which only signed-in Home Assistant users
-  can open.
+  can open. That setting is optional, and without it the server answers a
+  share's address as a bare path, `/share/<token>`: in the panel that names
+  a page of Home Assistant's, and passed through `serverUrl` it would name
+  one only Home Assistant's users can open. Neither is a link to send. So on
+  an ingress request with no public URL, `POST /api/v2/shares` is refused
+  with `409 share_address_missing` before anything is created, and the shares
+  listed carry no `url`. The shares page, answered that code, takes its form
+  away and says that a link needs the server's external address,
+  `WAVEFLOW_PUBLIC_URL`. On the main listener nothing changes: a bare path
+  there is the server's own address. The prefixed suite covers the refusal,
+  the list without addresses, and the page's message.
 
 ## Decision 9 — framing
 
