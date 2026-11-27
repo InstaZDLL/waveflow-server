@@ -116,7 +116,8 @@ export function PlayingPage() {
   const view = playingView(useSearch({ strict: false }));
   // Held here rather than in a view, so the clip follows the listener from the
   // detail view into the immersive one and back, shown by whichever is on top.
-  const clip = useClipOpen(current?.id ?? "");
+  // The lyrics view shows no clip, and turning to it closes one.
+  const clip = useClipOpen(current?.id ?? "", view !== "lyrics");
 
   /**
    * One bookmark per track, replaced rather than added — so this button reads

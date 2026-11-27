@@ -71,8 +71,17 @@ const freshSession = (): ClipSession => ({
  * takes the clip away with the screen, and the track it paused would stay
  * paused with nothing on screen to say why. A change of track gives nothing
  * back: the queue moved on, and what plays now is the listener's.
+ *
+ * **So does a view that shows no clip.** `shown` is false on the lyrics view,
+ * and turning to it closes the clip as its button would. Kept open there, the
+ * clip had no player, and the one that last showed it read the track as it was
+ * then: a listener who started the track from the bar and left the page had it
+ * sent back to the clip's place and paused.
  */
-export function useClipOpen(trackId: string): {
+export function useClipOpen(
+  trackId: string,
+  shown = true,
+): {
   open: boolean;
   show: () => void;
   hide: () => void;
@@ -95,6 +104,14 @@ export function useClipOpen(trackId: string): {
   const live = useRef(current.session);
   live.current = current.session;
   useEffect(() => () => live.current.giveBack?.(), []);
+  // The player went with the view in this same commit, so the one it last
+  // rendered is still the track as it is.
+  const { open, session } = current;
+  useEffect(() => {
+    if (shown || !open) return;
+    session.giveBack?.();
+    setState({ trackId, open: false, session: freshSession() });
+  }, [shown, open, session, trackId]);
   return {
     open: current.open,
     session: current.session,
@@ -256,7 +273,16 @@ export function ClipPlayer({
     givenBack.current = true;
     const at = resumeAt(position(), latest.current.duration);
     const { player } = latest.current;
-    if (at !== null && player.current?.id === song.id) player.seek(at);
+    // Only the track the clip was opened over, and only when it is the clip's
+    // own: a track that became current meanwhile — the clip's, reached by the
+    // Next key — keeps the place it is playing from.
+    if (
+      at !== null &&
+      openedOn.current === song.id &&
+      player.current?.id === song.id
+    ) {
+      player.seek(at);
+    }
     // Not over a station or an episode started while the clip was open, playing
     // or paused since by the clip itself: `toggle` would drop it from the bar,
     // and closing a clip must not take away what the listener chose since. A

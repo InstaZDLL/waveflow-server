@@ -275,6 +275,21 @@ describe("ClipPlayer", () => {
     expect(player.toggle).toHaveBeenCalledTimes(1);
     expect(player.playing).toBe(false);
   });
+
+  it("leaves the clip's own track where it plays when Next reached it", async () => {
+    // A plays, the clip is B's, opened from its menu; the Next key starts B,
+    // which pauses the clip. B plays from its own start, not the clip's place.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    player.current = { id: "another" };
+    await openClip(player);
+    playTo(60);
+
+    player.current = { id: "track" };
+    player.playing = true;
+    clickBack();
+    expect(player.seek).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -506,8 +521,8 @@ describe("useClipOpen", () => {
 
 /** The playing screen, as far as the clip goes: one opening, shown in a view. */
 function Screen({ trackId, view }: { trackId: string; view: string }) {
-  const clip = useClipOpen(trackId);
-  return clip.open ? (
+  const clip = useClipOpen(trackId, view !== "lyrics");
+  return clip.open && view !== "lyrics" ? (
     <ClipPlayer
       key={view}
       song={{ ...song, id: trackId }}
@@ -600,5 +615,26 @@ describe("a clip that goes without being closed", () => {
     player.playing = false;
     act(() => renderUnder(player, null));
     expect(player.toggle).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes on the lyrics view, so leaving later moves nothing", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    await openOnScreen(player);
+    playTo(30);
+
+    // Turning to the words closes the clip as its button would.
+    act(() => renderUnder(player, <Screen trackId="track" view="lyrics" />));
+    expect(player.seek).toHaveBeenCalledWith(30);
+    expect(player.playing).toBe(true);
+    expect(player.toggle).toHaveBeenCalledTimes(2);
+
+    // The listener pauses and plays from the bar, then leaves the page: the
+    // track is theirs now, and nothing sends it back or toggles it off.
+    player.seek.mockClear();
+    act(() => renderUnder(player, null));
+    expect(player.seek).not.toHaveBeenCalled();
+    expect(player.toggle).toHaveBeenCalledTimes(2);
+    expect(player.playing).toBe(true);
   });
 });
