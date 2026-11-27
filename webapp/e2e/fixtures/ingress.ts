@@ -54,7 +54,7 @@ export async function serveUnderPrefix(page: Page): Promise<Refused> {
       return;
     }
     const cookie = (await route.request().headerValue("cookie")) ?? "";
-    if (!/(?:^|;s*)ingress_session=/.test(cookie)) {
+    if (!/(?:^|;\s*)ingress_session=/.test(cookie)) {
       refused.withoutSession.push(url.pathname);
       await route.fulfill({ status: 401, body: "401: Unauthorized" });
       return;
