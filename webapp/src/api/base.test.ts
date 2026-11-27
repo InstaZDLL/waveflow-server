@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { offlineSupported } from "../lib/offline";
-import { forgetServerBase, serverBase, serverUrl, underPrefix } from "./base";
+import {
+  forgetServerBase,
+  publicCredentials,
+  serverBase,
+  serverUrl,
+  underPrefix,
+} from "./base";
 
 function servedUnder(prefix: string | null) {
   for (const meta of document.querySelectorAll('meta[name="waveflow-base"]')) {
@@ -48,6 +54,15 @@ describe("serverUrl", () => {
     ]) {
       expect(serverUrl(address)).toBe(address);
     }
+  });
+
+  it("sends Home Assistant's cookie with a public request under a prefix", () => {
+    // Home Assistant refuses an ingress request without its ingress_session
+    // cookie; at the root, a public request sends nothing of this page's.
+    servedUnder("");
+    expect(publicCredentials()).toBe("omit");
+    servedUnder("/api/hassio_ingress/tok");
+    expect(publicCredentials()).toBe("same-origin");
   });
 
   it("offers no offline copy under a prefix (RFC-030 decision 8)", () => {

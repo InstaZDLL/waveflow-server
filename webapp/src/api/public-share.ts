@@ -1,4 +1,4 @@
-import { serverUrl } from "./base";
+import { publicCredentials, serverUrl } from "./base";
 import type { Song } from "./catalog";
 import { ApiError } from "./client";
 
@@ -41,7 +41,7 @@ export async function openPublicShare(
     serverUrl(`/share/${encodeURIComponent(token)}`),
     {
       headers: { accept: "application/json" },
-      credentials: "omit",
+      credentials: publicCredentials(),
       cache: "no-store",
       referrerPolicy: "no-referrer",
     },

@@ -1,4 +1,4 @@
-import { serverUrl } from "./base";
+import { publicCredentials, serverUrl } from "./base";
 import { ApiError } from "./client";
 
 /** The running server as its liveness probe describes it. */
@@ -25,7 +25,7 @@ export type ServerIdentity = {
 export async function getServerIdentity(): Promise<ServerIdentity> {
   const response = await fetch(serverUrl("/health"), {
     headers: { accept: "application/json" },
-    credentials: "omit",
+    credentials: publicCredentials(),
   });
   if (!response.ok) throw new ApiError(response.status, "GET /health");
   return (await response.json()) as ServerIdentity;

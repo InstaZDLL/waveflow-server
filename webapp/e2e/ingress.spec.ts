@@ -35,7 +35,7 @@ test("the client plays and moves about under Home Assistant's prefix", async ({
   await page.route("**/api/v2/stream/*", (route) =>
     route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
   );
-  const strayed = await serveUnderPrefix(page);
+  const refused = await serveUnderPrefix(page);
 
   await page.goto(`${PREFIX}/albums/album-2`);
   await page.getByRole("button", { name: "Play album" }).click();
@@ -49,7 +49,7 @@ test("the client plays and moves about under Home Assistant's prefix", async ({
   await expect(page).toHaveURL(new RegExp(`${PREFIX}/songs$`));
   await expect(page.locator(".songs tbody tr").first()).toBeVisible();
 
-  expect(strayed).toEqual([]);
+  expect(refused).toEqual({ strayed: [], withoutSession: [] });
 });
 
 /**
@@ -72,7 +72,7 @@ test("a share inside Home Assistant needs the server's public address", async ({
         })
       : route.fallback(),
   );
-  const strayed = await serveUnderPrefix(page);
+  const refused = await serveUnderPrefix(page);
 
   // The queue the server keeps comes back with the page, so there is one to
   // share.
@@ -85,8 +85,8 @@ test("a share inside Home Assistant needs the server's public address", async ({
   await expect(page.getByRole("status")).toContainText("WAVEFLOW_PUBLIC_URL");
   await expect(
     page.getByRole("button", { name: "Share current queue" }),
-  ).toBeHidden();
-  expect(strayed).toEqual([]);
+  ).toHaveCount(0);
+  expect(refused).toEqual({ strayed: [], withoutSession: [] });
 });
 
 /**
@@ -95,7 +95,7 @@ test("a share inside Home Assistant needs the server's public address", async ({
  * starting a journey that cannot finish.
  */
 test("Last.fm is linked from the server's own address", async ({ page }) => {
-  const strayed = await serveUnderPrefix(page);
+  const refused = await serveUnderPrefix(page);
   await page.goto(`${PREFIX}/settings/scrobbling`);
   await expect(
     page.getByText("connect it from there rather than from Home Assistant"),
@@ -103,5 +103,19 @@ test("Last.fm is linked from the server's own address", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Connect to Last.fm" }),
   ).toHaveCount(0);
-  expect(strayed).toEqual([]);
+  expect(refused).toEqual({ strayed: [], withoutSession: [] });
+});
+
+/**
+ * The probe is a public request, sent without this page's cookies at the
+ * root. Under the prefix it has to carry Home Assistant's `ingress_session`,
+ * or Home Assistant refuses it and the source offer is never drawn.
+ */
+test("the probe is asked for with Home Assistant's session", async ({
+  page,
+}) => {
+  const refused = await serveUnderPrefix(page);
+  await page.goto(`${PREFIX}/settings`);
+  await expect(page.getByRole("link", { name: "Source code" })).toBeVisible();
+  expect(refused).toEqual({ strayed: [], withoutSession: [] });
 });

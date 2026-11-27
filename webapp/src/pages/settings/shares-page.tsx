@@ -25,7 +25,8 @@ export function SharesPage() {
   const [mutationError, setMutationError] = useState<string | null>(null);
   // Inside Home Assistant with no public address (RFC-030 decision 8), the
   // server refuses to make a link nobody outside the panel could open; the
-  // form then gives way to why.
+  // form then gives way to why. Not rendered rather than `hidden`: the form's
+  // own `display` outranks the attribute, and it stayed on screen.
   const [needsAddress, setNeedsAddress] = useState(false);
   const { data: value, error } = useQuery(sharesQuery());
   const createdShareNotice = createdShare?.url ? (
@@ -98,32 +99,33 @@ export function SharesPage() {
           {t("shares.needsAddress")}
         </p>
       ) : null}
-      <form
-        className="inline-form"
-        hidden={needsAddress}
-        onSubmit={(event) => void shareQueue(event)}
-      >
-        <input
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder={t("shares.description")}
-          aria-label={t("shares.description")}
-          required
-        />
-        <input
-          type="number"
-          inputMode="numeric"
-          min={1}
-          step={1}
-          value={maxVisits}
-          onChange={(event) => setMaxVisits(event.target.value)}
-          placeholder={t("shares.maxVisits")}
-          aria-label={t("shares.maxVisits")}
-        />
-        <button type="submit" disabled={!player.queue.length || tooLong}>
-          {t("shares.create")}
-        </button>
-      </form>
+      {needsAddress ? null : (
+        <form
+          className="inline-form"
+          onSubmit={(event) => void shareQueue(event)}
+        >
+          <input
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder={t("shares.description")}
+            aria-label={t("shares.description")}
+            required
+          />
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            value={maxVisits}
+            onChange={(event) => setMaxVisits(event.target.value)}
+            placeholder={t("shares.maxVisits")}
+            aria-label={t("shares.maxVisits")}
+          />
+          <button type="submit" disabled={!player.queue.length || tooLong}>
+            {t("shares.create")}
+          </button>
+        </form>
+      )}
       {!player.queue.length && !needsAddress ? (
         <p className="muted">{t("shares.needQueue")}</p>
       ) : null}

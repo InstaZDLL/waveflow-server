@@ -47,3 +47,16 @@ export function serverUrl(path: string): string {
 export function underPrefix(): boolean {
   return serverBase() !== "";
 }
+
+/**
+ * The credentials of a request the server answers without a session — the
+ * probe, a public share.
+ *
+ * `omit` at the root, so nothing of this page's travels where nothing is
+ * needed. Under Home Assistant's prefix, `same-origin`: Home Assistant admits
+ * a request to its ingress only with its own `ingress_session` cookie, and a
+ * request that sends none is refused before it reaches the server.
+ */
+export function publicCredentials(): RequestCredentials {
+  return underPrefix() ? "same-origin" : "omit";
+}
