@@ -147,9 +147,20 @@ one function, `serverUrl(path)`, which prepends it to a path that starts with
   `location.assign` calls that name a client route go through the router or
   through `serverUrl`.
 
-A test lists the client's source for a `"/api/` or `` `/api/ `` literal handed
-to `fetch`, `new URL`, `src` or `location` without it, so a call added later
-does not slip past the prefix.
+Two checks keep a call added later from slipping past the prefix, each
+covering what the other cannot:
+
+- **A source check**, run with the unit tests, flags a string or template
+  literal starting with `/` — `/api/`, `/share/`, `/health`, `/sw.js` alike —
+  passed directly to `fetch`, `new URL`, `new EventSource`,
+  `location.assign` or `location.replace`, or set as a `src` or `href`,
+  unless it goes through `serverUrl`. It reads literals only: a path built in a
+  variable, by concatenation or by a helper, is out of its reach, and it says
+  so in its own comment rather than passing for complete.
+- **The prefixed end-to-end suite** (see *The order of the work*) catches what
+  the source check cannot: its mock serves the client only under the prefix
+  and fails the test on any request that reaches the root, whatever built
+  its address.
 
 The server's own answers do not change: a ticket stays `/api/v2/stream/…`.
 The client is the one place that knows where it was loaded from, and the
@@ -244,7 +255,8 @@ browser tab remains for whoever prefers it.
 2. **Web client**: `base: "./"`, `serverUrl`, the router's `basepath`, the
    direct calls, the tickets, no service worker and no manifest under a
    prefix, the source check. Playwright runs one suite under a prefix behind
-   a mock that strips it, as Home Assistant does.
+   a mock that strips it, as Home Assistant does, and that fails on any
+   request reaching the root instead.
 3. **The app**: the `config.yaml` above, in its repository, at the first
    server release that carries both, tried on a real Home Assistant.
 
