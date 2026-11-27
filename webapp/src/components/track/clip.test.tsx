@@ -298,7 +298,7 @@ describe("ClipPlayer", () => {
  */
 describe("ClipPlayer carried from one view to the next", () => {
   function session(): ClipSession {
-    return { wasPlaying: null, at: null, playing: true };
+    return { wasPlaying: null, openedOn: null, at: null, playing: true };
   }
 
   it("goes on where it stood, and still gives the track back", async () => {
@@ -349,7 +349,12 @@ describe("ClipPlayer carried from one view to the next", () => {
     // Closed just after a change of view: the new element has no metadata yet
     // and reads 0, while the clip stood at a minute.
     clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
-    const carried: ClipSession = { wasPlaying: true, at: 60, playing: true };
+    const carried: ClipSession = {
+      wasPlaying: true,
+      openedOn: "track",
+      at: 60,
+      playing: true,
+    };
     const player = fakePlayer(false);
     await act(async () =>
       renderUnder(
@@ -366,7 +371,12 @@ describe("ClipPlayer carried from one view to the next", () => {
     clipUrl
       .mockResolvedValueOnce({ url: "/api/v2/clip-stream/one", expiresAt: 1 })
       .mockResolvedValueOnce({ url: "/api/v2/clip-stream/two", expiresAt: 2 });
-    const carried: ClipSession = { wasPlaying: false, at: 60, playing: true };
+    const carried: ClipSession = {
+      wasPlaying: false,
+      openedOn: "track",
+      at: 60,
+      playing: true,
+    };
     const player = fakePlayer(false);
     await act(async () =>
       renderUnder(
@@ -381,6 +391,61 @@ describe("ClipPlayer carried from one view to the next", () => {
       videoElement().dispatchEvent(new Event("loadedmetadata"));
     });
     expect(videoElement().currentTime).toBe(60);
+  });
+
+  it("reads the track it opened over from the session", async () => {
+    // The player taking over must not take the track current at the change
+    // of view for the one the clip paused.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const carried: ClipSession = {
+      wasPlaying: true,
+      openedOn: "track",
+      at: 10,
+      playing: true,
+    };
+    const player = fakePlayer(false);
+    player.current = { id: "other" };
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer song={song} onClose={vi.fn()} session={carried} />,
+      ),
+    );
+    clickBack();
+    expect(player.toggle).not.toHaveBeenCalled();
+  });
+
+  it("leaves the track where it was when closed before the clip started", async () => {
+    // The ticket is in, the element reads 0 and has played nothing.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(false);
+    await openClip(player);
+    expect(videoElement().currentTime).toBe(0);
+    clickBack();
+    expect(player.seek).not.toHaveBeenCalled();
+  });
+
+  async function renewAfter(events: string[]) {
+    clipUrl
+      .mockResolvedValueOnce({ url: "/api/v2/clip-stream/one", expiresAt: 1 })
+      .mockResolvedValueOnce({ url: "/api/v2/clip-stream/two", expiresAt: 2 });
+    await openClip(fakePlayer(false));
+    act(() => {
+      for (const name of events) videoElement().dispatchEvent(new Event(name));
+    });
+    await act(async () => {
+      videoElement().dispatchEvent(new Event("error"));
+    });
+    expect(videoElement().getAttribute("src")).toBe("/api/v2/clip-stream/two");
+    return videoElement().autoplay;
+  }
+
+  it("stays paused through a renewed ticket after a pause", async () => {
+    expect(await renewAfter(["play", "pause"])).toBe(false);
+  });
+
+  it("plays on through a renewed ticket while it plays", async () => {
+    expect(await renewAfter(["play"])).toBe(true);
   });
 
   it("stays paused, and leaves the track alone, when it left paused", async () => {

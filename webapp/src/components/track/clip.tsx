@@ -41,6 +41,8 @@ type ClipState =
 export type ClipSession = {
   /** Whether the track was playing when the clip opened; `null` until then. */
   wasPlaying: boolean | null;
+  /** Which track was current then; read with `wasPlaying`, and set with it. */
+  openedOn: string | null;
   /** Where the clip stood, in seconds; `null` before it played. */
   at: number | null;
   /** Whether the clip was playing when its element went away. */
@@ -56,6 +58,7 @@ export type ClipSession = {
 
 const freshSession = (): ClipSession => ({
   wasPlaying: null,
+  openedOn: null,
   at: null,
   playing: true,
 });
@@ -167,15 +170,25 @@ export function ClipPlayer({
   // Read once, when the clip opens: what to give back when it closes. A player
   // taking over from another reads what the first one read, not the paused
   // track the first one left behind.
-  const wasPlaying = useRef<boolean | null>(null);
-  if (wasPlaying.current === null) {
-    wasPlaying.current = session?.wasPlaying ?? player.playing;
-    if (session) session.wasPlaying = wasPlaying.current;
-  }
+  //
   // And which track that was. The clip's dialog is modal, but the media keys
   // and the system controls are not: a track changed while the clip played is
-  // the listener's choice, and closing the clip must not start it.
-  const openedOn = useRef(player.current?.id ?? null);
+  // the listener's choice, and closing the clip must not start it. Carried
+  // with the rest, so a player taking over reads the track the clip opened
+  // over, not the one current when the view changed.
+  const wasPlaying = useRef<boolean | null>(null);
+  const openedOn = useRef<string | null>(null);
+  if (wasPlaying.current === null) {
+    const carried = session?.wasPlaying != null ? session : null;
+    wasPlaying.current = carried ? carried.wasPlaying : player.playing;
+    openedOn.current = carried
+      ? carried.openedOn
+      : (player.current?.id ?? null);
+    if (session) {
+      session.wasPlaying = wasPlaying.current;
+      session.openedOn = openedOn.current;
+    }
+  }
   // Whether this element starts playing on its own: always for a new opening,
   // and for one carried over only if the clip was playing when it left.
   const startPlaying = useRef(session?.playing ?? true);
@@ -260,6 +273,10 @@ export function ClipPlayer({
    */
   function position(): number | null {
     if (restoreAt.current !== null) return restoreAt.current;
+    // The element is trusted once it has reported a place. Before that it
+    // reads 0 whether or not anything played, and a clip closed before it
+    // started would send the track back to its beginning.
+    if (lastAt.current === null) return null;
     return video.current ? video.current.currentTime : lastAt.current;
   }
 
@@ -343,6 +360,9 @@ export function ClipPlayer({
             if (session) session.at = lastAt.current;
           }}
           onPause={() => {
+            // Paused, it stays paused: a renewed ticket remounts the element,
+            // and starting it again would play a clip nobody asked for.
+            startPlaying.current = false;
             if (session) session.playing = false;
           }}
           // The other half of one sound at a time: the clip starting — on
