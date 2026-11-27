@@ -114,9 +114,15 @@ extension, `IngressPath`, and read only from there.
 
 ## Decision 3 — the build is relative, the shell is rewritten
 
-- **Vite builds with `base: "./"`.** The stylesheet then reaches its fonts as
-  `url(./x.woff2)`, relative to itself, and code-split chunks are found from
-  `import.meta.url`. Both work under any prefix with nothing to rewrite.
+- **The stylesheet and the chunks are built relative.** The stylesheet then
+  reaches its fonts as `url(./x.woff2)`, relative to itself, and code-split
+  chunks are found from `import.meta.url`. Both work under any prefix with
+  nothing to rewrite. *Amended in the implementation:* not with
+  `base: "./"`, which made the shell's own references relative too, so that
+  `vite preview` and the end-to-end suite, which serve the shell as built,
+  broke on every route deeper than one segment. Vite's `renderBuiltUrl`
+  makes only the stylesheet's and the chunks' references relative, and
+  leaves the shell's rooted, which the server anchors as below.
 - **The server rewrites the shell**, the one file whose relative references
   would resolve against the page's own address — wrong on any client route
   deeper than one segment, `/albums/<id>` included, ingress or not. Every

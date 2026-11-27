@@ -1,13 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
-import {
-  ApiError,
-  createShare,
-  deleteShare,
-  type Share,
-  underPrefix,
-} from "../../api";
+import { ApiError, createShare, deleteShare, type Share } from "../../api";
 import { sharesQuery } from "../../api/queries";
 import { MAX_SHARE_TRACKS } from "../../api/shares";
 import {
@@ -71,9 +65,8 @@ export function SharesPage() {
       reload();
     } catch (failure) {
       if (
-        underPrefix() &&
         failure instanceof ApiError &&
-        failure.status === 409
+        failure.code === "share_address_missing"
       ) {
         setNeedsAddress(true);
       } else {

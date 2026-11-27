@@ -36,6 +36,12 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * The `code` of the server's JSON error, when it sent one. A status can
+     * carry several codes that call for different answers — 409 does — so a
+     * caller that must tell them apart reads this rather than the status.
+     */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -361,7 +367,12 @@ export async function request(
     endSession(session !== null);
   }
   if (!response.ok) {
-    throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
+    const code = await errorCode(response);
+    throw new ApiError(
+      response.status,
+      `${init.method ?? "GET"} ${path}`,
+      typeof code === "string" ? code : undefined,
+    );
   }
   return response;
 }
