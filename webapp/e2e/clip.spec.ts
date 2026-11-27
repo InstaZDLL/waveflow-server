@@ -18,6 +18,8 @@ const withClip = {
 /**
  * The clip's ticket and its bytes. A WAV, which a `<video>` plays for real,
  * so the element has a position and a pause to report, as a clip would.
+ * Two minutes, longer than any test here runs: a clip that reached its end
+ * would close itself, and a test asserting it open would race the audit.
  */
 async function serveClips(page: Page) {
   await page.route("**/api/v2/tracks/*/clip-ticket", (route) => {
@@ -30,7 +32,7 @@ async function serveClips(page: Page) {
     });
   });
   await page.route("**/api/v2/clip-stream/*", (route) =>
-    route.fulfill({ contentType: "audio/wav", body: silentWav(4) }),
+    route.fulfill({ contentType: "audio/wav", body: silentWav(120) }),
   );
 }
 

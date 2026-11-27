@@ -28,6 +28,10 @@ export function ClipDialog({
   const { t } = useI18n();
   const frame = useRef<HTMLDialogElement | null>(null);
   const closer = useRef<(() => void) | null>(null);
+  // Whether the gesture began on the backdrop. A selection started in the
+  // title and released outside ends in a click on the dialog itself, which is
+  // not a click outside.
+  const pressedOutside = useRef(false);
 
   useLayoutEffect(() => {
     const dialog = frame.current;
@@ -38,9 +42,20 @@ export function ClipDialog({
     };
   }, []);
 
+  /**
+   * The dialog shut first, then the caller told. The caller gives focus back
+   * to the row the menu was opened from, and while the dialog is still modal
+   * that row is inert: the focus went nowhere, and the dialog's own close,
+   * on unmounting, handed it to the menu entry that no longer exists.
+   */
+  function done() {
+    if (frame.current?.open) frame.current.close();
+    onClose();
+  }
+
   function leave() {
     if (closer.current) closer.current();
-    else onClose();
+    else done();
   }
 
   return (
@@ -53,8 +68,13 @@ export function ClipDialog({
         event.preventDefault();
         leave();
       }}
+      onMouseDown={(event) => {
+        pressedOutside.current = event.target === frame.current;
+      }}
       onClick={(event) => {
-        if (event.target === frame.current) leave();
+        const outside = pressedOutside.current;
+        pressedOutside.current = false;
+        if (outside && event.target === frame.current) leave();
       }}
     >
       <header className="clip-dialog-header">
@@ -65,7 +85,7 @@ export function ClipDialog({
       </header>
       <ClipPlayer
         song={song}
-        onClose={onClose}
+        onClose={done}
         closer={closer}
         className="clip-dialog-stage"
       />

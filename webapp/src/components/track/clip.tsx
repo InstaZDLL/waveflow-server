@@ -137,6 +137,10 @@ export function ClipPlayer({
     wasPlaying.current = session?.wasPlaying ?? player.playing;
     if (session) session.wasPlaying = wasPlaying.current;
   }
+  // And which track that was. The clip's dialog is modal, but the media keys
+  // and the system controls are not: a track changed while the clip played is
+  // the listener's choice, and closing the clip must not start it.
+  const openedOn = useRef(player.current?.id ?? null);
   // Whether this element starts playing on its own: always for a new opening,
   // and for one carried over only if the clip was playing when it left.
   const startPlaying = useRef(session?.playing ?? true);
@@ -193,11 +197,18 @@ export function ClipPlayer({
     };
   }, [song.id]);
 
+  /**
+   * Where the clip stands. A place still waiting for the element's metadata
+   * comes first: until then the new element reads 0, and a clip closed or
+   * renewed just after a change of view would hand on its start.
+   */
+  function position(): number | null {
+    if (restoreAt.current !== null) return restoreAt.current;
+    return video.current ? video.current.currentTime : lastAt.current;
+  }
+
   function close() {
-    const at = resumeAt(
-      video.current ? video.current.currentTime : lastAt.current,
-      latest.current.duration,
-    );
+    const at = resumeAt(position(), latest.current.duration);
     const { player } = latest.current;
     if (at !== null && player.current?.id === song.id) player.seek(at);
     // Not over a station or an episode started while the clip was open, playing
@@ -205,7 +216,12 @@ export function ClipPlayer({
     // and closing a clip must not take away what the listener chose since. A
     // track that was playing when the clip opened had no aside beside it, so
     // one here was started meanwhile.
-    if (wasPlaying.current && !player.playing && !player.aside) {
+    if (
+      wasPlaying.current &&
+      !player.playing &&
+      !player.aside &&
+      player.current?.id === openedOn.current
+    ) {
       player.toggle();
     }
     latest.current.onClose();
@@ -217,7 +233,7 @@ export function ClipPlayer({
       return;
     }
     renewed.current = true;
-    restoreAt.current = video.current?.currentTime ?? lastAt.current;
+    restoreAt.current = position();
     clipUrl(song.id)
       .then((ticket) =>
         setState(

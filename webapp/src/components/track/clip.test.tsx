@@ -260,6 +260,21 @@ describe("ClipPlayer", () => {
     expect(player.seek).not.toHaveBeenCalled();
     expect(player.playing).toBe(true);
   });
+
+  it("does not start a track the listener changed to meanwhile", async () => {
+    // The dialog is modal, the media keys are not: the queue moved on, paused,
+    // while the clip played, and the track there now is not the one it paused.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const player = fakePlayer(true);
+    player.current = { id: "another" };
+    await openClip(player);
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+
+    player.current = { id: "next-in-queue" };
+    clickBack();
+    expect(player.toggle).toHaveBeenCalledTimes(1);
+    expect(player.playing).toBe(false);
+  });
 });
 
 /**
@@ -313,6 +328,44 @@ describe("ClipPlayer carried from one view to the next", () => {
     expect(player.seek).toHaveBeenCalledWith(75);
     expect(player.playing).toBe(true);
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("hands on the place it was carried to, before the element has it", async () => {
+    // Closed just after a change of view: the new element has no metadata yet
+    // and reads 0, while the clip stood at a minute.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const carried: ClipSession = { wasPlaying: true, at: 60, playing: true };
+    const player = fakePlayer(false);
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer song={song} onClose={vi.fn()} session={carried} />,
+      ),
+    );
+    expect(videoElement().currentTime).toBe(0);
+    clickBack();
+    expect(player.seek).toHaveBeenCalledWith(60);
+  });
+
+  it("keeps that place through a renewal that fails before the metadata", async () => {
+    clipUrl
+      .mockResolvedValueOnce({ url: "/api/v2/clip-stream/one", expiresAt: 1 })
+      .mockResolvedValueOnce({ url: "/api/v2/clip-stream/two", expiresAt: 2 });
+    const carried: ClipSession = { wasPlaying: false, at: 60, playing: true };
+    const player = fakePlayer(false);
+    await act(async () =>
+      renderUnder(
+        player,
+        <ClipPlayer song={song} onClose={vi.fn()} session={carried} />,
+      ),
+    );
+    await act(async () => {
+      videoElement().dispatchEvent(new Event("error"));
+    });
+    act(() => {
+      videoElement().dispatchEvent(new Event("loadedmetadata"));
+    });
+    expect(videoElement().currentTime).toBe(60);
   });
 
   it("stays paused, and leaves the track alone, when it left paused", async () => {
@@ -380,6 +433,51 @@ describe("ClipDialog", () => {
     });
     expect(cancel.defaultPrevented).toBe(true);
     expect(player.playing).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is shut before the caller gives focus back", async () => {
+    // The caller focuses the row behind, which is inert while the dialog is
+    // still modal: the dialog has to be closed by the time it is told.
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const openWhenTold: boolean[] = [];
+    const onClose = vi.fn(() => {
+      openWhenTold.push(Boolean(container.querySelector("dialog")?.open));
+    });
+    await act(async () =>
+      renderUnder(
+        fakePlayer(false),
+        <ClipDialog song={song} onClose={onClose} />,
+      ),
+    );
+    clickBack();
+    expect(openWhenTold).toEqual([false]);
+  });
+
+  it("takes a selection released on the backdrop for no click outside", async () => {
+    clipUrl.mockResolvedValue({ url: "/api/v2/clip-stream/one", expiresAt: 1 });
+    const onClose = vi.fn();
+    await act(async () =>
+      renderUnder(
+        fakePlayer(false),
+        <ClipDialog song={song} onClose={onClose} />,
+      ),
+    );
+    const dialog = container.querySelector("dialog") as HTMLDialogElement;
+    const title = container.querySelector("header strong") as HTMLElement;
+
+    // Pressed in the title, released outside: the click lands on the dialog.
+    act(() => {
+      title.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      dialog.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Pressed and released on the backdrop.
+    act(() => {
+      dialog.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      dialog.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
