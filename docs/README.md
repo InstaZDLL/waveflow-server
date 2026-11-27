@@ -56,6 +56,7 @@ The design decisions, one per document. A `Status` line never changes; the
 | [RFC-027](rfcs/RFC-027-transcoding-profiles.md) | Transcoding profiles: per account and Subsonic client name |
 | [RFC-028](rfcs/RFC-028-update-check.md) | Telling an administrator a new version is out: a manifest on R2, asked only once an administrator agrees |
 | [RFC-029](rfcs/RFC-029-track-music-video.md) | A track's music video: found beside it by the desktop's rule, recorded by the scan, served by ticket |
+| [RFC-030](rfcs/RFC-030-home-assistant-ingress.md) | The web client inside Home Assistant: a listener of its own for ingress, the prefix carried to the client, WaveFlow's own sign-in |
 
 ## Plans and analyses
 
