@@ -3,8 +3,10 @@
 import { expect, test } from "@playwright/test";
 
 import { resetAndMockApi } from "./fixtures/api";
+import { song } from "./fixtures/catalogue";
 import { PREFIX, serveUnderPrefix } from "./fixtures/ingress";
 import { silentWav } from "./fixtures/media";
+import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
 
@@ -34,6 +36,11 @@ test("the client plays and moves about under Home Assistant's prefix", async ({
   const audio = silentWav(60);
   await page.route("**/api/v2/stream/*", (route) =>
     route.fulfill({ body: audio, headers: { "content-type": "audio/wav" } }),
+  );
+  // The song list the rail leads to, as other specs give it: the shared mock
+  // answers none.
+  await page.route("**/api/v2/songs?*", (route) =>
+    route.fulfill({ json: [song(1, "Hidden Place", 0, false)] }),
   );
   const refused = await serveUnderPrefix(page);
 
@@ -95,6 +102,11 @@ test("a share inside Home Assistant needs the server's public address", async ({
  * starting a journey that cannot finish.
  */
 test("Last.fm is linked from the server's own address", async ({ page }) => {
+  // Usable, as `scrobbling.spec.ts` makes it: the shared mock declares
+  // Last.fm unavailable, which already shows no button anywhere.
+  mock.destinations = [
+    { provider: "lastfm" as const, destination: "default", available: true },
+  ];
   const refused = await serveUnderPrefix(page);
   await page.goto(`${PREFIX}/settings/scrobbling`);
   await expect(
