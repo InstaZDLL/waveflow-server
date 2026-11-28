@@ -242,3 +242,30 @@ async fn the_gate_bounds_the_queue() {
     }
     assert_eq!(guard.waiting(), 0);
 }
+
+#[test]
+fn an_ingress_client_is_the_address_core_wrote() {
+    let headers = |value: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", value.parse().unwrap());
+        headers
+    };
+    let address = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+    assert_eq!(
+        ingress_client(&headers("203.0.113.5, 172.30.32.1")),
+        address("203.0.113.5")
+    );
+    // What the browser wrote before it is not believed.
+    assert_eq!(
+        ingress_client(&headers("10.9.9.9, 203.0.113.5, 172.30.32.1")),
+        address("203.0.113.5")
+    );
+    assert_eq!(
+        ingress_client(&headers("::ffff:203.0.113.5, 172.30.32.1")),
+        address("203.0.113.5")
+    );
+    // Too short, or not an address: counted under the peer instead.
+    assert_eq!(ingress_client(&headers("172.30.32.1")), None);
+    assert_eq!(ingress_client(&headers("junk, 172.30.32.1")), None);
+    assert_eq!(ingress_client(&HeaderMap::new()), None);
+}

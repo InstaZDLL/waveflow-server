@@ -23,6 +23,7 @@ import { localDayKey } from "../lib/local-day";
 import { maintenanceSections } from "../pages/maintenance/maintenance-hub";
 import { useI18n } from "../state/i18n";
 import { useLibraryScope } from "../state/library-scope";
+import { isCurrentTab } from "./current-tab";
 import { MoreSheet } from "./more-sheet";
 import {
   GROUP_LABELS,
@@ -195,7 +196,7 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
     ) {
       return;
     }
-    if (window.location.pathname === to) {
+    if (isCurrentTab(to)) {
       // A second click on the current tab cancels a destination still loading.
       // With nothing loading it is an ordinary link: it takes the tab back to
       // its plain address, `/playing?view=lyrics` to `/playing`.

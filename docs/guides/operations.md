@@ -1096,9 +1096,10 @@ Three things are not available in the panel, and the page says so:
   link would open a page of Home Assistant's; with it set, shares work as
   anywhere else.
 
-Every client in the panel reaches the server from the Supervisor's address, so
-they share one sign-in budget per account (see *Sign-in attempts are limited
-per client*).
+Every client in the panel reaches the server from the Supervisor's address. A
+sign-in there is counted under the browser's address instead, which Home
+Assistant writes into `X-Forwarded-For`, so one user's wrong guesses do not
+hold back another's (see *Sign-in attempts are limited per client*).
 
 ## Offline listening in the web client
 

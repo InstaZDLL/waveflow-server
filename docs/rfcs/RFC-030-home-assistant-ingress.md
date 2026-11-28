@@ -68,7 +68,9 @@ in the Supervisor, and the
 - **The prefix is told.** Core adds `X-Ingress-Path:
   /api/hassio_ingress/<token>` (and the same value as `X-Forwarded-Prefix`),
   `X-Forwarded-Host` and `X-Forwarded-Proto` from the browser's request, and
-  `X-Hass-Source: core.ingress`.
+  `X-Hass-Source: core.ingress`. It appends the address it received the
+  browser's connection from to `X-Forwarded-For`, and the Supervisor appends
+  Core's own after it.
 - **The rest is passed through.** `Host`, `Origin`, `Cookie`, `Range` and
   `Authorization` are copied as the browser sent them; only the length,
   encoding and websocket negotiation headers are dropped. So `Host` and
@@ -105,6 +107,13 @@ The app sets `WAVEFLOW_INGRESS_BIND=0.0.0.0:8099` through its `environment`,
 and `ingress_port: 8099` in its `config.yaml`. 8099 is the port the guide
 expects, so the app keeps 4533 published for the Subsonic apps and the
 browser tab, unchanged.
+
+*Amended in the implementation:* the sign-in limiter (RFC-017) counts a
+request on this listener under the entry before the last in
+`X-Forwarded-For` — the address Core wrote, the last being Core's own,
+written by the Supervisor — and not under the peer, which is the Supervisor
+for every panel user: one bucket would let any of them hold back all the
+others. Entries before it are the browser's, and are not believed.
 
 ## Decision 2 — the prefix comes from the header, checked
 

@@ -192,10 +192,44 @@ pub fn request_bucket(
     headers: &HeaderMap,
     trusted: &[IpNet],
 ) -> String {
+    // Through Home Assistant's ingress every request comes from the
+    // Supervisor, so its peer would put every panel sign-in in one bucket,
+    // which one user could fill for all of them (RFC-030).
+    if extensions
+        .get::<crate::http::ingress::IngressPath>()
+        .is_some()
+    {
+        if let Some(client) = ingress_client(headers) {
+            return address_bucket(Some(client));
+        }
+    }
     let peer = extensions
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|info| info.0.ip());
     address_bucket(client_address(peer, headers, trusted))
+}
+
+/// The client of a request Home Assistant's ingress handed on (RFC-030).
+///
+/// Core appends the address it received the browser's connection from to
+/// `X-Forwarded-For`, and the Supervisor, which is the only peer the ingress
+/// listener admits, appends Core's own. So the entry before the last is the
+/// one Home Assistant vouches for; whatever comes before it, the browser wrote
+/// and may have made up. `None` when the chain is too short or that entry is
+/// not an address: the request is then counted under its peer, as before.
+pub fn ingress_client(headers: &HeaderMap) -> Option<IpAddr> {
+    let entries: Vec<&[u8]> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
+        .collect();
+    let entry = entries.iter().rev().nth(1)?;
+    std::str::from_utf8(entry)
+        .ok()?
+        .trim()
+        .parse::<IpAddr>()
+        .ok()
+        .map(unmapped)
 }
 
 /// The limiter, the gate and the tally. One per process, shared by the three
