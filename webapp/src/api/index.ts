@@ -36,6 +36,7 @@ export {
   listCreditDecisions,
   removeCreditDecision,
 } from "./attention";
+export { serverBase, serverUrl, underPrefix } from "./base";
 export type { CanvasBlob } from "./canvas";
 export { canvasUrl, placeCanvas, removeCanvas } from "./canvas";
 export type {

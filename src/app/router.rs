@@ -16,6 +16,16 @@ use crate::{api, http::public_share, http::reference, http::webui, media, subson
 
 const REQUEST_ID_HEADER: &str = "x-request-id";
 
+/// The router Home Assistant's ingress listener serves (RFC-030): the same
+/// routes as [`app`], behind the layer that checks the prefix the request came
+/// under and carries it on. Only that listener is given it, so the prefix is
+/// never read from a request the main listener received.
+pub fn ingress_app(app: Router) -> Router {
+    app.layer(axum::middleware::from_fn(
+        crate::http::ingress::require_prefix,
+    ))
+}
+
 pub fn app(config: &Config, state: AppState) -> Router {
     let openapi = ApiDoc::openapi();
     let openapi_for_route = openapi.clone();

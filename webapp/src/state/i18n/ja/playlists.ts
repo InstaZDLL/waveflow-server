@@ -68,6 +68,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "このリンクが表示されるのは1回だけです：",
   "shares.defaultName": "音楽の共有",
   "shares.empty": "公開リンクはまだ作成されていません。",
+  "shares.needsAddress":
+    "共有リンクにはサーバーの外部アドレスが必要ですが、このサーバーには設定されていません。Home Assistant の外から到達できるアドレスを WAVEFLOW_PUBLIC_URL に設定してから、ここで共有を作成してください。",
   "shares.createError": "共有リンクを作成できませんでした。",
   "shares.tooLong":
     "共有リンクに入れられるのは{limit}曲までですが、再生キューには{count}曲あります。共有するには再生キューを短くしてください。",

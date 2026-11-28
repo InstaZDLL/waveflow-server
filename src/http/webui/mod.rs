@@ -18,6 +18,9 @@ use rust_embed::Embed;
 use std::sync::OnceLock;
 
 use crate::api::ErrorResponse;
+use crate::http::ingress::Ingress;
+
+mod shell;
 
 #[derive(Embed)]
 // Staged by build.rs: the real client build when present, a placeholder
@@ -71,9 +74,9 @@ const ASSET_ONLY_EXACT: [&str; 5] = [
 ];
 const ASSET_ONLY_PREFIXES: [&str; 2] = ["icons/", "brand/"];
 
-pub async fn handler(uri: Uri) -> Response {
-    let mut response = respond(uri.path().trim_start_matches('/'));
-    crate::http::security_headers::apply_web_client(response.headers_mut(), policy());
+pub async fn handler(ingress: Ingress, uri: Uri) -> Response {
+    let (mut response, policy) = respond(uri.path().trim_start_matches('/'), ingress.root());
+    crate::http::security_headers::apply_web_client(response.headers_mut(), &policy);
     response
 }
 
@@ -92,30 +95,60 @@ fn policy() -> &'static HeaderValue {
     })
 }
 
-fn respond(path: &str) -> Response {
+/// A response, and the policy it is served under: the shell's own for the
+/// shell, which differs by root, the embedded shell's for everything else.
+fn respond(path: &str, root: &str) -> (Response, HeaderValue) {
     let reserved = RESERVED_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix))
         || RESERVED_EXACT.contains(&path);
     if reserved {
-        return not_found();
+        return (not_found(), policy().clone());
     }
-    if let Some(response) = asset(path) {
-        return response;
+    // The shell under its own name is still the shell: served as built, its
+    // relative references would resolve wherever the page happens to be.
+    if path != INDEX {
+        if let Some(response) = asset(path) {
+            return (response, policy().clone());
+        }
     }
     let asset_only = ASSET_ONLY_EXACT.contains(&path)
         || ASSET_ONLY_PREFIXES
             .iter()
             .any(|prefix| path.starts_with(prefix));
     if asset_only {
-        return not_found();
+        return (not_found(), policy().clone());
     }
-    shell()
+    match Assets::get(INDEX) {
+        Some(_) => {
+            let shell = shell::shell_for(&embedded_shell(), root);
+            (html(&shell.html), shell.policy.clone())
+        }
+        None => (missing_client(), policy().clone()),
+    }
 }
 
-/// The client's shell, for a route the client renders.
+/// The client's shell for the main listener, which the share page serves too.
 fn shell() -> Response {
-    asset(INDEX).unwrap_or_else(missing_client)
+    match Assets::get(INDEX) {
+        Some(_) => html(&shell::shell_for(&embedded_shell(), "").html),
+        None => missing_client(),
+    }
+}
+
+fn html(body: &str) -> Response {
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        Body::from(body.to_owned()),
+    )
+        .into_response()
 }
 
 /// The shell as `/share/{token}` hands it to a browser (RFC-020 decision 3).
@@ -130,7 +163,7 @@ pub fn share_page() -> Response {
     static POLICY: OnceLock<HeaderValue> = OnceLock::new();
     let policy = POLICY.get_or_init(|| {
         HeaderValue::from_str(&crate::http::security_headers::share_page_policy(
-            &embedded_shell(),
+            &shell::shell_for(&embedded_shell(), "").html,
         ))
         .unwrap_or(HeaderValue::from_static("default-src 'none'"))
     });
@@ -197,3 +230,6 @@ fn missing_client() -> Response {
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod tests;

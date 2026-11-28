@@ -266,6 +266,8 @@ impl Config {
             }
         };
 
+        let ingress = super::ingress::parse_ingress_settings()?;
+
         let setup_token = parse_setup_token(read_trimmed_env("WAVEFLOW_SETUP_TOKEN"))?;
         let music_dir = read_trimmed_env("WAVEFLOW_MUSIC_DIR").map(PathBuf::from);
         // Zero is a setting, not a mistake: an operator with backups of their
@@ -364,6 +366,7 @@ impl Config {
             update_check,
             allowed_origins,
             trusted_proxies,
+            ingress,
             setup_token,
             music_dir,
             migration_backups,

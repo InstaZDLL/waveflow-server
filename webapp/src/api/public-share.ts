@@ -1,3 +1,4 @@
+import { publicCredentials, serverUrl } from "./base";
 import type { Song } from "./catalog";
 import { ApiError } from "./client";
 
@@ -36,14 +37,28 @@ export type PublicShare = {
 export async function openPublicShare(
   token: string,
 ): Promise<PublicShare | null> {
-  const response = await fetch(`/share/${encodeURIComponent(token)}`, {
-    headers: { accept: "application/json" },
-    credentials: "omit",
-    cache: "no-store",
-    referrerPolicy: "no-referrer",
-  });
+  const response = await fetch(
+    serverUrl(`/share/${encodeURIComponent(token)}`),
+    {
+      headers: { accept: "application/json" },
+      credentials: publicCredentials(),
+      cache: "no-store",
+      referrerPolicy: "no-referrer",
+    },
+  );
   if (response.status === 404) return null;
   // The token is the credential, so it stays out of the message.
   if (!response.ok) throw new ApiError(response.status, "GET /share/{token}");
-  return (await response.json()) as PublicShare;
+  const share = (await response.json()) as PublicShare;
+  // With no public URL the server names a track's stream and cover as root
+  // paths, which under Home Assistant's prefix (RFC-030) are asked for there;
+  // a full address, with one, goes through unchanged.
+  return {
+    ...share,
+    tracks: share.tracks.map((track) => ({
+      ...track,
+      streamUrl: serverUrl(track.streamUrl),
+      ...(track.coverUrl ? { coverUrl: serverUrl(track.coverUrl) } : {}),
+    })),
+  };
 }

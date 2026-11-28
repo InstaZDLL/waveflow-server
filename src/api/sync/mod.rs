@@ -76,6 +76,7 @@ pub async fn sync_changes(
 )]
 pub async fn sync_snapshot(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
 ) -> Result<Json<SyncSnapshot>, ApiError> {
     let user = authenticated(&state, &headers, Access::Read).await?;
@@ -96,7 +97,7 @@ pub async fn sync_snapshot(
     let shares = snapshot
         .shares
         .into_iter()
-        .map(|share| share_response(&state, share))
+        .map(|share| share_response(&state, &ingress, share))
         .collect();
     Ok(Json(SyncSnapshot {
         cursor: snapshot.cursor,

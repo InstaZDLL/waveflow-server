@@ -40,6 +40,10 @@ pub enum ApiError {
     /// is wrong rather than the password: the usual cause is a public URL set
     /// while the server is opened at another address.
     OriginRejected,
+    /// A share asked for inside Home Assistant (RFC-030 decision 8) on a
+    /// server with no `WAVEFLOW_PUBLIC_URL`: its link would have no address
+    /// anyone outside the panel could open, so none is made.
+    ShareAddressMissing,
     Unavailable,
     NotFound,
 }
@@ -69,6 +73,11 @@ impl IntoResponse for ApiError {
                 StatusCode::FORBIDDEN,
                 "setup_token_rejected",
                 "The setup token is missing or wrong",
+            ),
+            Self::ShareAddressMissing => (
+                StatusCode::CONFLICT,
+                "share_address_missing",
+                "A share link needs the server's external address, WAVEFLOW_PUBLIC_URL",
             ),
             Self::OriginRejected => (
                 StatusCode::FORBIDDEN,

@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import type { StreamUrl } from "./stream";
 
 /**
@@ -35,6 +36,12 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /**
+     * The `code` of the server's JSON error, when it sent one. A status can
+     * carry several codes that call for different answers — 409 does — so a
+     * caller that must tell them apart reads this rather than the status.
+     */
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -250,7 +257,7 @@ async function performRefresh(): Promise<boolean> {
     return false;
   }
   try {
-    const response = await fetch("/api/v2/web/auth/refresh", {
+    const response = await fetch(serverUrl("/api/v2/web/auth/refresh"), {
       method: "POST",
       headers: { "x-waveflow-csrf": csrf },
     });
@@ -294,8 +301,10 @@ export function endSession(hadSession: boolean): void {
   // except when it does not fire, because the visitor is already on the
   // sign-in screen.
   clearSessionState();
-  if (hadSession && window.location.pathname !== "/login") {
-    window.location.assign("/login");
+  // Under Home Assistant's prefix (RFC-030) the sign-in screen is there too.
+  const signIn = serverUrl("/login");
+  if (hadSession && window.location.pathname !== signIn) {
+    window.location.assign(signIn);
   }
 }
 
@@ -341,7 +350,7 @@ export async function request(
   // ending a session on a refusal addressed to the account before it would put
   // whoever just arrived back on the sign-in screen.
   const generation = sessionGeneration;
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(serverUrl(path), { ...init, headers });
   if (response.status === 401 && retry && (await renewFor(generation))) {
     return request(path, init, false, true);
   }
@@ -358,13 +367,18 @@ export async function request(
     endSession(session !== null);
   }
   if (!response.ok) {
-    throw new ApiError(response.status, `${init.method ?? "GET"} ${path}`);
+    const code = await errorCode(response);
+    throw new ApiError(
+      response.status,
+      `${init.method ?? "GET"} ${path}`,
+      typeof code === "string" ? code : undefined,
+    );
   }
   return response;
 }
 
 export async function login(username: string, password: string): Promise<void> {
-  const response = await fetch("/api/v2/web/auth/login", {
+  const response = await fetch(serverUrl("/api/v2/web/auth/login"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -420,7 +434,7 @@ export async function bootstrapAdmin(
   password: string,
   setupToken: string,
 ): Promise<void> {
-  const response = await fetch("/api/v2/setup", {
+  const response = await fetch(serverUrl("/api/v2/setup"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

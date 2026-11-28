@@ -66,6 +66,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "이 링크는 한 번만 표시돼요:",
   "shares.defaultName": "음악 공유",
   "shares.empty": "만든 공개 링크가 없어요.",
+  "shares.needsAddress":
+    "공유 링크에는 서버의 외부 주소가 필요하지만 이 서버에는 없습니다. Home Assistant 밖에서 접속하는 주소를 WAVEFLOW_PUBLIC_URL에 설정한 뒤 여기에서 공유를 만드세요.",
   "shares.createError": "공유 링크를 만들 수 없어요.",
   "shares.tooLong":
     "공유에는 최대 {limit}곡을 담을 수 있는데 재생 대기열에는 {count}곡이 있어요. 공유하려면 재생 대기열을 줄이세요.",

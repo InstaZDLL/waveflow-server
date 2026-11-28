@@ -6,6 +6,16 @@ import { defineConfig } from "vite";
 // and serves index.html no-cache.
 export default defineConfig({
   plugins: [react()],
+  // Under Home Assistant's ingress the client is served below a prefix
+  // (RFC-030), so the stylesheet must reach its fonts, and a chunk its
+  // neighbours, relative to themselves. The shell keeps rooted references,
+  // which the server anchors to the request's root as it serves it, and which
+  // `vite preview` and the end-to-end suite serve as they are.
+  experimental: {
+    renderBuiltUrl(filename, { hostType }) {
+      return hostType === "html" ? `/${filename}` : { relative: true };
+    },
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,

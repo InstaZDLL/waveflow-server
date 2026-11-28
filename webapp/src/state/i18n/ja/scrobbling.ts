@@ -35,6 +35,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlink": "連携解除",
   "scrobbling.unlinkError": "連携を解除できませんでした。",
   "scrobbling.connect": "Last.fm に接続",
+  "scrobbling.connectElsewhere":
+    "Last.fm はサーバー自身のアドレスに戻るため、Home Assistant ではなくそちらから接続してください。",
   "scrobbling.connectDetail":
     "Last.fm では貼り付けられるキーが発行されないため、Last.fm のサイトで確認してからここに戻ります。",
   "scrobbling.connectError": "Last.fm との連携を開始できませんでした。",

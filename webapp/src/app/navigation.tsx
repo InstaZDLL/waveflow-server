@@ -3,7 +3,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { type MouseEvent, useRef, useState } from "react";
 
-import { currentUser, logout } from "../api";
+import { currentUser, logout, serverUrl } from "../api";
 import {
   albumsQuery,
   artistsQuery,
@@ -23,6 +23,7 @@ import { localDayKey } from "../lib/local-day";
 import { maintenanceSections } from "../pages/maintenance/maintenance-hub";
 import { useI18n } from "../state/i18n";
 import { useLibraryScope } from "../state/library-scope";
+import { isCurrentTab } from "./current-tab";
 import { MoreSheet } from "./more-sheet";
 import {
   GROUP_LABELS,
@@ -128,7 +129,7 @@ export function Brand() {
     <Link className="brand" to="/" aria-label={t("nav.home")}>
       <img
         className="brand-logo brand-logo-light"
-        src="/brand/waveflow-logo-horizontal-color.svg"
+        src={serverUrl("/brand/waveflow-logo-horizontal-color.svg")}
         alt=""
         aria-hidden="true"
         width={131}
@@ -136,7 +137,7 @@ export function Brand() {
       />
       <img
         className="brand-logo brand-logo-dark"
-        src="/brand/waveflow-logo-horizontal-dark.svg"
+        src={serverUrl("/brand/waveflow-logo-horizontal-dark.svg")}
         alt=""
         aria-hidden="true"
         width={131}
@@ -195,7 +196,7 @@ export function Navigation({ mobile = false }: { mobile?: boolean }) {
     ) {
       return;
     }
-    if (window.location.pathname === to) {
+    if (isCurrentTab(to)) {
       // A second click on the current tab cancels a destination still loading.
       // With nothing loading it is an ordinary link: it takes the tab back to
       // its plain address, `/playing?view=lyrics` to `/playing`.

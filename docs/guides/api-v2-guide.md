@@ -1705,18 +1705,20 @@ Native JSON errors use:
 
 | HTTP | Code | Client action |
 |---:|---|---|
+| 400 | `ingress_path_invalid` | Only on Home Assistant's ingress listener (RFC-030): the request did not name its prefix in `X-Ingress-Path`. Home Assistant always does; nothing else should reach that listener. |
 | 401 | `unauthorized` | Authenticate again; never infer whether an account exists. |
 | 403 | `forbidden` | Stop or request the required role/origin. |
 | 403 | `origin_rejected` | The browser is not on the server's address: open it at `WAVEFLOW_PUBLIC_URL`, or correct that setting. |
 | 404 | `not_found` | Treat the resource as missing or inaccessible. |
 | 409 | `conflict` | The operation ID was reused for another intent; reconcile and use a new ID only for a genuinely new operation. |
 | 409 | `cursor_expired` | Discard the sync projection and take a fresh snapshot. |
+| 409 | `share_address_missing` | Only inside Home Assistant, on a server with no `WAVEFLOW_PUBLIC_URL` (RFC-030): no share was made, since its link would have no address anyone outside the panel could open. Set the public URL, or create the share from the server's own address. |
 | 422 | `validation_error` | Correct the request; retrying it unchanged cannot succeed. |
 | 429 | media response | Back off and honour `Retry-After`; a transcode concurrency limit was reached. |
 | 503 | `service_unavailable` | Retry with bounded exponential backoff. |
 
-Never branch on status `409` alone: its two codes require opposite recovery
-paths.
+Never branch on status `409` alone: its codes require different recovery
+paths, and `conflict` and `cursor_expired` opposite ones.
 
 ## Endpoint inventory
 

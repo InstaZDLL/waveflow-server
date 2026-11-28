@@ -114,11 +114,12 @@ pub async fn logout(
 )]
 pub async fn web_login(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
     client: SignInAddress,
     Json(request): Json<LoginRequest>,
 ) -> Result<Response, ApiError> {
-    validate_web_origin(&state, &headers)?;
+    validate_web_origin(&state, &ingress, &headers)?;
     let tokens = state
         .auth
         .login(
@@ -129,7 +130,7 @@ pub async fn web_login(
         )
         .await
         .map_err(ApiError::from)?;
-    web_auth_response(&state, &headers, tokens)
+    web_auth_response(&state, &CookieScope::of(&state, &ingress, &headers), tokens)
 }
 
 #[utoipa::path(
@@ -145,16 +146,17 @@ pub async fn web_login(
 )]
 pub async fn web_refresh(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    validate_web_request(&state, &headers)?;
+    validate_web_request(&state, &ingress, &headers)?;
     let refresh_token = cookie_value(&headers, WEB_REFRESH_COOKIE).ok_or(ApiError::Unauthorized)?;
     let tokens = state
         .auth
         .refresh(refresh_token)
         .await
         .map_err(ApiError::from)?;
-    web_auth_response(&state, &headers, tokens)
+    web_auth_response(&state, &CookieScope::of(&state, &ingress, &headers), tokens)
 }
 
 #[utoipa::path(
@@ -170,9 +172,10 @@ pub async fn web_refresh(
 )]
 pub async fn web_logout(
     State(state): State<AppState>,
+    ingress: crate::http::ingress::Ingress,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    validate_web_request(&state, &headers)?;
+    validate_web_request(&state, &ingress, &headers)?;
     let result = match cookie_value(&headers, WEB_REFRESH_COOKIE) {
         Some(refresh_token) => state.auth.revoke_refresh(refresh_token).await,
         None => Err(AuthError::InvalidRefreshToken),
@@ -181,14 +184,14 @@ pub async fn web_logout(
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => ApiError::from(error).into_response(),
     };
-    let secure = secure_cookies(&state);
+    let scope = CookieScope::of(&state, &ingress, &headers);
     append_cookie(
         &mut response,
-        expired_cookie(WEB_REFRESH_COOKIE, true, secure),
+        expired_cookie(WEB_REFRESH_COOKIE, true, &scope),
     )?;
     append_cookie(
         &mut response,
-        expired_cookie(WEB_CSRF_COOKIE, false, secure),
+        expired_cookie(WEB_CSRF_COOKIE, false, &scope),
     )?;
     Ok(response)
 }

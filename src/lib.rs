@@ -22,6 +22,7 @@ pub mod storage;
 pub mod subsonic;
 
 pub use app::{
-    app, initialize, laptop, shutdown_signal, ApiDoc, AppState, OPENAPI_JSON_PATH, SCALAR_PATH,
+    app, ingress_app, initialize, laptop, shutdown_signal, ApiDoc, AppState, OPENAPI_JSON_PATH,
+    SCALAR_PATH,
 };
 pub use config::Config;

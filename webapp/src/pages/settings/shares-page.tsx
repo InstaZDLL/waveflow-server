@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
-import { createShare, deleteShare, type Share } from "../../api";
+import { ApiError, createShare, deleteShare, type Share } from "../../api";
 import { sharesQuery } from "../../api/queries";
 import { MAX_SHARE_TRACKS } from "../../api/shares";
 import {
@@ -23,6 +23,11 @@ export function SharesPage() {
   const [createdShare, setCreatedShare] = useState<Share | null>(null);
   const reload = useReload(sharesQuery().queryKey);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  // Inside Home Assistant with no public address (RFC-030 decision 8), the
+  // server refuses to make a link nobody outside the panel could open; the
+  // form then gives way to why. Not rendered rather than `hidden`: the form's
+  // own `display` outranks the attribute, and it stayed on screen.
+  const [needsAddress, setNeedsAddress] = useState(false);
   const { data: value, error } = useQuery(sharesQuery());
   const createdShareNotice = createdShare?.url ? (
     <p>
@@ -59,8 +64,15 @@ export function SharesPage() {
       setDescription("");
       setMaxVisits("");
       reload();
-    } catch {
-      setMutationError(t("shares.createError"));
+    } catch (failure) {
+      if (
+        failure instanceof ApiError &&
+        failure.code === "share_address_missing"
+      ) {
+        setNeedsAddress(true);
+      } else {
+        setMutationError(t("shares.createError"));
+      }
     }
   }
 
@@ -82,32 +94,39 @@ export function SharesPage() {
         title={t("nav.shares")}
         detail={t("shares.detail")}
       />
-      <form
-        className="inline-form"
-        onSubmit={(event) => void shareQueue(event)}
-      >
-        <input
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          placeholder={t("shares.description")}
-          aria-label={t("shares.description")}
-          required
-        />
-        <input
-          type="number"
-          inputMode="numeric"
-          min={1}
-          step={1}
-          value={maxVisits}
-          onChange={(event) => setMaxVisits(event.target.value)}
-          placeholder={t("shares.maxVisits")}
-          aria-label={t("shares.maxVisits")}
-        />
-        <button type="submit" disabled={!player.queue.length || tooLong}>
-          {t("shares.create")}
-        </button>
-      </form>
-      {!player.queue.length ? (
+      {needsAddress ? (
+        <p className="muted" role="status">
+          {t("shares.needsAddress")}
+        </p>
+      ) : null}
+      {needsAddress ? null : (
+        <form
+          className="inline-form"
+          onSubmit={(event) => void shareQueue(event)}
+        >
+          <input
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder={t("shares.description")}
+            aria-label={t("shares.description")}
+            required
+          />
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            value={maxVisits}
+            onChange={(event) => setMaxVisits(event.target.value)}
+            placeholder={t("shares.maxVisits")}
+            aria-label={t("shares.maxVisits")}
+          />
+          <button type="submit" disabled={!player.queue.length || tooLong}>
+            {t("shares.create")}
+          </button>
+        </form>
+      )}
+      {!player.queue.length && !needsAddress ? (
         <p className="muted">{t("shares.needQueue")}</p>
       ) : null}
       {tooLong ? (

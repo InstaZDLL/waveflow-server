@@ -7,6 +7,7 @@ mod access;
 mod env;
 mod for_data_dir;
 mod from_env;
+mod ingress;
 mod laptop;
 mod limits;
 mod metadata;
@@ -17,6 +18,7 @@ mod tools;
 mod update_check;
 
 pub use access::SETUP_TOKEN_MIN_CHARS;
+pub use ingress::{IngressSettings, DEFAULT_INGRESS_PEER};
 pub use laptop::{load_laptop_env, LAPTOP_ENV_FILE};
 pub use limits::{CanvasLimits, LibraryEventRetention, UploadLimits};
 pub use metadata::{LyricsSettings, MetadataSettings};
@@ -293,6 +295,9 @@ pub struct Config {
     /// connection from may be listed: one that forwards a client's header
     /// unchanged lets the client choose its address.
     pub trusted_proxies: Vec<ipnet::IpNet>,
+    /// The web client inside Home Assistant — RFC-030. See
+    /// [`IngressSettings`].
+    pub ingress: IngressSettings,
     /// `WAVEFLOW_SETUP_TOKEN`: the one-time token `POST /api/v2/setup` asks
     /// for while no account exists (RFC-019 decision 1). Unset by default,
     /// and then the server draws one at boot and writes it to
@@ -376,6 +381,7 @@ impl std::fmt::Debug for Config {
             .field("update_check", &self.update_check)
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
+            .field("ingress", &self.ingress)
             // Whether it is set, never what it is.
             .field(
                 "setup_token",

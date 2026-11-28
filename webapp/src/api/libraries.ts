@@ -1,3 +1,4 @@
+import { serverUrl } from "./base";
 import { call, renewFor, session, sessionGeneration } from "./client";
 
 export type Library = {
@@ -245,7 +246,7 @@ export function watchScan(
         if (session) {
           headers.set("authorization", `Bearer ${session.access_token}`);
         }
-        return fetch(`/api/v2/scans/${scanId}/events`, {
+        return fetch(serverUrl(`/api/v2/scans/${scanId}/events`), {
           headers,
           signal: controller.signal,
         });

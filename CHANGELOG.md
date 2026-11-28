@@ -13,7 +13,9 @@ out first, whether or not it breaks a compile.
 **Two responses grow one field.** `POST /api/v2/setup` answers `library`, the
 first library it made (`{ "library_id", "scan_id" }`) or `null`, and
 `GET /api/v2/libraries/{id}/settings` answers `accepts_uploads`, which
-`PATCH /api/v2/libraries/{id}` now takes.
+`PATCH /api/v2/libraries/{id}` now takes. `POST /api/v2/shares` gains a
+refusal that only a request through Home Assistant's ingress can meet,
+`409 share_address_missing`.
 
 ### Added
 
@@ -44,6 +46,14 @@ first library it made (`{ "library_id", "scan_id" }`) or `null`, and
   are played, queued, moved to a folder in one write, or added to a
   playlist, new or existing; dragging a picked row takes the others with
   it. Filing a folder full of tracks took one menu per track.
+- **The web client inside Home Assistant** (RFC-030). The Home Assistant app
+  can show the player in Home Assistant's sidebar, through its ingress:
+  `WAVEFLOW_INGRESS_BIND` opens a second listener that only the Supervisor
+  may reach (`WAVEFLOW_INGRESS_PEERS`), and the client, its cookies and the
+  origin check follow the prefix Home Assistant serves it under. Port 4533
+  never reads that prefix. Sign-in is WaveFlow's own; offline listening,
+  linking Last.fm and, with no `WAVEFLOW_PUBLIC_URL`, making a share are not
+  offered in the panel, which says why.
 - **A clip plays in the immersive view and from a track's menu** (RFC-029).
   The immersive view shows the clip in the cover's place, larger, and a clip
   opened in the detail view carries on there where it stood. **Watch the

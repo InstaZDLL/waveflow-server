@@ -35,6 +35,8 @@ export const scrobbling: Record<keyof typeof en, TranslationValue> = {
   "scrobbling.unlink": "Scollega",
   "scrobbling.unlinkError": "Non è stato possibile rimuovere il collegamento.",
   "scrobbling.connect": "Connetti a Last.fm",
+  "scrobbling.connectElsewhere":
+    "Last.fm ti riporta all’indirizzo proprio del server: collegalo da lì anziché da Home Assistant.",
   "scrobbling.connectDetail":
     "Last.fm non fornisce una chiave da incollare. Autorizza l’accesso sul suo sito, poi tornerai qui.",
   "scrobbling.connectError":

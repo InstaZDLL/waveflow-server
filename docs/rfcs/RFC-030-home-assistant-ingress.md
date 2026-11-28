@@ -1,8 +1,11 @@
 # RFC-030 — The web client inside Home Assistant (ingress)
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in
-  this project; this line is the one that says what is running.
+- **Implemented by**: [#473](https://github.com/InstaZDLL/waveflow-server/pull/473)
+  (the server and the web client, decisions 1 to 9). Decision 10, the app's
+  `config.yaml`, is the Home Assistant repository's, at the first release
+  that carries #473. The *Status* field above never flips in this project;
+  this line is the one that says what is running.
 - **Date**: 2026-11-27
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the web session,
@@ -65,7 +68,10 @@ in the Supervisor, and the
 - **The prefix is told.** Core adds `X-Ingress-Path:
   /api/hassio_ingress/<token>` (and the same value as `X-Forwarded-Prefix`),
   `X-Forwarded-Host` and `X-Forwarded-Proto` from the browser's request, and
-  `X-Hass-Source: core.ingress`.
+  `X-Hass-Source: core.ingress`. It appends the address it received the
+  browser's connection from to `X-Forwarded-For`, and the Supervisor appends
+  Core's own after it — when Core reaches it over TCP; over a Unix socket it
+  has no address to append, and appends nothing.
 - **The rest is passed through.** `Host`, `Origin`, `Cookie`, `Range` and
   `Authorization` are copied as the browser sent them; only the length,
   encoding and websocket negotiation headers are dropped. So `Host` and
@@ -103,6 +109,19 @@ and `ingress_port: 8099` in its `config.yaml`. 8099 is the port the guide
 expects, so the app keeps 4533 published for the Subsonic apps and the
 browser tab, unchanged.
 
+*Amended in the implementation:* the sign-in limiter (RFC-017) counts a
+request on this listener under the address Core wrote into
+`X-Forwarded-For`, and not under the peer, which is the Supervisor for every
+panel user: one bucket would let any of them hold back all the others. That
+entry is the last one, or the one before it when the last is Core's own
+address, `172.30.32.1`, which the Supervisor appends when Core reaches it
+over TCP and not over a Unix socket. A fixed position would have trusted an
+entry of the browser's whenever the Supervisor appends nothing. Entries
+before Core's are the browser's, and are not believed — unless Core's entry
+is a reverse proxy in front of Home Assistant named in
+`WAVEFLOW_TRUSTED_PROXIES`, which the walk then goes past to the client it
+forwarded, as on the main listener.
+
 ## Decision 2 — the prefix comes from the header, checked
 
 On the ingress listener, `X-Ingress-Path` must match
@@ -114,9 +133,15 @@ extension, `IngressPath`, and read only from there.
 
 ## Decision 3 — the build is relative, the shell is rewritten
 
-- **Vite builds with `base: "./"`.** The stylesheet then reaches its fonts as
-  `url(./x.woff2)`, relative to itself, and code-split chunks are found from
-  `import.meta.url`. Both work under any prefix with nothing to rewrite.
+- **The stylesheet and the chunks are built relative.** The stylesheet then
+  reaches its fonts as `url(./x.woff2)`, relative to itself, and code-split
+  chunks are found from `import.meta.url`. Both work under any prefix with
+  nothing to rewrite. *Amended in the implementation:* not with
+  `base: "./"`, which made the shell's own references relative too, so that
+  `vite preview` and the end-to-end suite, which serve the shell as built,
+  broke on every route deeper than one segment. Vite's `renderBuiltUrl`
+  makes only the stylesheet's and the chunks' references relative, and
+  leaves the shell's rooted, which the server anchors as below.
 - **The server rewrites the shell**, the one file whose relative references
   would resolve against the page's own address — wrong on any client route
   deeper than one segment, `/albums/<id>` included, ingress or not. Every
@@ -177,6 +202,12 @@ unchanged. A cookie scoped to `/` under ingress would be sent with every
 request to Home Assistant itself, and the refresh cookie, scoped as it is
 today, would never be sent back at all.
 
+*Amended in the implementation:* the cookies are `Secure` as the browser
+reached Home Assistant, which Core names in `X-Forwarded-Proto`, and not as
+`WAVEFLOW_PUBLIC_URL` says, which is another address. Behind two proxies
+Core passes the value on as it got it, `https,http`, so its first entry is
+the one read.
+
 ## Decision 6 — the origin check reads Home Assistant's address
 
 `validate_web_origin` compares `Origin` with `WAVEFLOW_PUBLIC_URL` when it is
@@ -188,6 +219,17 @@ the panel refused. On an ingress request the check therefore ignores
 passes through from the browser. `X-Forwarded-Host` is not used: on a
 connection only the Supervisor can open it would say the same thing, and one
 source is easier to keep right than two.
+
+*Amended in the implementation:* it does not always say the same thing. A
+reverse proxy in front of Home Assistant may rewrite `Host` to Home
+Assistant's internal address and name the public one in
+`X-Forwarded-Host`, which Core passes on; `Origin` then matches only the
+latter, and every sign-in in the panel was refused. On an ingress request
+`Origin` is therefore accepted when it names `Host` or the first entry of
+`X-Forwarded-Host`. That stays safe: a page of another site cannot set the
+header on a request to Home Assistant without a preflight Home Assistant does
+not grant. The main listener still reads `Host` alone, since there the header
+is anyone's to send.
 
 ## Decision 7 — signing in is WaveFlow's, as everywhere
 

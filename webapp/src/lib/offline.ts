@@ -28,6 +28,7 @@
  * against a cache of their own.
  */
 
+import { underPrefix } from "../api/base";
 import type { Song } from "../api/catalog";
 
 /** The prefix of every account's cache of kept tracks. */
@@ -45,7 +46,10 @@ const metaUrl = (trackId: string) =>
 
 /** Whether this browser can keep anything at all. */
 export function offlineSupported(): boolean {
-  return typeof caches !== "undefined";
+  // Not inside Home Assistant (RFC-030 decision 8): no worker is registered
+  // under its prefix, and the token in that prefix changes with each
+  // installation of Home Assistant, which would strand what was kept.
+  return typeof caches !== "undefined" && !underPrefix();
 }
 
 /** What a kept track remembers of its song: what a list and a player read. */
@@ -262,7 +266,7 @@ export async function offlineSource(
  * and a worker holding its modules would serve yesterday's code.
  */
 export function registerServiceWorker(production: boolean): void {
-  if (!production || !("serviceWorker" in navigator)) return;
+  if (!production || !("serviceWorker" in navigator) || underPrefix()) return;
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js", { scope: "/" })

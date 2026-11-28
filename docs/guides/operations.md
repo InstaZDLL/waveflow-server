@@ -1068,6 +1068,42 @@ client sends them in its `c` parameter; the comparison is exact, case included.
 The default is `DSub`, as in Navidrome. Set it empty to answer every client in
 full, or add a client that shows the same kind of confusion.
 
+## Inside Home Assistant (ingress)
+
+The Home Assistant app can show the web client in Home Assistant's own
+sidebar, reached through Home Assistant's address and sign-in
+([RFC-030](../rfcs/RFC-030-home-assistant-ingress.md)). The app turns it on;
+nothing here is for a server that is not a Home Assistant app.
+
+| Setting | What it does |
+|---|---|
+| `WAVEFLOW_INGRESS_BIND=0.0.0.0:8099` | Opens a second listener for Home Assistant's ingress. Unset by default, and then there is none. Port 4533 is unchanged and stays the Subsonic apps' and the browser tab's. |
+| `WAVEFLOW_INGRESS_PEERS` | Who may connect to that listener, addresses or CIDR blocks. `172.30.32.2` by default, the Supervisor's address; every other connection is dropped as it arrives. |
+
+Only requests on that listener read `X-Ingress-Path`, the prefix Home Assistant
+serves the app under; port 4533 never does, so a client that sends the header
+there changes nothing. In the panel you sign in with your WaveFlow account, not
+with Home Assistant's.
+
+Three things are not available in the panel, and the page says so:
+
+- **Offline listening.** No service worker is registered under the prefix.
+- **Linking Last.fm.** Last.fm sends you back to `WAVEFLOW_PUBLIC_URL`, outside
+  the panel: link it from the server's own address. ListenBrainz and Maloja
+  link in the panel.
+- **Making a share without a public URL.** A share's link is built from
+  `WAVEFLOW_PUBLIC_URL`. With it unset, the panel cannot make one, since its
+  link would open a page of Home Assistant's; with it set, shares work as
+  anywhere else.
+
+Every client in the panel reaches the server from the Supervisor's address. A
+sign-in there is counted under the browser's address instead, which Home
+Assistant writes into `X-Forwarded-For`, so one user's wrong guesses do not
+hold back another's (see *Sign-in attempts are limited per client*). When Home
+Assistant is itself behind a reverse proxy, that address is the proxy's: name
+the proxy in `WAVEFLOW_TRUSTED_PROXIES`, through the app's options, and the
+server walks past it to each browser, as it does behind a proxy of its own.
+
 ## Offline listening in the web client
 
 The web client registers a service worker, `/sw.js`, that keeps its own shell

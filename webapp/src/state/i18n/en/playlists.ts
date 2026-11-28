@@ -62,6 +62,8 @@ export const playlists = {
   "shares.once": "This link is shown only once:",
   "shares.defaultName": "Music share",
   "shares.empty": "No public links have been created.",
+  "shares.needsAddress":
+    "A share link needs the server’s external address, which this server does not have. Set WAVEFLOW_PUBLIC_URL to the address people outside Home Assistant reach it at, then create the share here.",
   "shares.createError": "The share could not be created.",
   "shares.tooLong":
     "A share holds up to {limit} tracks, and the queue holds {count}. Shorten the queue to share it.",

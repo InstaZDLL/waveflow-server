@@ -151,6 +151,14 @@ async fn serve(
     };
     let local_addr = listener.local_addr()?;
     tracing::info!(address = %local_addr, data_dir = %config.data_dir.display(), "WaveFlow Server v2 ready");
+    // The web client inside Home Assistant (RFC-030), on a listener of its own
+    // that only the Supervisor may reach, and only when the app asks for it.
+    let ingress = match config.ingress.bind {
+        Some(address) => {
+            Some(serve_ingress(address, config.ingress.peers.clone(), router.clone()).await?)
+        }
+        None => None,
+    };
     if config.laptop {
         if config.public_url.is_none() {
             tracing::info!("{}", laptop::network_hint(local_addr));
@@ -185,7 +193,41 @@ async fn serve(
     )
     .with_graceful_shutdown(waveflow_server::shutdown_signal())
     .await
-    .context("HTTP server failed")
+    .context("HTTP server failed")?;
+    if let Some(ingress) = ingress {
+        ingress
+            .await
+            .context("ingress listener task failed")?
+            .context("ingress listener failed")?;
+    }
+    Ok(())
+}
+
+/// Binds the ingress listener and serves it in the background until the same
+/// shutdown signal as the main one.
+async fn serve_ingress(
+    address: std::net::SocketAddr,
+    peers: Vec<ipnet::IpNet>,
+    router: axum::Router,
+) -> anyhow::Result<tokio::task::JoinHandle<std::io::Result<()>>> {
+    use axum::serve::ListenerExt;
+    let listener = tokio::net::TcpListener::bind(address)
+        .await
+        .with_context(|| format!("bind failed on {address} (WAVEFLOW_INGRESS_BIND)"))?;
+    tracing::info!(address = %listener.local_addr()?, "Home Assistant ingress ready");
+    // `tap_io` does nothing to the connection: it is what lets axum read the
+    // peer's address from a listener of our own, for the sign-in limiter.
+    let listener =
+        waveflow_server::http::ingress::IngressListener::new(listener, peers).tap_io(|_| {});
+    let router = waveflow_server::ingress_app(router);
+    Ok(tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(waveflow_server::shutdown_signal())
+        .await
+    }))
 }
 
 fn init_tracing() -> anyhow::Result<()> {

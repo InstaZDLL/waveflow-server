@@ -3,7 +3,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { forgetOnSessionChange, onSessionOwner } from "./api";
+import { forgetOnSessionChange, onSessionOwner, serverBase } from "./api";
 import { createQueryClient } from "./api/query-client";
 import { routeTree } from "./app/route-tree";
 import {
@@ -23,6 +23,9 @@ import "./styles/fluid.css";
 
 const router = createRouter({
   routeTree,
+  // Inside Home Assistant every route lives under its ingress prefix
+  // (RFC-030); everywhere else at the root.
+  basepath: serverBase() || "/",
 });
 
 declare module "@tanstack/react-router" {

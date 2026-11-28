@@ -64,6 +64,8 @@ export const playlists: Record<keyof typeof en, TranslationValue> = {
   "shares.once": "Questo link viene mostrato una sola volta:",
   "shares.defaultName": "Musica condivisa",
   "shares.empty": "Non è stato creato nessun link pubblico.",
+  "shares.needsAddress":
+    "Un link di condivisione ha bisogno dell’indirizzo esterno del server, che questo server non ha. Imposta WAVEFLOW_PUBLIC_URL sull’indirizzo con cui lo si raggiunge fuori da Home Assistant, poi crea qui la condivisione.",
   "shares.createError": "Non è stato possibile creare la condivisione.",
   "shares.tooLong":
     "Una condivisione contiene al massimo {limit} brani, e la coda ne contiene {count}. Accorcia la coda per condividerla.",

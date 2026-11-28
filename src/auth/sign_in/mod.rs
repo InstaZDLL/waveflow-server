@@ -192,10 +192,85 @@ pub fn request_bucket(
     headers: &HeaderMap,
     trusted: &[IpNet],
 ) -> String {
+    // Through Home Assistant's ingress every request comes from the
+    // Supervisor, so its peer would put every panel sign-in in one bucket,
+    // which one user could fill for all of them (RFC-030).
+    if extensions
+        .get::<crate::http::ingress::IngressPath>()
+        .is_some()
+    {
+        if let Some(client) = ingress_client(headers, trusted) {
+            return address_bucket(Some(client));
+        }
+    }
     let peer = extensions
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|info| info.0.ip());
     address_bucket(client_address(peer, headers, trusted))
+}
+
+/// Where Home Assistant's Core reaches the Supervisor from: it runs on the
+/// host's network, and the host is the gateway of Home Assistant's internal
+/// one. The Supervisor appends this address to `X-Forwarded-For` when Core
+/// connects to it over TCP.
+pub const HOME_ASSISTANT_CORE: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(172, 30, 32, 1));
+
+/// The client of a request Home Assistant's ingress handed on (RFC-030).
+///
+/// Core appends to `X-Forwarded-For` the address it received the browser's
+/// connection from. The Supervisor, the only peer the ingress listener admits,
+/// appends Core's own after it when Core reached it over TCP, and nothing when
+/// over a Unix socket, which has no address. So the entry Home Assistant
+/// vouches for is the last one, or the one before it when the last is Core's:
+/// the browser can write neither, and whatever comes before them it may have
+/// made up. Reading a fixed position instead would trust a browser's entry
+/// whenever the Supervisor appends nothing. `None` when there is no such
+/// entry or it is not an address: the request is then counted under its peer.
+///
+/// When Home Assistant is behind a reverse proxy, the address Core wrote is
+/// the proxy's; named in `trusted` (`WAVEFLOW_TRUSTED_PROXIES`), it is walked
+/// past to the client it forwarded, as on the main listener.
+///
+/// The one case the rule misreads is a Unix socket chain whose last entry,
+/// written by Core, is itself `172.30.32.1`: the entry before it would then be
+/// the browser's. Core runs on the host's network, so it sees that address
+/// only for a connection made from the host itself through Home Assistant's
+/// internal gateway; a browser cannot come from there, and another app comes
+/// from its own container's address. Whoever can is already on the host. Not
+/// worth the alternative, counting that chain under the Supervisor, which
+/// would put every TCP one, the usual case, back in a single bucket.
+pub fn ingress_client(headers: &HeaderMap, trusted: &[IpNet]) -> Option<IpAddr> {
+    let addresses: Vec<Option<IpAddr>> = headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
+        .map(|entry| {
+            std::str::from_utf8(entry)
+                .ok()?
+                .trim()
+                .parse::<IpAddr>()
+                .ok()
+                .map(unmapped)
+        })
+        .collect();
+    let mut from_right = addresses.iter().rev().peekable();
+    if *from_right.peek()? == &Some(HOME_ASSISTANT_CORE) {
+        from_right.next();
+    }
+    let mut client = (*from_right.next()?)?;
+    // Behind a reverse proxy in front of Home Assistant, Core's entry is that
+    // proxy. Past it the walk goes on as it does on the main listener: while
+    // the address is one of `WAVEFLOW_TRUSTED_PROXIES`, the entry it appended
+    // before it names the client, and an entry that is not an address stops
+    // the walk at the last trusted hop.
+    let is_trusted = |address: &IpAddr| trusted.iter().any(|net| net.contains(address));
+    while is_trusted(&client) {
+        match from_right.next() {
+            Some(Some(address)) => client = *address,
+            _ => break,
+        }
+    }
+    Some(client)
 }
 
 /// The limiter, the gate and the tally. One per process, shared by the three
