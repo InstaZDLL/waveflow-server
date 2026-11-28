@@ -52,10 +52,23 @@ export function isAllowedRedirect(redirectUri: string): boolean {
  * origin entirely, and a `javascript:` value would execute. Only a single
  * leading slash followed by a non-slash, non-backslash character is a path —
  * browsers normalise backslashes, so `/\host` escapes just like `//host`.
+ *
+ * A control character (U+0000–U+001F, U+007F) refuses the value wherever it
+ * stands: the URL parser strips tabs and line breaks before it resolves, so
+ * `/\t/host` becomes `//host` and the second-character check never sees it.
  */
 export function safeInternalPath(value: string | null): string | null {
   if (!value || value.length < 1) return null;
   if (value[0] !== "/") return null;
   if (value[1] === "/" || value[1] === "\\") return null;
+  if (hasControlCharacter(value)) return null;
   return value;
+}
+
+function hasControlCharacter(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
 }
