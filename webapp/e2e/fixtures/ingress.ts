@@ -53,6 +53,12 @@ export async function serveUnderPrefix(page: Page): Promise<Refused> {
       await route.abort();
       return;
     }
+    // What this request carried, not what the context holds: the context
+    // always has the cookie, and the point is to catch a request sent without
+    // it, a `credentials: "omit"` fetch. `headerValue` reads `allHeaders()`,
+    // which carries the cookies `headers()` leaves out; were it ever to come
+    // back without them, every request would be answered 401 and the suite
+    // would fail loudly rather than pass on nothing.
     const cookie = (await route.request().headerValue("cookie")) ?? "";
     if (!/(?:^|;\s*)ingress_session=/.test(cookie)) {
       refused.withoutSession.push(url.pathname);
