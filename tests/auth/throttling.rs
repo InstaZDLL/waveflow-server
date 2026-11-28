@@ -466,3 +466,47 @@ async fn panel_sign_ins_are_counted_per_browser_not_per_supervisor() {
         .unwrap();
     assert_eq!(signed_in.status(), StatusCode::OK);
 }
+
+/// RFC-030 with Home Assistant behind a reverse proxy: the address Core
+/// writes is the proxy's. Named in `WAVEFLOW_TRUSTED_PROXIES`, it is walked
+/// past to each browser it forwarded, as on the main listener, so one
+/// browser's guesses do not hold back another behind the same proxy.
+#[tokio::test]
+async fn panel_sign_ins_behind_a_trusted_proxy_are_counted_per_browser() {
+    let (_temp, app) = guarded(&["10.0.0.2/32"]).await;
+    let ingress = waveflow_server::ingress_app(app.router.clone());
+    let through_panel = |password: &str, forwarded: &str| {
+        let mut request = from_peer(
+            json_request(
+                "/api/v2/auth/login",
+                serde_json::json!({
+                    "username": "Guarded",
+                    "password": password,
+                    "device_name": "Home Assistant panel"
+                }),
+            ),
+            "172.30.32.2",
+            Some(forwarded),
+        );
+        request.headers_mut().insert(
+            "x-ingress-path",
+            "/api/hassio_ingress/tok_42".parse().unwrap(),
+        );
+        ingress.clone().oneshot(request)
+    };
+
+    for _ in 0..waveflow_server::auth::sign_in::FAILURES_PER_WINDOW {
+        let refused = through_panel(&app.wrong, "203.0.113.5, 10.0.0.2, 172.30.32.1")
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    }
+    let held = through_panel(&app.password, "203.0.113.5, 10.0.0.2, 172.30.32.1")
+        .await
+        .unwrap();
+    assert_eq!(held.status(), StatusCode::TOO_MANY_REQUESTS);
+    let signed_in = through_panel(&app.password, "203.0.113.9, 10.0.0.2, 172.30.32.1")
+        .await
+        .unwrap();
+    assert_eq!(signed_in.status(), StatusCode::OK);
+}

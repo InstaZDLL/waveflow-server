@@ -199,7 +199,7 @@ pub fn request_bucket(
         .get::<crate::http::ingress::IngressPath>()
         .is_some()
     {
-        if let Some(client) = ingress_client(headers) {
+        if let Some(client) = ingress_client(headers, trusted) {
             return address_bucket(Some(client));
         }
     }
@@ -227,6 +227,10 @@ pub const HOME_ASSISTANT_CORE: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(172, 
 /// whenever the Supervisor appends nothing. `None` when there is no such
 /// entry or it is not an address: the request is then counted under its peer.
 ///
+/// When Home Assistant is behind a reverse proxy, the address Core wrote is
+/// the proxy's; named in `trusted` (`WAVEFLOW_TRUSTED_PROXIES`), it is walked
+/// past to the client it forwarded, as on the main listener.
+///
 /// The one case the rule misreads is a Unix socket chain whose last entry,
 /// written by Core, is itself `172.30.32.1`: the entry before it would then be
 /// the browser's. Core runs on the host's network, so it sees that address
@@ -235,7 +239,7 @@ pub const HOME_ASSISTANT_CORE: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(172, 
 /// from its own container's address. Whoever can is already on the host. Not
 /// worth the alternative, counting that chain under the Supervisor, which
 /// would put every TCP one, the usual case, back in a single bucket.
-pub fn ingress_client(headers: &HeaderMap) -> Option<IpAddr> {
+pub fn ingress_client(headers: &HeaderMap, trusted: &[IpNet]) -> Option<IpAddr> {
     let addresses: Vec<Option<IpAddr>> = headers
         .get_all("x-forwarded-for")
         .iter()
@@ -249,12 +253,24 @@ pub fn ingress_client(headers: &HeaderMap) -> Option<IpAddr> {
                 .map(unmapped)
         })
         .collect();
-    let mut from_right = addresses.iter().rev();
-    let last = *from_right.next()?;
-    if last == Some(HOME_ASSISTANT_CORE) {
-        return *from_right.next()?;
+    let mut from_right = addresses.iter().rev().peekable();
+    if *from_right.peek()? == &Some(HOME_ASSISTANT_CORE) {
+        from_right.next();
     }
-    last
+    let mut client = (*from_right.next()?)?;
+    // Behind a reverse proxy in front of Home Assistant, Core's entry is that
+    // proxy. Past it the walk goes on as it does on the main listener: while
+    // the address is one of `WAVEFLOW_TRUSTED_PROXIES`, the entry it appended
+    // before it names the client, and an entry that is not an address stops
+    // the walk at the last trusted hop.
+    let is_trusted = |address: &IpAddr| trusted.iter().any(|net| net.contains(address));
+    while is_trusted(&client) {
+        match from_right.next() {
+            Some(Some(address)) => client = *address,
+            _ => break,
+        }
+    }
+    Some(client)
 }
 
 /// The limiter, the gate and the tally. One per process, shared by the three

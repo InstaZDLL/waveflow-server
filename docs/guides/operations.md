@@ -1099,7 +1099,10 @@ Three things are not available in the panel, and the page says so:
 Every client in the panel reaches the server from the Supervisor's address. A
 sign-in there is counted under the browser's address instead, which Home
 Assistant writes into `X-Forwarded-For`, so one user's wrong guesses do not
-hold back another's (see *Sign-in attempts are limited per client*).
+hold back another's (see *Sign-in attempts are limited per client*). When Home
+Assistant is itself behind a reverse proxy, that address is the proxy's: name
+the proxy in `WAVEFLOW_TRUSTED_PROXIES`, through the app's options, and the
+server walks past it to each browser, as it does behind a proxy of its own.
 
 ## Offline listening in the web client
 

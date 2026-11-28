@@ -117,7 +117,10 @@ entry is the last one, or the one before it when the last is Core's own
 address, `172.30.32.1`, which the Supervisor appends when Core reaches it
 over TCP and not over a Unix socket. A fixed position would have trusted an
 entry of the browser's whenever the Supervisor appends nothing. Entries
-before Core's are the browser's, and are not believed.
+before Core's are the browser's, and are not believed — unless Core's entry
+is a reverse proxy in front of Home Assistant named in
+`WAVEFLOW_TRUSTED_PROXIES`, which the walk then goes past to the client it
+forwarded, as on the main listener.
 
 ## Decision 2 — the prefix comes from the header, checked
 

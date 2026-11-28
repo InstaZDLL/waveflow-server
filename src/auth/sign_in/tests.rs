@@ -252,39 +252,84 @@ fn an_ingress_client_is_the_address_core_wrote() {
     };
     let address = |text: &str| Some(text.parse::<IpAddr>().unwrap());
     assert_eq!(
-        ingress_client(&headers("203.0.113.5, 172.30.32.1")),
+        ingress_client(&headers("203.0.113.5, 172.30.32.1"), &[]),
         address("203.0.113.5")
     );
     // What the browser wrote before it is not believed.
     assert_eq!(
-        ingress_client(&headers("10.9.9.9, 203.0.113.5, 172.30.32.1")),
+        ingress_client(&headers("10.9.9.9, 203.0.113.5, 172.30.32.1"), &[]),
         address("203.0.113.5")
     );
     assert_eq!(
-        ingress_client(&headers("::ffff:203.0.113.5, 172.30.32.1")),
+        ingress_client(&headers("::ffff:203.0.113.5, 172.30.32.1"), &[]),
         address("203.0.113.5")
     );
     // Over a Unix socket the Supervisor appends nothing, and the last entry is
     // Core's: what the browser wrote before it, an address of its choosing
     // included, is still not believed.
     assert_eq!(
-        ingress_client(&headers("203.0.113.5")),
+        ingress_client(&headers("203.0.113.5"), &[]),
         address("203.0.113.5")
     );
     assert_eq!(
-        ingress_client(&headers("10.9.9.9, 203.0.113.5")),
+        ingress_client(&headers("10.9.9.9, 203.0.113.5"), &[]),
         address("203.0.113.5")
     );
     // A browser that ends its own header with Core's address gains nothing:
     // Core's entry comes after it.
     assert_eq!(
-        ingress_client(&headers("10.9.9.9, 172.30.32.1, 203.0.113.5")),
+        ingress_client(&headers("10.9.9.9, 172.30.32.1, 203.0.113.5"), &[]),
         address("203.0.113.5")
     );
     // Nothing Home Assistant vouches for, or not an address: counted under the
     // peer instead.
-    assert_eq!(ingress_client(&headers("172.30.32.1")), None);
-    assert_eq!(ingress_client(&headers("junk, 172.30.32.1")), None);
-    assert_eq!(ingress_client(&headers("junk")), None);
-    assert_eq!(ingress_client(&HeaderMap::new()), None);
+    assert_eq!(ingress_client(&headers("172.30.32.1"), &[]), None);
+    assert_eq!(ingress_client(&headers("junk, 172.30.32.1"), &[]), None);
+    assert_eq!(ingress_client(&headers("junk"), &[]), None);
+    assert_eq!(ingress_client(&HeaderMap::new(), &[]), None);
+}
+
+#[test]
+fn behind_a_trusted_proxy_the_ingress_client_is_the_one_it_forwarded() {
+    let headers = |value: &str| {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", value.parse().unwrap());
+        headers
+    };
+    let address = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+    let proxy = nets(&["10.0.0.2/32"]);
+    // Home Assistant behind a reverse proxy: Core's entry is the proxy.
+    // Unnamed, the proxy is the client; named, the walk goes past it.
+    assert_eq!(
+        ingress_client(&headers("203.0.113.5, 10.0.0.2, 172.30.32.1"), &[]),
+        address("10.0.0.2")
+    );
+    assert_eq!(
+        ingress_client(&headers("203.0.113.5, 10.0.0.2, 172.30.32.1"), &proxy),
+        address("203.0.113.5")
+    );
+    // Over a Unix socket too.
+    assert_eq!(
+        ingress_client(&headers("203.0.113.5, 10.0.0.2"), &proxy),
+        address("203.0.113.5")
+    );
+    // The walk stops at the first address the proxy does not vouch past, and
+    // at an entry that is not one, on the last trusted hop.
+    assert_eq!(
+        ingress_client(
+            &headers("198.51.100.1, 203.0.113.5, 10.0.0.2, 172.30.32.1"),
+            &proxy
+        ),
+        address("203.0.113.5")
+    );
+    assert_eq!(
+        ingress_client(&headers("junk, 10.0.0.2, 172.30.32.1"), &proxy),
+        address("10.0.0.2")
+    );
+    // Trusting the proxy is no reason to trust what came before Core's entry:
+    // a browser's own "10.0.0.2" written before it is still the browser's.
+    assert_eq!(
+        ingress_client(&headers("10.0.0.2, 203.0.113.5, 172.30.32.1"), &proxy),
+        address("203.0.113.5")
+    );
 }
