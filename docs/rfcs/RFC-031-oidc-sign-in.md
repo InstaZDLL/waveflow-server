@@ -216,8 +216,12 @@ character — U+0000 to U+001F and U+007F — anywhere: a browser removes tabs
 and line breaks from a URL before resolving it, so `/\t/evil.example` would
 become `//evil.example`, another host. Then it is resolved against the
 public URL with the same URL parser the server uses for every address, and
-kept only if the result has the public URL's origin, in which case its path
-and query, re-serialised, are what is sealed. Anything else becomes `/`. The
+kept only if the result has the public URL's origin. What is sealed, and
+what the callback's `Location` carries, is that **absolute** URL, never its
+path alone: `/a/..//evil.example` resolves on the public origin to the path
+`//evil.example`, which, extracted and sent back as a relative reference,
+names another host. An absolute URL on the public origin cannot be read
+that way. Anything else becomes the public URL's root. The
 client's `safeInternalPath` gets the same control-character rule, in its
 own pull request.
 It is what carries a desktop's `/authorize?…` through the detour (decision
@@ -644,8 +648,9 @@ Every string in the nine locales, as the client's rule requires.
    least: a forged callback without a cookie, with another attempt's cookie,
    with a differing `state`, with a cookie already spent; the twenty-first
    invented code from one address in a minute, which must not reach the
-   provider; a `return_to` of `//evil.example`, `/\evil.example` and
-   `/<tab>/evil.example`, each sealed as `/`; an ID token with `alg: none`,
+   provider; a `return_to` of `//evil.example`, `/\evil.example`,
+   `/<tab>/evil.example` and `/a/..//evil.example`, none of which may send
+   the browser off the public origin; an ID token with `alg: none`,
    an HMAC algorithm, an unknown `kid`, another `iss`, another `aud`, an
    `aud` naming the client and another beside an `azp` naming the client,
    an expired `exp`, another `nonce`; a userinfo `sub` that differs; a username claim
