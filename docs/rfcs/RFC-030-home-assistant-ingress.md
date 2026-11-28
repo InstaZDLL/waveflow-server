@@ -1,8 +1,11 @@
 # RFC-030 — The web client inside Home Assistant (ingress)
 
 - **Status**: Proposed
-- **Implemented by**: nothing yet. The *Status* field above never flips in
-  this project; this line is the one that says what is running.
+- **Implemented by**: [#473](https://github.com/InstaZDLL/waveflow-server/pull/473)
+  (the server and the web client, decisions 1 to 9). Decision 10, the app's
+  `config.yaml`, is the Home Assistant repository's, at the first release
+  that carries #473. The *Status* field above never flips in this project;
+  this line is the one that says what is running.
 - **Date**: 2026-11-27
 - **Authors**: the WaveFlow project
 - **Depends on**: [RFC-002](RFC-002-waveflow-server-v2.md) (the web session,
