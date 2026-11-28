@@ -70,7 +70,8 @@ in the Supervisor, and the
   `X-Forwarded-Host` and `X-Forwarded-Proto` from the browser's request, and
   `X-Hass-Source: core.ingress`. It appends the address it received the
   browser's connection from to `X-Forwarded-For`, and the Supervisor appends
-  Core's own after it.
+  Core's own after it — when Core reaches it over TCP; over a Unix socket it
+  has no address to append, and appends nothing.
 - **The rest is passed through.** `Host`, `Origin`, `Cookie`, `Range` and
   `Authorization` are copied as the browser sent them; only the length,
   encoding and websocket negotiation headers are dropped. So `Host` and
@@ -109,11 +110,14 @@ expects, so the app keeps 4533 published for the Subsonic apps and the
 browser tab, unchanged.
 
 *Amended in the implementation:* the sign-in limiter (RFC-017) counts a
-request on this listener under the entry before the last in
-`X-Forwarded-For` — the address Core wrote, the last being Core's own,
-written by the Supervisor — and not under the peer, which is the Supervisor
-for every panel user: one bucket would let any of them hold back all the
-others. Entries before it are the browser's, and are not believed.
+request on this listener under the address Core wrote into
+`X-Forwarded-For`, and not under the peer, which is the Supervisor for every
+panel user: one bucket would let any of them hold back all the others. That
+entry is the last one, or the one before it when the last is Core's own
+address, `172.30.32.1`, which the Supervisor appends when Core reaches it
+over TCP and not over a Unix socket. A fixed position would have trusted an
+entry of the browser's whenever the Supervisor appends nothing. Entries
+before Core's are the browser's, and are not believed.
 
 ## Decision 2 — the prefix comes from the header, checked
 

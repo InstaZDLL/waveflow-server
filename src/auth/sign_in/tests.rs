@@ -264,8 +264,27 @@ fn an_ingress_client_is_the_address_core_wrote() {
         ingress_client(&headers("::ffff:203.0.113.5, 172.30.32.1")),
         address("203.0.113.5")
     );
-    // Too short, or not an address: counted under the peer instead.
+    // Over a Unix socket the Supervisor appends nothing, and the last entry is
+    // Core's: what the browser wrote before it, an address of its choosing
+    // included, is still not believed.
+    assert_eq!(
+        ingress_client(&headers("203.0.113.5")),
+        address("203.0.113.5")
+    );
+    assert_eq!(
+        ingress_client(&headers("10.9.9.9, 203.0.113.5")),
+        address("203.0.113.5")
+    );
+    // A browser that ends its own header with Core's address gains nothing:
+    // Core's entry comes after it.
+    assert_eq!(
+        ingress_client(&headers("10.9.9.9, 172.30.32.1, 203.0.113.5")),
+        address("203.0.113.5")
+    );
+    // Nothing Home Assistant vouches for, or not an address: counted under the
+    // peer instead.
     assert_eq!(ingress_client(&headers("172.30.32.1")), None);
     assert_eq!(ingress_client(&headers("junk, 172.30.32.1")), None);
+    assert_eq!(ingress_client(&headers("junk")), None);
     assert_eq!(ingress_client(&HeaderMap::new()), None);
 }

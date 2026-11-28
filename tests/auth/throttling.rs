@@ -453,6 +453,13 @@ async fn panel_sign_ins_are_counted_per_browser_not_per_supervisor() {
         .await
         .unwrap();
     assert_eq!(held.status(), StatusCode::TOO_MANY_REQUESTS);
+    // ...and where Core reaches the Supervisor over a Unix socket, which then
+    // appends nothing: the last entry is Core's, and a fresh address the
+    // browser puts before it buys no fresh budget.
+    let held = through_panel(&app.password, "198.51.100.77, 203.0.113.5")
+        .await
+        .unwrap();
+    assert_eq!(held.status(), StatusCode::TOO_MANY_REQUESTS);
     // ...while another browser in the panel signs in.
     let signed_in = through_panel(&app.password, "203.0.113.9, 172.30.32.1")
         .await

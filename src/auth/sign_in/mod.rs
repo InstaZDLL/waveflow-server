@@ -209,27 +209,43 @@ pub fn request_bucket(
     address_bucket(client_address(peer, headers, trusted))
 }
 
+/// Where Home Assistant's Core reaches the Supervisor from: it runs on the
+/// host's network, and the host is the gateway of Home Assistant's internal
+/// one. The Supervisor appends this address to `X-Forwarded-For` when Core
+/// connects to it over TCP.
+pub const HOME_ASSISTANT_CORE: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(172, 30, 32, 1));
+
 /// The client of a request Home Assistant's ingress handed on (RFC-030).
 ///
-/// Core appends the address it received the browser's connection from to
-/// `X-Forwarded-For`, and the Supervisor, which is the only peer the ingress
-/// listener admits, appends Core's own. So the entry before the last is the
-/// one Home Assistant vouches for; whatever comes before it, the browser wrote
-/// and may have made up. `None` when the chain is too short or that entry is
-/// not an address: the request is then counted under its peer, as before.
+/// Core appends to `X-Forwarded-For` the address it received the browser's
+/// connection from. The Supervisor, the only peer the ingress listener admits,
+/// appends Core's own after it when Core reached it over TCP, and nothing when
+/// over a Unix socket, which has no address. So the entry Home Assistant
+/// vouches for is the last one, or the one before it when the last is Core's:
+/// the browser can write neither, and whatever comes before them it may have
+/// made up. Reading a fixed position instead would trust a browser's entry
+/// whenever the Supervisor appends nothing. `None` when there is no such
+/// entry or it is not an address: the request is then counted under its peer.
 pub fn ingress_client(headers: &HeaderMap) -> Option<IpAddr> {
-    let entries: Vec<&[u8]> = headers
+    let addresses: Vec<Option<IpAddr>> = headers
         .get_all("x-forwarded-for")
         .iter()
         .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
+        .map(|entry| {
+            std::str::from_utf8(entry)
+                .ok()?
+                .trim()
+                .parse::<IpAddr>()
+                .ok()
+                .map(unmapped)
+        })
         .collect();
-    let entry = entries.iter().rev().nth(1)?;
-    std::str::from_utf8(entry)
-        .ok()?
-        .trim()
-        .parse::<IpAddr>()
-        .ok()
-        .map(unmapped)
+    let mut from_right = addresses.iter().rev();
+    let last = *from_right.next()?;
+    if last == Some(HOME_ASSISTANT_CORE) {
+        return *from_right.next()?;
+    }
+    last
 }
 
 /// The limiter, the gate and the tally. One per process, shared by the three
