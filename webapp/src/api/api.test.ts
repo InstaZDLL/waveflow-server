@@ -98,6 +98,21 @@ describe("safeInternalPath", () => {
     expect(safeInternalPath(null)).toBeNull();
     expect(safeInternalPath("")).toBeNull();
   });
+
+  it("refuses a control character wherever it stands", () => {
+    // The URL parser strips tabs and line breaks, so each of these resolves
+    // to "//evil.example" and leaves the origin.
+    expect(safeInternalPath("/\t/evil.example")).toBeNull();
+    expect(safeInternalPath("/\n/evil.example")).toBeNull();
+    expect(safeInternalPath("/\r/evil.example")).toBeNull();
+    // Anywhere in the value, at either end of the range.
+    expect(safeInternalPath("/albums\u0000")).toBeNull();
+    expect(safeInternalPath("/albums?q=a\u001fb")).toBeNull();
+    expect(safeInternalPath("/albums\u007f")).toBeNull();
+    // The neighbours of the range are ordinary characters.
+    expect(safeInternalPath("/albums/a b")).toBe("/albums/a b");
+    expect(safeInternalPath("/albums/~")).toBe("/albums/~");
+  });
 });
 
 describe("session refresh failures", () => {
