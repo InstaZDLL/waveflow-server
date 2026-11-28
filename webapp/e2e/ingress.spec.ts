@@ -119,3 +119,26 @@ test("the probe is asked for with Home Assistant's session", async ({
   await expect(page.getByRole("link", { name: "Source code" })).toBeVisible();
   expect(refused).toEqual({ strayed: [], withoutSession: [] });
 });
+
+/**
+ * The fixture's own premise, held on every browser project the suite runs:
+ * the `Cookie` header of an intercepted request is visible to it. A request
+ * that carries Home Assistant's session goes through, and the same request
+ * sent without it is refused. Were the header not visible, the first would be
+ * refused too, and every other test here would mean nothing.
+ */
+test("the fixture tells a request with Home Assistant's session from one without", async ({
+  page,
+}) => {
+  const refused = await serveUnderPrefix(page);
+  const shell = await page.goto(`${PREFIX}/settings`);
+  expect(shell?.status()).toBe(200);
+  const statuses = await page.evaluate(async (prefix) => {
+    const carried = await fetch(`${prefix}/health`);
+    const omitted = await fetch(`${prefix}/health`, { credentials: "omit" });
+    return [carried.status, omitted.status];
+  }, PREFIX);
+  expect(statuses).toEqual([200, 401]);
+  expect(refused.withoutSession).toEqual([`${PREFIX}/health`]);
+  expect(refused.strayed).toEqual([]);
+});
