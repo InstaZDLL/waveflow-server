@@ -226,6 +226,15 @@ pub const HOME_ASSISTANT_CORE: IpAddr = IpAddr::V4(std::net::Ipv4Addr::new(172, 
 /// made up. Reading a fixed position instead would trust a browser's entry
 /// whenever the Supervisor appends nothing. `None` when there is no such
 /// entry or it is not an address: the request is then counted under its peer.
+///
+/// The one case the rule misreads is a Unix socket chain whose last entry,
+/// written by Core, is itself `172.30.32.1`: the entry before it would then be
+/// the browser's. Core runs on the host's network, so it sees that address
+/// only for a connection made from the host itself through Home Assistant's
+/// internal gateway; a browser cannot come from there, and another app comes
+/// from its own container's address. Whoever can is already on the host. Not
+/// worth the alternative, counting that chain under the Supervisor, which
+/// would put every TCP one, the usual case, back in a single bucket.
 pub fn ingress_client(headers: &HeaderMap) -> Option<IpAddr> {
     let addresses: Vec<Option<IpAddr>> = headers
         .get_all("x-forwarded-for")
