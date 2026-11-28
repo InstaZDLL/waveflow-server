@@ -101,7 +101,7 @@ variable documented on it, as every setting is. OIDC is off while
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WAVEFLOW_OIDC_ISSUER` | unset | The issuer URL. Discovery reads `<issuer>/.well-known/openid-configuration`. |
+| `WAVEFLOW_OIDC_ISSUER` | unset | The issuer URL. Discovery reads `<issuer>/.well-known/openid-configuration`, with one trailing `/` of the issuer removed first so that `https://idp.example/tenant/` is not asked for `//.well-known/…` (OpenID Connect Discovery §4). The issuer itself is kept as typed, for the exact comparison of decision 10. |
 | `WAVEFLOW_OIDC_CLIENT_ID` | — | Required with the issuer. |
 | `WAVEFLOW_OIDC_CLIENT_SECRET` | — | Required with the issuer. Never logged, never in an answer. |
 | `WAVEFLOW_OIDC_SCOPES` | `openid profile` | Space- or comma-separated. `openid` is added if missing. Add `groups` for the providers that need it to send groups (decision 6). |
@@ -126,7 +126,12 @@ server that does not know its own cannot name one.
 
 - an issuer without a client id or a secret, or the reverse;
 - an issuer that is not `https`, except on a loopback host;
-- an issuer without `WAVEFLOW_PUBLIC_URL`;
+- an issuer without `WAVEFLOW_PUBLIC_URL`, or with a public URL that is not
+  `https`, except on a loopback host. The callback brings the code, the
+  `state` and the flow cookie back to that address; in clear text, whoever
+  sees the request can present all three before the browser does, and the
+  session the callback issues is theirs. `Secure` on the cookie would not
+  help, since the code travels in the query string anyway;
 - `WAVEFLOW_OIDC_ONLY=true` without an issuer;
 - an admin or allowed group that is empty after trimming.
 
@@ -184,14 +189,37 @@ Sealing it rather than keeping it on the server is deliberate:
 
 **Nothing reaches the provider before the cookie checks out.** The callback
 verifies the flow cookie and `state` first; only then does it call the
-token endpoint. A request forged at the callback costs one decryption, so
-the callback needs no limiter, and it gets none.
+token endpoint. A request forged at the callback without a cookie costs one
+decryption.
 
-**`return_to`** is a path inside the client, checked on the server by the
-rule `safeInternalPath` (`webapp/src/api/oauth.ts`) applies in the client: it
-begins with `/`, and its second character is neither `/` nor `\`, either of
-which a browser would read as the start of another host. Anything else
-becomes `/`.
+**And what reaches it is bounded per address.** `start` is free, so anyone
+can draw cookies and present each with an invented code, and each would
+then cost a request to the provider — which may in turn limit this server's
+address and refuse the real sign-ins. So a callback that has passed the
+cookie and `state` checks takes a slot in RFC-017's limiter before the token
+request, under the request's address bucket (RFC-017 decision 2, RFC-030
+decision 1 on the ingress listener) and a fixed account key of its own,
+`oidc`: twenty in a sliding minute, as for passwords. A slot is given back
+when the round trip succeeds, and kept when the provider refuses the code,
+so a person who signs in many times is never refused and a stream of
+invented codes is. Past the limit the callback fails with `oidc_failed`
+without reaching the provider. A flow cookie is also usable once: its
+`state` is remembered as spent until the cookie's expiry, so the same
+attempt cannot be replayed even within its ten minutes. Only a callback that
+got past the limiter adds to that set, so it grows no faster than the
+limiter allows, and it is bounded like the limiter's table besides.
+
+**`return_to`** is a path inside the client, checked on the server, and
+stricter than `safeInternalPath` (`webapp/src/api/oauth.ts`), which checks
+only the first two characters. A value is refused if it contains any control
+character — U+0000 to U+001F and U+007F — anywhere: a browser removes tabs
+and line breaks from a URL before resolving it, so `/\t/evil.example` would
+become `//evil.example`, another host. Then it is resolved against the
+public URL with the same URL parser the server uses for every address, and
+kept only if the result has the public URL's origin, in which case its path
+and query, re-serialised, are what is sealed. Anything else becomes `/`. The
+client's `safeInternalPath` gets the same control-character rule, in its
+own pull request.
 It is what carries a desktop's `/authorize?…` through the detour (decision
 9). It is sealed, so the provider never sees it and the browser cannot
 change it on the way back.
@@ -475,8 +503,12 @@ opened itself:
   are refused: a symmetric token is keyed with the client secret, which
   every one of these providers can avoid with a signing key, and accepting
   both kinds is how algorithm confusion happens;
-- **`iss`** equals the configured issuer; **`aud`** contains the client id,
-  and if it names others, **`azp`** is the client id;
+- **`iss`** equals the configured issuer; **`aud`** is the client id, as a
+  string or as an array holding it alone. OpenID Connect Core §3.1.3.7
+  requires refusing a token that names audiences the client does not trust,
+  and this server trusts no other: a token issued for several clients at
+  once is refused even when its **`azp`** names this one. When `azp` is
+  present, it is the client id;
 - **`exp`** is in the future and **`iat`** is not, with 60 seconds of
   leeway either way for clocks that disagree;
 - **`nonce`** equals the one sealed in the flow cookie, in constant time;
@@ -530,9 +562,10 @@ reason from the table and nothing more, which an operator needs and which
 takes a real round trip to cause. Creations, links and role changes are in
 `audit_event` with the account's id.
 
-**RFC-017's limiter does not apply.** It counts password guesses; nothing
-here checks a password, and nothing reaches the provider without a sealed
-cookie the server drew. The provider limits its own sign-in.
+**RFC-017's limiter counts the round trips, not guesses.** Nothing here
+checks a password, so the dummy hash and the verification gate do not
+apply; the limiter's windows bound how many callbacks reach the provider
+from one address (decision 3). The provider limits its own sign-in.
 
 **The 404 rule holds.** The administrative routes answer `404` for an
 unknown username like every other account route; the sign-in's refusals
@@ -609,9 +642,13 @@ Every string in the nine locales, as the client's rule requires.
    the OpenAPI document. Its tests run against an in-process provider
    serving discovery, keys, a token endpoint and userinfo, and include, at
    least: a forged callback without a cookie, with another attempt's cookie,
-   with a differing `state`; an ID token with `alg: none`, an HMAC
-   algorithm, an unknown `kid`, another `iss`, another `aud`, an expired
-   `exp`, another `nonce`; a userinfo `sub` that differs; a username claim
+   with a differing `state`, with a cookie already spent; the twenty-first
+   invented code from one address in a minute, which must not reach the
+   provider; a `return_to` of `//evil.example`, `/\evil.example` and
+   `/<tab>/evil.example`, each sealed as `/`; an ID token with `alg: none`,
+   an HMAC algorithm, an unknown `kid`, another `iss`, another `aud`, an
+   `aud` naming the client and another beside an `azp` naming the client,
+   an expired `exp`, another `nonce`; a userinfo `sub` that differs; a username claim
    naming an existing account, which must neither link nor sign in; the
    last administrator outside the admin group, who stays one; every password
    route refused in the provider-only mode before the limiter counts
@@ -640,8 +677,13 @@ Every string in the nine locales, as the client's rule requires.
 - **An HMAC-signed ID token**, for an Authentik provider left without a
   signing key: accepted with the client secret as key, or refused as now
   with a message that says to choose a key.
-- **An `http` issuer on the local network**, which some home installations
-  run before they have certificates.
+- **An `http` issuer or public URL on the local network**, which some home
+  installations run before they have certificates. Decision 2 refuses both
+  outside loopback, for the replay it describes; relaxing it would need a
+  reason that outweighs it.
+- **A setting for trusted extra audiences**, if a provider is found that
+  puts another audience in its ID tokens by default. None of the four is
+  known to; the implementation checks each against a real instance.
 - **`WAVEFLOW_OIDC_CLIENT_SECRET_FILE`**, for container secrets, if other
   secrets — Last.fm's — get the same form.
 - **A guard against demoting the last administrator by hand**: the
