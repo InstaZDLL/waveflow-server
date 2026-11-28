@@ -163,14 +163,28 @@ Three routes, under `/api/v2/web/auth/oidc/`, all on the main listener:
 
 **The flow cookie carries the whole pending attempt, sealed.** Its value is
 the AEAD-sealed tuple `(kind, purpose, state, nonce, PKCE verifier,
-device name, return_to, account for a link, expiry)`, under the instance
+device name, return_to, the account or the invitation for a link, expiry)`,
+under the instance
 key through `SecretBox`, as stream tickets are, with a kind tag of its own so
-that no other sealed value can be presented as one. It is named `wf_oidc`,
-`HttpOnly`, `Max-Age=600`, `Path=/api/v2/web/auth/oidc`, `Secure` when the
-public URL is `https`, and **`SameSite=Lax`** — not `Strict` like the
-session's, because the callback is a cross-site navigation from the provider,
-on which a `Strict` cookie is not sent. `Lax` is sent on that top-level `GET`
-and on nothing cross-site that can change state.
+that no other sealed value can be presented as one. It is `HttpOnly`,
+`Max-Age=600`, and **`SameSite=Lax`** — not `Strict` like the session's,
+because the callback is a cross-site navigation from the provider, on which
+a `Strict` cookie is not sent. `Lax` is sent on that top-level `GET` and on
+nothing cross-site that can change state.
+
+**Its name pins it to this host.** On an `https` public URL — every one but
+loopback, by decision 2 — it is **`__Host-wf_oidc`**, with `Secure`,
+`Path=/` and no `Domain`, which the browser enforces for that prefix. A
+cookie without it could be set for the parent domain by any page on a
+sibling subdomain: an attacker who controls `blog.example.org` would run
+`start` themselves, plant the sealed cookie they got on the victim's browser
+for `example.org`, and send the victim to the callback with their own code
+and `state`. The cookie would open, the `state` would match, and the victim
+would be signed into the attacker's account. `__Host-` refuses a cookie that
+names a `Domain`, so no other host can set or replace it. `Path=/` sends it
+with every request to the server for ten minutes, which costs a few hundred
+bytes. On a loopback public URL, where no other host can reach the browser's
+cookies for it, it is `wf_oidc` with `Path=/api/v2/web/auth/oidc`.
 
 Sealing it rather than keeping it on the server is deliberate:
 
@@ -205,9 +219,18 @@ so a person who signs in many times is never refused and a stream of
 invented codes is. Past the limit the callback fails with `oidc_failed`
 without reaching the provider. A flow cookie is also usable once: its
 `state` is remembered as spent until the cookie's expiry, so the same
-attempt cannot be replayed even within its ten minutes. Only a callback that
-got past the limiter adds to that set, so it grows no faster than the
-limiter allows, and it is bounded like the limiter's table besides.
+attempt cannot be replayed even within its ten minutes.
+
+That set has a bound of its own, separate from the limiter's windows: a
+callback that succeeds gives its limiter slot back but leaves its `state`
+spent, so the limiter alone does not bound how fast the set grows. It holds
+at most **65,536** spent states. An entry is pruned only once its cookie has
+expired, never before, since an evicted `state` could be presented again.
+When the set is full of entries still live, a new callback is refused with
+`oidc_unavailable` before the token request, and a `warn` line says the set
+is full. It fails closed for the next sign-in rather than open for a replay,
+as RFC-017's table does for a new key. Filling it takes 65,536 successful
+round trips in ten minutes, each with a code the provider issued.
 
 **`return_to`** is a path inside the client, checked on the server, and
 stricter than `safeInternalPath` (`webapp/src/api/oauth.ts`), which checks
@@ -270,9 +293,18 @@ At the callback, once the token is valid:
 
 1. **A link exists** for (issuer, `sub`): that account. If it is disabled,
    the attempt is refused like a wrong password is.
-2. **No link, and `WAVEFLOW_OIDC_AUTO_CREATE` is true** (the default): a
-   new account is created and linked in one transaction under the writer
-   gate:
+2. **No link, `WAVEFLOW_OIDC_AUTO_CREATE` is true** (the default), **and
+   the instance has been set up**: a new account is created and linked in
+   one transaction under the writer gate. *Set up* means that at least one
+   account exists, which is what RFC-019's setup gate already asks, and it
+   is checked again inside that transaction, so a concurrent setup cannot
+   slip between the check and the insert. While no account exists, an
+   ordinary sign-in creates nothing and is refused like case 3: the first
+   account is the setup's, made with the setup token (RFC-019, and decision 7
+   for doing it through the provider). Otherwise anyone the provider lets in
+   could create the first account on a fresh instance without the token, and
+   the setup would then refuse its rightful operator with `409`. The new
+   account:
    - its **username** is the `WAVEFLOW_OIDC_USERNAME_CLAIM` claim, trimmed
      and checked by the rule every username follows (`validate_name`). A
      claim that is missing, invalid or **already a WaveFlow account's name**
@@ -309,7 +341,7 @@ message, not that they are the account that once registered it.
 
 ## Decision 5 — linking an existing account, and unlinking
 
-Two ways, and neither matches a name:
+Three ways, and none matches a name:
 
 - **By its owner**, while signed in: *Settings › Account › Link to
   <provider>* calls `POST /api/v2/web/auth/oidc/start` with
@@ -319,14 +351,33 @@ Two ways, and neither matches a name:
   sides — the WaveFlow session and the provider — in one gesture. It is
   refused if that identity is already linked to another account, or if this
   account already has a link to this issuer.
-- **By an administrator**, who types the identity's `sub` as the provider
-  shows it (Authentik's *UID*, Keycloak's *ID*, Pocket ID's *ID*, Authelia's
-  *subject*): `PUT /api/v2/admin/users/{username}/oidc { subject }`, the
-  administration page, and the command
-  `waveflow-server account link-oidc <username> --subject <sub>`. This is the
-  way for an account whose owner cannot sign in with a password — in the
-  provider-only mode, for instance — and for carrying the links to a new
-  issuer.
+- **By an invitation an administrator issues**, the way that needs no
+  identifier from the provider:
+  `POST /api/v2/admin/users/{username}/oidc/invitation`, the administration
+  page, or `waveflow-server account oidc-invite <username>`, answers a
+  one-time address, shown once, valid 24 hours. Whoever opens it signs in at
+  the provider (`purpose=link`, with the invitation sealed in the flow
+  cookie), and the identity that comes back is linked to that account. Only
+  the invitation's SHA-256 hash is stored, in a table of its own beside the
+  link table, and it is spent by its first redemption, successful or not, as
+  an authorization code is. Issuing a new one for the account revokes the
+  previous one. This is the way for an account whose owner cannot sign in
+  with a password — in the provider-only mode, for instance — and for
+  carrying the links to a new issuer.
+- **By an administrator who types the `sub`**:
+  `PUT /api/v2/admin/users/{username}/oidc { subject }`, the administration
+  page, and `waveflow-server account link-oidc <username> --subject <sub>`.
+  The value must be the `sub` **this client receives**, which is not always
+  the identifier the provider's own pages show. A provider may issue
+  *pairwise* subjects, a different `sub` for each client (OpenID Connect
+  Core §8), and some derive the `sub` from the user by a setting of the
+  client: Authentik's *subject mode* defaults to a hash of the user's id,
+  not the *UID* its pages show. Authelia does not show the `sub` at all.
+  The guide says, for each of the four providers, where the right value can
+  be read, or which setting makes the displayed identifier the `sub`. Where
+  that is not possible, the invitation is the way. Once an identity is
+  linked, the administration page shows its `sub`, so a value that was
+  typed can at least be compared with the one that arrives.
 
 Unlinking: `DELETE /api/v2/account/oidc` by the owner, refused in the
 provider-only mode where it would lock them out;
@@ -425,7 +476,7 @@ provider is gone — down, misconfigured, its issuer changed — the operator
 sets `WAVEFLOW_OIDC_ONLY=false`, restarts, creates an administrator with
 `waveflow-server account create-admin` if no account has a known password,
 and signs in. Or links an account to the right identity with
-`account link-oidc`. The operator guide says this in the section that
+`account oidc-invite` or `account link-oidc`. The operator guide says this in the section that
 introduces the mode, not at the end of it.
 
 **Moving an instance into the mode** is done alongside first: every person
@@ -490,8 +541,14 @@ used. A provider that does not list `S256` among
 field — and one that rejects it fails the sign-in with a code that says so.
 
 **The token request.** The code, the verifier and the redirect address are
-sent to the token endpoint with the client secret, by `client_secret_basic`
-unless the document lists only `client_secret_post`. A request that fails
+sent to the token endpoint with the client secret. The method is chosen
+from what the document lists in `token_endpoint_auth_methods_supported`:
+`client_secret_basic` when it is listed, or when the field is absent, since
+that is the specification's default; otherwise `client_secret_post` when it is
+listed, whatever else is listed beside it (`private_key_jwt`, say). A
+document that lists neither cannot be used with a client secret, and the
+sign-in fails with `oidc_unavailable`, with a `warn` line naming the methods
+offered. Those names are the provider's configuration, not a person's. A request that fails
 or times out fails the sign-in; nothing is retried, since a code is spent at
 the provider on its first presentation, as it is here.
 
@@ -605,7 +662,8 @@ sign-in in that mode; it is not this RFC's.
   (`{ password: bool, oidc: { name } | null }`), unauthenticated, which says
   nothing a visitor of the page would not see on it.
 - **Settings › Account**: whether the account is linked, *Link* and *Unlink*.
-- **Administration › Users**: who is linked, the field for a `sub`, the role
+- **Administration › Users**: who is linked and under which `sub`, the
+  invitation to link (its address shown once), the field for a `sub`, the role
   shown as managed by the provider under decision 6, and the list of
   accounts without a link before a switch to the provider-only mode.
 - **Setup**: the provider's button beside the token in the provider-only
@@ -646,9 +704,15 @@ Every string in the nine locales, as the client's rule requires.
    the OpenAPI document. Its tests run against an in-process provider
    serving discovery, keys, a token endpoint and userinfo, and include, at
    least: a forged callback without a cookie, with another attempt's cookie,
-   with a differing `state`, with a cookie already spent; the twenty-first
-   invented code from one address in a minute, which must not reach the
-   provider; a `return_to` of `//evil.example`, `/\evil.example`,
+   with a differing `state`, with a cookie already spent; the flow cookie
+   set as `__Host-wf_oidc` with `Path=/` and no `Domain` on an `https`
+   public URL; the twenty-first invented code from one address in a minute,
+   which must not reach the provider; a full set of spent states, which
+   refuses a new callback and evicts nothing still live; an ordinary sign-in
+   on an instance with no account, which creates none; an invitation
+   presented twice, and one revoked by a newer one; a discovery document
+   listing `client_secret_post` and `private_key_jwt` only, which uses the
+   former; a `return_to` of `//evil.example`, `/\evil.example`,
    `/<tab>/evil.example` and `/a/..//evil.example`, none of which may send
    the browser off the public origin; an ID token with `alg: none`,
    an HMAC algorithm, an unknown `kid`, another `iss`, another `aud`, an
