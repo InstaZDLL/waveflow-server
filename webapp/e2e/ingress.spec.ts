@@ -6,6 +6,7 @@ import { resetAndMockApi } from "./fixtures/api";
 import { song } from "./fixtures/catalogue";
 import { PREFIX, serveUnderPrefix } from "./fixtures/ingress";
 import { silentWav } from "./fixtures/media";
+import { onPhoneNavigation } from "./fixtures/navigation";
 import { mock } from "./fixtures/state";
 
 test.beforeEach(resetAndMockApi);
@@ -51,8 +52,20 @@ test("the client plays and moves about under Home Assistant's prefix", async ({
   await expect.poll(() => streamed.length).toBeGreaterThan(0);
   for (const path of streamed) expect(path.startsWith(`${PREFIX}/`)).toBe(true);
 
-  // The router's own links stay under the prefix.
-  await page.getByRole("link", { name: "Songs" }).first().click();
+  // The router's own links stay under the prefix: their address says so, and
+  // following one lands there. On a phone Songs is in the More sheet.
+  let songs = page
+    .locator(".primary-navigation")
+    .getByRole("link", { name: "Songs" });
+  if (await onPhoneNavigation(page)) {
+    await page
+      .locator(".mobile-navigation")
+      .getByRole("button", { name: "More" })
+      .click();
+    songs = page.locator(".more-sheet").getByRole("link", { name: "Songs" });
+  }
+  await expect(songs).toHaveAttribute("href", `${PREFIX}/songs`);
+  await songs.click();
   await expect(page).toHaveURL(new RegExp(`${PREFIX}/songs$`));
   await expect(page.locator(".songs tbody tr").first()).toBeVisible();
 
