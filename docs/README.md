@@ -57,6 +57,7 @@ The design decisions, one per document. A `Status` line never changes; the
 | [RFC-028](rfcs/RFC-028-update-check.md) | Telling an administrator a new version is out: a manifest on R2, asked only once an administrator agrees |
 | [RFC-029](rfcs/RFC-029-track-music-video.md) | A track's music video: found beside it by the desktop's rule, recorded by the scan, served by ticket |
 | [RFC-030](rfcs/RFC-030-home-assistant-ingress.md) | The web client inside Home Assistant: a listener of its own for ingress, the prefix carried to the client, WaveFlow's own sign-in |
+| [RFC-031](rfcs/RFC-031-oidc-sign-in.md) | Signing in through an OpenID Connect provider: Authorization Code + PKCE, accounts linked by issuer and subject, groups, a provider-only mode |
 
 ## Plans and analyses
 
