@@ -460,31 +460,18 @@ async fn inside_home_assistant_a_share_needs_a_public_address() {
 
 #[tokio::test]
 async fn inside_home_assistant_a_public_address_gives_shares_their_link() {
-    let (_temp, mut config, mut state) = test_app().await;
-    config.public_url = Some("https://music.example.org".to_owned());
-    state.public_url = config.public_url.clone();
-    let password = uuid::Uuid::new_v4().to_string();
-    state
-        .db
-        .create_account(
-            "ingress-public",
-            &security::hash_password(&password).unwrap(),
-            AccountRole::User,
-            now_ms(),
-        )
-        .await
-        .unwrap();
-    let router = waveflow_server::app(&config, state);
-    let token = login_token(&router, "ingress-public", &password).await;
-    // An unknown track: whatever the answer, it is not the missing address.
-    let answered = through_ingress(
-        &router,
+    // The server's public URL is the test default, `http://waveflow.test`.
+    let shared = shared_file_on("ingress-public", serde_json::json!({}), false, true).await;
+    let created = through_ingress(
+        &shared.router,
         "POST",
         "/api/v2/shares",
-        &token,
-        Some(serde_json::json!({ "track_ids": [uuid::Uuid::new_v4()] })),
+        &shared.token,
+        Some(serde_json::json!({ "track_ids": [shared.track] })),
     )
     .await;
-    assert_ne!(answered.status(), StatusCode::CONFLICT);
-    assert_ne!(json_body(answered).await["code"], "share_address_missing");
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let created = json_body(created).await;
+    let url = created["url"].as_str().expect("a link");
+    assert!(url.starts_with("http://waveflow.test/share/"), "{url}");
 }

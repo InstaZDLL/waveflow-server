@@ -11,8 +11,13 @@ const HOME_ASSISTANT: &str = "http://homeassistant.local:8123";
 /// address: the case where an ingress sign-in would be refused if the check
 /// read it.
 async fn server() -> (tempfile::TempDir, axum::Router, String) {
+    server_at(Some("https://music.example.org")).await
+}
+
+/// `server`, with the public URL given, or none.
+async fn server_at(public_url: Option<&str>) -> (tempfile::TempDir, axum::Router, String) {
     let (temp, mut config, mut state) = test_app().await;
-    config.public_url = Some("https://music.example.org".to_owned());
+    config.public_url = public_url.map(str::to_owned);
     state.public_url = config.public_url.clone();
     let password = Uuid::new_v4().to_string();
     state
@@ -206,4 +211,65 @@ async fn the_ingress_listener_refuses_a_request_without_its_prefix() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(json_body(response).await["code"], "ingress_path_invalid");
+}
+
+#[tokio::test]
+async fn a_chain_of_schemes_is_read_from_its_first_entry() {
+    // Behind two proxies Home Assistant passes `https,http` on as it got it:
+    // the browser is on https, and the cookies must say `Secure`.
+    let (_temp, app, password) = server().await;
+    let response = waveflow_server::ingress_app(app)
+        .oneshot(through_home_assistant(login(&password), "https,http"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookies = set_cookies(&response);
+    assert!(cookie(&cookies, "waveflow-refresh").contains("; Secure"));
+}
+
+/// A Home Assistant behind a reverse proxy that rewrites `Host` to its
+/// internal address and names the public one in `X-Forwarded-Host`, which Core
+/// passes on: the browser's `Origin` matches the latter.
+fn behind_a_proxy(request: Request<Body>, origin: &str) -> Request<Body> {
+    let mut request = through_home_assistant(request, "https");
+    let headers = request.headers_mut();
+    headers.insert("host", "homeassistant:8123".parse().unwrap());
+    headers.insert("x-forwarded-host", "ha.example.org".parse().unwrap());
+    headers.insert("origin", origin.parse().unwrap());
+    request
+}
+
+#[tokio::test]
+async fn behind_a_proxy_that_rewrites_host_the_forwarded_host_is_the_address() {
+    let (_temp, app, password) = server().await;
+    let ingress = waveflow_server::ingress_app(app);
+
+    let accepted = ingress
+        .clone()
+        .oneshot(behind_a_proxy(login(&password), "https://ha.example.org"))
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+
+    // Another site is still another site.
+    let refused = ingress
+        .oneshot(behind_a_proxy(login(&password), "https://attacker.invalid"))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(refused).await["code"], "origin_rejected");
+}
+
+#[tokio::test]
+async fn the_main_listener_reads_no_forwarded_host() {
+    // With no public URL the main listener compares `Origin` with `Host`
+    // alone: `X-Forwarded-Host` is anyone's to send there, and naming the
+    // origin in it changes nothing.
+    let (_temp, app, password) = server_at(None).await;
+    let response = app
+        .oneshot(behind_a_proxy(login(&password), "https://ha.example.org"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(json_body(response).await["code"], "origin_rejected");
 }

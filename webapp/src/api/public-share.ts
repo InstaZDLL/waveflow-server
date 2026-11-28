@@ -49,5 +49,16 @@ export async function openPublicShare(
   if (response.status === 404) return null;
   // The token is the credential, so it stays out of the message.
   if (!response.ok) throw new ApiError(response.status, "GET /share/{token}");
-  return (await response.json()) as PublicShare;
+  const share = (await response.json()) as PublicShare;
+  // With no public URL the server names a track's stream and cover as root
+  // paths, which under Home Assistant's prefix (RFC-030) are asked for there;
+  // a full address, with one, goes through unchanged.
+  return {
+    ...share,
+    tracks: share.tracks.map((track) => ({
+      ...track,
+      streamUrl: serverUrl(track.streamUrl),
+      ...(track.coverUrl ? { coverUrl: serverUrl(track.coverUrl) } : {}),
+    })),
+  };
 }

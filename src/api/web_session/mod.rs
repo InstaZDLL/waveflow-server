@@ -31,9 +31,7 @@ pub(crate) struct CookieScope {
 impl CookieScope {
     pub(crate) fn of(state: &AppState, ingress: &Ingress, headers: &HeaderMap) -> Self {
         let secure = if ingress.0.is_some() {
-            headers
-                .get("x-forwarded-proto")
-                .and_then(|value| value.to_str().ok())
+            first_forwarded(headers, "x-forwarded-proto")
                 .is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
         } else {
             secure_cookies(state)
@@ -154,7 +152,8 @@ pub(super) fn validate_web_request(
 /// On Home Assistant's ingress (RFC-030 decision 6), `WAVEFLOW_PUBLIC_URL` is
 /// not the address the browser is on, so it is not asked: `Origin` is compared
 /// with `Host`, which Home Assistant passes through from the browser, as on a
-/// server with no public URL.
+/// server with no public URL — or with `X-Forwarded-Host`, for a Home
+/// Assistant behind a proxy that rewrites `Host`.
 pub(super) fn validate_web_origin(
     state: &AppState,
     ingress: &Ingress,
@@ -183,13 +182,38 @@ pub(super) fn validate_web_origin(
     let authority = &parsed[url::Position::BeforeHost..url::Position::AfterPort];
     let host = headers
         .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-        .ok_or(ApiError::Forbidden)?;
-    if authority.eq_ignore_ascii_case(host) {
+        .and_then(|value| value.to_str().ok());
+    // Under ingress, a reverse proxy in front of Home Assistant may have
+    // rewritten `Host` to Home Assistant's internal address and named the one
+    // the browser used in `X-Forwarded-Host`, which Core passes on. A page of
+    // another site cannot set that header on a request to Home Assistant
+    // without a preflight Home Assistant does not grant, so it can only name
+    // the address the browser is really on.
+    let forwarded_host = ingress
+        .0
+        .as_ref()
+        .and_then(|_| first_forwarded(headers, "x-forwarded-host"));
+    if host.is_none() && forwarded_host.is_none() {
+        return Err(ApiError::Forbidden);
+    }
+    if [host, forwarded_host]
+        .into_iter()
+        .flatten()
+        .any(|address| authority.eq_ignore_ascii_case(address))
+    {
         Ok(())
     } else {
         Err(ApiError::OriginRejected)
     }
+}
+
+/// The first entry of a forwarding header, as the browser-facing proxy wrote
+/// it: `X-Forwarded-Proto: https,http` is what Home Assistant passes on behind
+/// two proxies, and its first entry is the scheme the browser used.
+fn first_forwarded<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    let value = headers.get(name)?.to_str().ok()?;
+    let first = value.split(',').next()?.trim();
+    (!first.is_empty()).then_some(first)
 }
 
 #[cfg(test)]
